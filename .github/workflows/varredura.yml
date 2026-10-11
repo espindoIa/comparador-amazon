@@ -18,8 +18,6 @@ on:
     - cron: "41 9 * * *"    # 06:41
     - cron: "41 15 * * *"   # 12:41
     - cron: "41 21 * * *"   # 18:41
-  push:                # TEMPORÁRIO (teste antes do merge): remover
-    branches: [coleta-automatica]
   workflow_dispatch:
     inputs:
       minutos:
@@ -85,7 +83,7 @@ jobs:
 
       - name: Varre
         env:
-          MINUTOS: ${{ inputs.minutos || (github.event_name == 'push' && '6') || '150' }}
+          MINUTOS: ${{ inputs.minutos || '150' }}
         run: python -m comparador --db "$DB" varrer --no "$NO" --minutos "$MINUTOS" --cliente navegador
 
       # Roda mesmo se a varredura falhou: o progresso até ali fica salvo.

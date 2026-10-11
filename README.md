@@ -161,6 +161,9 @@ abordagem; categorias do tamanho de HQs e mangás, sim.
   ou nenhuma naquele dia. Medido: a fatia de R$ 29,90 (710 resultados) devolveu 709 itens
   distintos, sem repetição, em 45 páginas.
 - O preço de capa só aparece na busca quando há desconto. Sem desconto, fica vazio.
+- E-books do Kindle Unlimited aparecem na busca só como "R$ 0,00, grátis com
+  assinatura", sem o preço de compra; por isso ficam de fora. Livros físicos não são
+  afetados.
 - Os termos de uso do GitHub Actions dizem que ele serve para o software do próprio
   repositório; ~2 horas diárias de varredura podem ser consideradas uso indevido. Se
   isso preocupar, o mesmo comando roda em qualquer máquina sempre ligada (`cron`).
