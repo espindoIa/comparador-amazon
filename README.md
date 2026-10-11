@@ -60,6 +60,48 @@ em vez de 50, o que reduz muito a chance de bloqueio.
 A página do produto (`/dp/ASIN`) **não** é usada: em acessos automatizados a Amazon
 costuma esconder o preço nela ("adicione ao carrinho para ver o preço").
 
+## Coleta automática (sem deixar o computador ligado)
+
+O workflow `.github/workflows/coleta.yml` roda no GitHub Actions (grátis em repositório
+público) e guarda o banco na branch `dados`, arquivo `precos.db`.
+
+**Configuração, uma vez só:**
+
+1. Em *Settings → Branches*, deixe `main` como branch padrão (o GitHub só dispara
+   agendamentos a partir da branch padrão).
+2. Em *Settings → Secrets and variables → Actions → New repository secret*, crie
+   `LISTA_DESEJOS` com o link da sua lista. Como o repositório é público, o link vai no
+   segredo e não em `desejos.txt`.
+3. Opcional, mas recomendado: crie uma conta grátis em [healthchecks.io](https://healthchecks.io),
+   crie um check com período de 1 dia e tolerância de 1 dia e guarde a URL de ping no
+   segredo `HEALTHCHECK_URL`. Se o GitHub parar de rodar o agendamento, ele avisa por
+   e-mail.
+4. Teste em *Actions → coleta → Run workflow*.
+
+**Como evita buracos nos dados:**
+
+| Risco | Defesa |
+|---|---|
+| O cron do GitHub atrasa ou pula uma execução | 5 agendamentos por dia (05h, 09h, 14h, 19h e 23h, horário de Brasília). Cada um só coleta se o dia ainda não tem coleta completa; os outros terminam em segundos |
+| A Amazon bloqueia ou a lista vem incompleta | A coleta é marcada como incompleta e não cobre o dia. O workflow falha (o GitHub avisa por e-mail) e o próximo agendamento tenta de novo |
+| Duas execuções ao mesmo tempo corromperiam o banco | `concurrency` serializa as execuções |
+| Falha no meio da coleta | O banco é salvo mesmo assim (`if: always()`), para não perder o que já foi lido |
+| O GitHub desativa agendamentos de repositório parado (60 dias) | Cada coleta gera um commit na branch `dados`, o que conta como atividade |
+| O GitHub inteiro deixa de executar | healthchecks.io avisa quando nenhum aviso chega em 1 dia |
+
+Não existe como recuperar depois o preço de um dia perdido, porque a Amazon não publica o
+histórico. O que o sistema garante é tentar até 5 vezes por dia e avisar quando o dia
+fechar sem dado. Para ver os buracos:
+
+```bash
+git fetch origin dados && git show origin/dados:precos.db > data/precos.db
+python -m comparador lacunas        # dias sem coleta completa
+python -m comparador status
+```
+
+O dia é contado no horário de Brasília. Para forçar uma coleta extra no mesmo dia, use
+*Run workflow* com "forcar" marcado.
+
 ## Banco (`data/precos.db`)
 
 | Tabela | Conteúdo |
@@ -92,9 +134,8 @@ Os valores ficam em **centavos** e as datas em UTC. Para gráficos, use só `sta
 ## Avisos
 
 - O parser da lista de ofertas e o leitor da lista de desejos foram validados com
-  respostas reais (em `tests/fixtures/`). A paginação real (página 2 em diante) ainda não
-  foi confirmada. Na primeira coleta, confira se `lista de desejos: N itens` bate com a
-  sua lista.
+  respostas reais (em `tests/fixtures/`) e com uma coleta completa de 82 itens em 9 páginas.
+  Na primeira coleta, confira se `lista de desejos: N itens` bate com a sua lista.
 - Ler as páginas da Amazon por script vai contra os termos de uso dela. O coletor faz o
   mínimo de requisições, com pausas, e para quando é bloqueado.
 - `data/` (banco e HTML) não vai para o git.
