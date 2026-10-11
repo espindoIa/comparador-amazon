@@ -60,7 +60,17 @@ def main() -> None:
     g.add_argument("--eventos", default="eventos.csv")
     g.add_argument("--saida", help="arquivo HTML (padrão: data/grafico-<asin>.html)")
 
+    w = sub.add_parser("site", help="gera o site estático (busca por título, histórico e lista de desejos)")
+    w.add_argument("bancos", nargs="+", help="um ou mais bancos do catálogo")
+    w.add_argument("--saida", default="site", help="pasta de saída (padrão: %(default)s)")
+    w.add_argument("--eventos", default="eventos.csv")
+
     args = p.parse_args()
+    if args.cmd == "site":
+        from . import site
+        meta = site.construir([Path(b) for b in args.bancos], Path(args.saida), Path(args.eventos))
+        print(f"site em {args.saida}: {meta['itens']} livros")
+        return
     catalogo = args.cmd in ("varrer", "catalogo")
     if args.cmd == "grafico" and not args.db and not Path("data/precos.db").exists():
         args.db = "data/catalogo.db"
@@ -158,8 +168,6 @@ def main() -> None:
         saida.parent.mkdir(parents=True, exist_ok=True)
         eventos = relatorio.ler_eventos(args.eventos)
         saida.write_text(relatorio.pagina(titulo or asin, asin, trechos, eventos, relatorio.aviso(conn)), encoding="utf-8")
-        for e in eventos:
-            print(relatorio.resumo_evento(e, relatorio.fatos_evento(trechos, e)))
         print(f"gráfico em {saida}")
     elif args.cmd == "status":
         for r in conn.execute("SELECT * FROM coletas ORDER BY id DESC LIMIT 5"):

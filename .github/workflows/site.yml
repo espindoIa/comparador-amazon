@@ -1,0 +1,64 @@
+# Publica o site (busca por título, histórico de cada livro e lista de desejos) no GitHub Pages.
+# Os dados vêm dos bancos mais recentes na release "catalogo". Roda depois de cada varredura e
+# uma vez por dia, para o site nunca ficar muito atrás dos preços.
+#
+# Configuração, uma vez só: Settings → Pages → Build and deployment → Source: "GitHub Actions".
+name: site
+
+on:
+  workflow_run:
+    workflows: [varredura]
+    types: [completed]
+  schedule:
+    - cron: "17 10 * * *"     # 07:17 em Brasília
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Baixa os bancos mais recentes (release catalogo)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bancos"
+          nomes=$(gh release view catalogo --json assets --jq '.assets[].name')
+          for alvo in vendidos 7842710011; do
+            ultimo=$(printf '%s\n' "$nomes" | grep -E "^catalogo-${alvo}-[0-9-]+\.db\.gz$" | sort | tail -n 1 || true)
+            if [ -z "$ultimo" ]; then echo "sem banco para $alvo; seguindo sem ele"; continue; fi
+            gh release download catalogo --pattern "$ultimo" --dir "$RUNNER_TEMP"
+            gunzip -c "$RUNNER_TEMP/$ultimo" > "$RUNNER_TEMP/bancos/$alvo.db"
+            echo "baixado: $ultimo"
+          done
+          ls "$RUNNER_TEMP"/bancos/*.db > /dev/null   # falha se nenhum banco foi baixado
+
+      - name: Gera o site
+        run: python -m comparador site "$RUNNER_TEMP"/bancos/*.db --saida site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

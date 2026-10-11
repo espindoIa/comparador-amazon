@@ -228,13 +228,44 @@ Os valores ficam em **centavos** e as datas em UTC. Para gráficos, use só `sta
   mínimo de requisições, com pausas, e para quando é bloqueado.
 - `data/` (banco e HTML) não vai para o git.
 
+## O app: busca por título e lista de desejos
+
+Um site estático (sem servidor, grátis no GitHub Pages) com:
+
+- **Busca por título, autor ou ASIN/ISBN-10,** ignorando acentos e a ordem das palavras. Cada formato
+  (capa comum, capa dura, Kindle...) aparece como um resultado, com o preço mais recente.
+- **Página de cada livro** com o histórico de preço, os números e os botões de zoom e de dados extras
+  (veja "Histórico de preço por livro").
+- **Minha lista:** o botão "Adicionar" em qualquer livro o põe na lista. Ela mostra o preço de hoje, a
+  diferença para o preço mais comum dos últimos 90 dias e o mais barato do período, e pode ser
+  ordenada por título, preço ou diferença. **A lista fica só no navegador de quem a cria** (não há
+  conta nem servidor). Para levá-la a outro aparelho, use "Levar a lista para outro aparelho": copie
+  num e cole no outro. Só entram livros que o catálogo acompanha (os mais vendidos e HQs/mangás).
+
+```bash
+python -m comparador site data/catalogo-vendidos.db data/catalogo-7842710011.db --saida site
+cd site && python -m http.server 8000      # abra http://localhost:8000
+```
+
+**Publicação automática:** o workflow `site.yml` baixa os bancos mais recentes da release `catalogo`,
+gera o site e publica no GitHub Pages depois de cada varredura e uma vez por dia. Configuração, uma
+vez só: *Settings → Pages → Build and deployment → Source: GitHub Actions*. O endereço aparece em
+*Actions → site → publicar*. O site é público (como o repositório), e os dados também.
+
+Tamanho medido com os ~31 mil livros: índice de busca de 3 MB (1 MB compactado) e 4 MB de históricos,
+carregados em pedaços só quando um livro é aberto.
+
+O cálculo dos números e o gráfico ficam em um único arquivo, `comparador/web/livro.js`, usado pelo
+site e pelo comando `grafico`, e testado com `node tests/livro.test.js` (os testes de Python o rodam
+quando o `node` está instalado).
+
 ## Histórico de preço por livro (gráfico e números)
 
 ```bash
 python -m comparador --db data/catalogo-vendidos.db grafico "título ou ASIN"
 ```
 
-Gera `data/grafico-<ASIN>.html` (abra no navegador). A página **não tira conclusões**: mostra os
+Gera `data/grafico-<ASIN>.html`, uma página única (abra no navegador, não precisa de servidor). A página **não tira conclusões**: mostra os
 dados para quem compra decidir. Sem `--db`, usa `data/precos.db` (lista de desejos) se existir,
 senão `data/catalogo.db`. Se o termo casar com vários livros, lista os ASINs para repetir com o exato.
 
