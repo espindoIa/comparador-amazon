@@ -227,3 +227,20 @@ Os valores ficam em **centavos** e as datas em UTC. Para gráficos, use só `sta
 - Ler as páginas da Amazon por script vai contra os termos de uso dela. O coletor faz o
   mínimo de requisições, com pausas, e para quando é bloqueado.
 - `data/` (banco e HTML) não vai para o git.
+
+## Gráfico de preço por livro e veredito das promoções
+
+```bash
+python -m comparador --db data/catalogo-vendidos.db grafico "título ou ASIN"
+```
+
+Gera `data/grafico-<ASIN>.html` (abra no navegador): linha contínua = preço, tracejada = preço de
+capa, faixa = Black Friday / Dia do Consumidor (datas em `eventos.csv`). Se o termo casar com
+vários livros, lista os ASINs para você repetir com o exato. Sem `--db`, usa `data/precos.db`
+(lista de desejos) se existir, senão `data/catalogo.db`.
+
+Para cada evento, imprime o veredito: o menor preço durante o evento contra a **mediana dos 60 dias
+anteriores** (cada preço pesa pelos dias em que durou) e contra o preço de capa. Diz se o preço
+"normal" já era igual ou menor (não é desconto) e se já houve preço mais baixo na janela. Precisa
+de pelo menos algumas semanas de histórico antes do evento; sem isso, avisa que não dá para comparar.
+Os bancos do catálogo estão em *Releases → catalogo* (descompacte o `.db.gz`).

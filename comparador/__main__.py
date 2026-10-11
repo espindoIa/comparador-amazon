@@ -55,11 +55,20 @@ def main() -> None:
     k.add_argument("--exigir-ontem", action="store_true",
                    help="sai com código 1 se ontem não teve varredura completa (para alertas)")
 
+    g = sub.add_parser("grafico", help="gráfico HTML do histórico de preço de um livro e veredito das promoções")
+    g.add_argument("livro", help="ASIN ou parte do título")
+    g.add_argument("--eventos", default="eventos.csv")
+    g.add_argument("--saida", help="arquivo HTML (padrão: data/grafico-<asin>.html)")
+
     args = p.parse_args()
     catalogo = args.cmd in ("varrer", "catalogo")
+    if args.cmd == "grafico" and not args.db and not Path("data/precos.db").exists():
+        args.db = "data/catalogo.db"
     args.db = args.db or ("data/catalogo.db" if catalogo else "data/precos.db")
     conn = db.conectar(args.db)
-    if catalogo:
+    if args.cmd == "grafico":
+        pass
+    elif catalogo:
         varredura.criar_schema(conn)
     else:
         db.criar_schema(conn)
@@ -132,6 +141,26 @@ def main() -> None:
         ontem = db.hoje_brasil() - timedelta(days=1)
         if args.exigir_ontem and ontem in c.lacunas:
             raise SystemExit(f"{ontem} ficou sem varredura completa")
+    elif args.cmd == "grafico":
+        from . import relatorio
+        achados = relatorio.buscar(conn, args.livro)
+        if not achados:
+            raise SystemExit(f"nenhum livro encontrado para {args.livro!r} em {args.db}")
+        if len(achados) > 1 and args.livro.upper() != achados[0][0]:
+            for a, t in achados[:15]:
+                print(f"{a}  {t}")
+            raise SystemExit(f"{len(achados)} resultados; repita com o ASIN exato")
+        asin, titulo = achados[0]
+        trechos = relatorio.serie(conn, asin)
+        if not trechos:
+            raise SystemExit(f"{asin} ainda não tem preço registrado")
+        saida = Path(args.saida or f"data/grafico-{asin}.html")
+        saida.parent.mkdir(parents=True, exist_ok=True)
+        eventos = relatorio.ler_eventos(args.eventos)
+        saida.write_text(relatorio.pagina(titulo or asin, asin, trechos, eventos), encoding="utf-8")
+        for e in eventos:
+            print(relatorio.veredito(trechos, e).texto)
+        print(f"gráfico em {saida}")
     elif args.cmd == "status":
         for r in conn.execute("SELECT * FROM coletas ORDER BY id DESC LIMIT 5"):
             print(f"coleta {r['id']}: {r['iniciada_em']}  {r['sucesso']}/{r['tentados']} ok"
