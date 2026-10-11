@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
-from .parser import parse_preco
+from .rede import parse_preco
 
 URL_BUSCA = "https://www.amazon.com.br/s?i=stripbooks&rh={rh}&s={ordem}&page={pagina}"
 ORDENS = {"preco": "price-asc-rank", "vendidos": "exact-aware-popularity-rank"}

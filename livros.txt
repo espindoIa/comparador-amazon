@@ -1,7 +1,0 @@
-# Livros a acompanhar: um ASIN (ISBN-10 em livros físicos) ou link da Amazon por linha.
-# Tudo depois de '#' é comentário. Exemplos (apague o '#' e troque pelos seus):
-#
-# 0123456789                                      # ASIN/ISBN-10
-# https://www.amazon.com.br/dp/0123456789         # link do produto
-#
-# Capa dura, brochura e Kindle têm ASINs diferentes: cada um é um item.

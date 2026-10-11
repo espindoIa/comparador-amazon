@@ -1,0 +1,159 @@
+"""Testes do acesso à Amazon (cliente HTTP, bloqueios, preço) e das datas."""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import shutil
+import tempfile
+import threading
+import unittest
+from datetime import date
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from comparador import cliente_http, db, rede
+from comparador.rede import parece_bloqueio, parse_preco
+
+PAGINA_CACHORROS = "<html><head><title>Amazon.com.br Algo deu errado</title></head><body></body></html>"
+
+
+class TestParsePreco(unittest.TestCase):
+    def test_formatos(self):
+        self.assertEqual(parse_preco("R$ 39,90"), 3990)
+        self.assertEqual(parse_preco("R$\xa01.234,56"), 123456)
+        self.assertEqual(parse_preco("R$ 1234,56"), 123456)
+        self.assertIsNone(parse_preco("sem preço"))
+        self.assertIsNone(parse_preco(None))
+
+
+class TestBloqueio(unittest.TestCase):
+    def test_marcas_de_bloqueio(self):
+        self.assertTrue(parece_bloqueio('<form action="/errors/validateCaptcha"></form>'))
+        self.assertTrue(parece_bloqueio('<script>window.location.replace("https://www.amazon.com.br/error/500");</script>'))
+        self.assertTrue(parece_bloqueio(PAGINA_CACHORROS))
+        self.assertFalse(parece_bloqueio("<html><body>Algo deu errado e não pode ser removido</body></html>"))  # aviso oculto de páginas normais
+
+    def test_dia_e_contado_em_brasilia(self):
+        # 01:30 UTC de 11/10 ainda é 22:30 de 10/10 em Brasília.
+        self.assertEqual(db.dia_brasil("2026-10-11T01:30:00+00:00"), date(2026, 10, 10))
+        self.assertEqual(db.dia_brasil("2026-10-11T03:00:00+00:00"), date(2026, 10, 11))
+
+    def test_sessao_requests_sem_cabecalhos_padrao(self):
+        s = cliente_http.nova_sessao("requests")
+        self.assertNotIn("Connection", s.headers)
+        self.assertEqual(list(s.headers), list(cliente_http.HEADERS))
+
+
+class _Servidor(BaseHTTPRequestHandler):
+    recebidos: list = []
+
+    def do_GET(self):
+        _Servidor.recebidos.append(dict(self.headers))
+        if self.path == "/redireciona":
+            self.send_response(302)
+            self.send_header("Location", "/hz/wishlist/ls/ABCDEFGH1234")
+            self.end_headers()
+            return
+        corpo = ("ação ok" if self.path != "/erro" else "fora").encode("utf-8")
+        self.send_response(503 if self.path == "/erro" else 200)
+        if self.path == "/define-cookie":
+            self.send_header("Set-Cookie", "session-id=123-456; Path=/")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def log_message(self, *a):
+        pass
+
+
+@unittest.skipUnless(shutil.which("curl"), "curl não instalado")
+class TestClienteCurl(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), _Servidor)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+        cls.cliente = cliente_http.nova_sessao("curl")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def test_cliente_curl_explicito(self):
+        self.assertIsInstance(cliente_http.nova_sessao("curl"), cliente_http.ClienteCurl)
+
+    def test_get_ok_utf8_e_cabecalhos(self):
+        r = self.cliente.get(self.base + "/pagina")
+        self.assertEqual((r.status_code, r.text), (200, "ação ok"))
+        h = _Servidor.recebidos[-1]
+        self.assertEqual(h["User-Agent"], cliente_http.USER_AGENT)
+        self.assertEqual(h["Accept-Language"], "pt-BR,pt;q=0.9")
+
+    def test_status_de_erro_e_redirecionamento(self):
+        self.assertEqual(self.cliente.get(self.base + "/erro").status_code, 503)
+        r = self.cliente.get(self.base + "/redireciona")
+        self.assertTrue(r.url.endswith("/hz/wishlist/ls/ABCDEFGH1234"))
+
+    def test_guarda_cookies_entre_requisicoes(self):
+        cliente = cliente_http.nova_sessao("curl")
+        cliente.get(self.base + "/define-cookie")
+        cliente.get(self.base + "/pagina2")
+        self.assertIn("session-id=123-456", _Servidor.recebidos[-1].get("Cookie", ""))
+
+    def test_falha_de_conexao_vira_erro_http(self):
+        porta_fechada = "http://127.0.0.1:9/"
+        status, html, erro = rede.baixar(self.cliente, porta_fechada)
+        self.assertEqual(erro.status, "erro_http")
+
+
+def _navegador_disponivel() -> bool:
+    if not cliente_http._playwright_instalado():
+        return False
+    try:
+        cliente_http.ClienteNavegador().fechar()
+        return True
+    except Exception:
+        return False
+
+
+@unittest.skipUnless(_navegador_disponivel(), "Playwright ou navegador não instalado")
+class TestClienteNavegador(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), _Servidor)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        self.cliente = cliente_http.ClienteNavegador()
+        self.addCleanup(self.cliente.fechar)
+
+    def test_navegacao_depois_fetch_com_cookies(self):
+        r1 = self.cliente.get(self.base + "/define-cookie")  # 1ª: navegação real
+        self.assertEqual(r1.status_code, 200)
+        self.assertIn("ação ok", r1.text)
+        r2 = self.cliente.get(self.base + "/pagina2")  # 2ª: fetch na mesma sessão
+        self.assertEqual((r2.status_code, r2.text), (200, "ação ok"))
+        self.assertIn("session-id=123-456", _Servidor.recebidos[-1].get("Cookie", ""))
+
+    def test_status_de_erro_e_redirecionamento(self):
+        self.cliente.get(self.base + "/pagina")
+        self.assertEqual(self.cliente.get(self.base + "/erro").status_code, 503)
+        self.assertTrue(self.cliente.get(self.base + "/redireciona").url.endswith("/hz/wishlist/ls/ABCDEFGH1234"))
+
+    def test_falha_de_conexao_vira_erro_http(self):
+        self.cliente.get(self.base + "/pagina")
+        _, _, erro = rede.baixar(self.cliente, "http://127.0.0.1:9/")
+        self.assertEqual(erro.status, "erro_http")
+
+
+if __name__ == "__main__":
+    unittest.main()

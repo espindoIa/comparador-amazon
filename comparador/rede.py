@@ -1,0 +1,68 @@
+"""Acesso à Amazon: download com detecção de bloqueio, preço em centavos e HTML bruto de depuração."""
+
+from __future__ import annotations
+
+import gzip
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+import requests
+
+from .cliente_http import nova_sessao  # noqa: F401  (reexportado para o CLI)
+
+PAUSA_APOS_BLOQUEIO = 90.0  # espera extra depois de um bloqueio
+
+_PRECO_RE = re.compile(r"(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})")
+
+# Página de captcha / página de erro "cachorros da Amazon". O erro é reconhecido pelo
+# <title>, e não por uma frase solta, que também aparece escondida em páginas normais.
+_MARCAS_DE_BLOQUEIO = (
+    "/errors/validateCaptcha",
+    "Digite os caracteres",
+    "Enter the characters you see",
+    "amazon.com.br/error/500",
+)
+_TITULO_ERRO_RE = re.compile(r"<title>[^<]*Algo deu errado", re.I)
+
+@dataclass
+class Erro:
+    status: str  # 'bloqueado' ou 'erro_http'
+    detalhe: str
+
+def parse_preco(texto: str | None) -> int | None:
+    """'R$ 1.234,56' -> 123456 (centavos). Devolve None se não houver preço."""
+    if not texto:
+        return None
+    m = _PRECO_RE.search(texto.replace("\xa0", " "))
+    if not m:
+        return None
+    return int(m.group(1).replace(".", "")) * 100 + int(m.group(2))
+
+def parece_bloqueio(html: str) -> bool:
+    return any(marca in html for marca in _MARCAS_DE_BLOQUEIO) or bool(_TITULO_ERRO_RE.search(html))
+
+def parece_bloqueio(html: str) -> bool:
+    return any(marca in html for marca in _MARCAS_DE_BLOQUEIO) or bool(_TITULO_ERRO_RE.search(html))
+
+def guardar_html(pasta: Path | None, nome: str, html: str | None) -> str | None:
+    if not (pasta and html):
+        return None
+    agora = datetime.now(timezone.utc)
+    destino = pasta / agora.strftime("%Y-%m-%d") / f"{nome}-{agora.strftime('%H%M%S')}.html.gz"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_bytes(gzip.compress(html.encode("utf-8")))
+    return str(destino)
+
+def baixar(sessao, url: str) -> tuple[int | None, str | None, Erro | None]:
+    """Devolve (status_http, html, erro ou None se deu certo)."""
+    try:
+        resp = sessao.get(url, timeout=30)
+    except requests.RequestException as e:
+        return None, None, Erro("erro_http", f"{type(e).__name__}: {e}")
+    if resp.status_code in (500, 503) or parece_bloqueio(resp.text):
+        return resp.status_code, resp.text, Erro("bloqueado", f"HTTP {resp.status_code}: captcha ou página de erro")
+    if resp.status_code != 200:
+        return resp.status_code, resp.text, Erro("erro_http", f"HTTP {resp.status_code}")
+    return resp.status_code, resp.text, None
