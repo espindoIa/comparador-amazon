@@ -24,6 +24,8 @@ from bs4 import BeautifulSoup
 
 from .rede import parse_preco
 
+# Vendedor "Amazon.com.br" no filtro "Vendido por" da busca (refinamento p_6, lido da página em out/2026).
+VENDEDOR_AMAZON = "A1ZZFT5FULY4LN"
 URL_BUSCA = "https://www.amazon.com.br/s?i=stripbooks&rh={rh}&s={ordem}&page={pagina}"
 ORDENS = {"preco": "price-asc-rank", "vendidos": "exact-aware-popularity-rank"}
 _ASIN_LINK_RE = re.compile(r"/dp/([A-Z0-9]{10})")
@@ -58,14 +60,19 @@ class PaginaBusca:
     ultima_pagina: int | None = None
 
 
-def url_busca(no: str, preco_min: int, preco_max: int, pagina: int, ordem: str = "preco") -> str:
+def url_busca(no: str, preco_min: int, preco_max: int, pagina: int, ordem: str = "preco",
+              so_amazon: bool = True) -> str:
     """URL de uma fatia.
 
     ordem "preco": categoria `no`, preços em centavos (inclusive), do menor para o maior.
     ordem "vendidos": categoria `no` inteira, dos mais vendidos para os menos (sem filtro de
     preço; a Amazon só mostra as 75 primeiras páginas nessa ordem).
+    `so_amazon`: filtro "Vendido por Amazon.com.br" da própria busca. Ele vale para o livro (o card),
+    não para cada formato: um card passa se alguma oferta dele é da Amazon.
     """
     rh = f"n:{no}" if ordem == "vendidos" else f"n:{no},p_36:{preco_min}-{preco_max}"
+    if so_amazon:
+        rh += f",p_6:{VENDEDOR_AMAZON}"
     return URL_BUSCA.format(rh=quote(rh, safe=""), ordem=ORDENS[ordem], pagina=pagina)
 
 

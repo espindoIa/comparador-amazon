@@ -14,6 +14,22 @@
 <main>
   <section id="aba-busca">
     <input id="q" type="search" placeholder="Título, autor ou ASIN/ISBN-10" autocomplete="off" aria-label="Buscar livro">
+    <div class="fo">
+      <label class="ord">Ordenar por
+        <select id="o-ord"><option value="rel">mais relevantes</option><option value="preco">menor preço</option>
+          <option value="preco_desc">maior preço</option><option value="desconto">maior desconto sobre o preço de capa</option>
+          <option value="titulo">título (A a Z)</option></select></label>
+      <details class="filtros"><summary>Filtrar<span id="n-filtros"></span></summary>
+        <div class="fl"><span class="t">Formato</span><span id="fmts" class="chips"></span></div>
+        <div class="fl"><span class="t">Preço (R$)</span>
+          <input id="pmin" type="number" inputmode="decimal" min="0" step="0.01" placeholder="de" aria-label="Preço mínimo em reais">
+          <input id="pmax" type="number" inputmode="decimal" min="0" step="0.01" placeholder="até" aria-label="Preço máximo em reais"></div>
+        <div class="fl"><span class="t">Mostrar só</span><span class="chips">
+          <button type="button" data-fl="desc" aria-pressed="false" title="livros com preço de capa maior que o preço atual">Com desconto sobre a capa</button>
+          <button type="button" data-fl="lista" aria-pressed="false">Na minha lista</button></span></div>
+        <p><button type="button" id="limpar" class="bt" hidden>Limpar filtros</button></p>
+      </details>
+    </div>
     <div id="res"></div>
   </section>
   <section id="aba-lista" hidden>
