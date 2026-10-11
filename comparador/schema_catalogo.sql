@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS fatias (
     paginas             INTEGER,                    -- última contagem de páginas
     total               INTEGER,                    -- "N resultados" da última visita
     proxima_pagina      INTEGER NOT NULL DEFAULT 1, -- progresso da passada atual
+    livros              INTEGER NOT NULL DEFAULT 0, -- livros com preço lidos na passada atual (mais vendidos)
     passada_iniciada_em TEXT,
     ultima_passada      TEXT,                       -- fim da última passada completa
     criada_em           TEXT NOT NULL,

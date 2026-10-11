@@ -37,9 +37,13 @@ SCHEMA = Path(__file__).with_name("schema_catalogo.sql")
 NO_HQ_MANGA = "7842710011"  # Livros > HQs, Mangás e Graphic Novels
 MAX_PAGINAS_FATIA = 100       # bem abaixo do limite de 400 da Amazon
 LIMITE_PAGINAS_AMAZON = 400
-# Na ordem "mais vendidos" a Amazon só mostra 75 páginas (1.200 itens), embora a paginação
+# Na ordem "mais vendidos" a Amazon só mostra 75 páginas (1.200 cards), embora a paginação
 # anuncie 400 (medido em out/2026, igual na categoria Livros e em cada gênero).
 LIMITE_PAGINAS_VENDIDOS = 75
+# Quantos livros disponíveis (com preço de compra) lemos por categoria na ordem "mais vendidos".
+# Livros sem preço (indisponíveis, só Kindle Unlimited) não contam: a leitura segue até completar
+# esta quantidade ou até o limite de páginas acima.
+LIVROS_POR_CATEGORIA = 1000
 GRUPO_VENDIDOS = "vendidos"
 NO_LIVROS = "6740748011"
 # Gêneros de Livros (subcategorias diretas), lidos da página da Amazon em out/2026.
@@ -94,6 +98,9 @@ def criar_schema(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE fatias SET grupo = no")
         conn.commit()
     conn.executescript(SCHEMA.read_text(encoding="utf-8"))
+    if "livros" not in {r[1] for r in conn.execute("PRAGMA table_info(fatias)")}:  # banco anterior a esta coluna
+        conn.execute("ALTER TABLE fatias ADD COLUMN livros INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
 
 
 def semear(conn: sqlite3.Connection, no: str) -> None:
@@ -210,7 +217,7 @@ def varrer(
     """Lê as fatias que faltam hoje até completar o dia ou acabar o tempo (ou `max_paginas`).
 
     Por padrão, a categoria `no` inteira, fatiada por preço. Com `vendidos` (lista de nós),
-    os mais vendidos de cada um desses nós (até 1.200 por nó).
+    os ~1.000 livros mais vendidos de cada um desses nós, sem contar os que não têm preço de compra.
     Devolve o id da execução, ou None se o dia já estava completo (nada a fazer).
     """
     criar_schema(conn)
@@ -283,7 +290,7 @@ def varrer(
                 continue
             if f.ordem == "preco" and n_pag > MAX_PAGINAS_FATIA:
                 avisos.append(f"fatia {f.id} (preço único) tem {n_pag} páginas; parte pode ficar de fora")
-            conn.execute("UPDATE fatias SET paginas = ?, total = ?, passada_iniciada_em = ? WHERE id = ?",
+            conn.execute("UPDATE fatias SET paginas = ?, total = ?, passada_iniciada_em = ?, livros = 0 WHERE id = ?",
                          (n_pag, pagina.total, db.agora(), f.id))
 
         quando = db.agora()
@@ -292,7 +299,10 @@ def varrer(
         itens += len(pagina.itens)
 
         ultima = min(pagina.ultima_pagina or pag, limite)
-        fim = pagina.cards == 0 or pag >= ultima
+        conn.execute("UPDATE fatias SET livros = livros + ? WHERE id = ?", (pagina.livros, f.id))
+        lidos = conn.execute("SELECT livros FROM fatias WHERE id = ?", (f.id,)).fetchone()[0]
+        completou = f.ordem == "vendidos" and lidos >= LIVROS_POR_CATEGORIA
+        fim = pagina.cards == 0 or pag >= ultima or completou
         if fim:
             conn.execute("UPDATE fatias SET proxima_pagina = 1, ultima_passada = ? WHERE id = ?", (quando, f.id))
         else:
@@ -300,7 +310,9 @@ def varrer(
         conn.execute("UPDATE execucoes SET paginas = ?, itens = ?, bloqueios = ?, erros = ? WHERE id = ?",
                      (paginas, itens, bloqueios, erros, exec_id))
         conn.commit()
-        print(f"{rotulo[:-1]}/{ultima}] {len(pagina.itens)} preços" + (" (fim)" if fim else ""))
+        print(f"{rotulo[:-1]}/{ultima}] {len(pagina.itens)} preços"
+              + (f", {lidos} livros" if f.ordem == "vendidos" else "")
+              + (" (fim)" if fim else ""))
 
     _fechar_dia_se_completo(conn, grupo, desde)
     conn.execute(

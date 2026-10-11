@@ -52,6 +52,7 @@ class ItemBusca:
 class PaginaBusca:
     itens: list[ItemBusca] = field(default_factory=list)
     cards: int = 0                  # cards de resultado (sem patrocinados)
+    livros: int = 0                 # cards com pelo menos um preço de compra (os sem preço ficam de fora)
     total: int | None = None        # "710 resultados" ou "mais de 2.000"
     total_exato: bool = False
     ultima_pagina: int | None = None
@@ -147,7 +148,9 @@ def parse_busca(html: str) -> PaginaBusca:
         if not card.get("data-asin") or _patrocinado(card):
             continue
         pagina.cards += 1
-        for item in _itens_do_card(card):
+        itens = _itens_do_card(card)
+        pagina.livros += bool(itens)
+        for item in itens:
             if item.asin not in vistos:
                 vistos.add(item.asin)
                 pagina.itens.append(item)

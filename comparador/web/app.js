@@ -45,7 +45,7 @@
   function desenharResultados() {
     var q = $('#q').value, el = $('#res'), r = ultimaBusca;
     if (!q.trim()) { el.innerHTML = '<p class="mu">Digite parte do título, o nome do autor ou o ASIN/ISBN-10 para buscar entre os ' + (meta ? meta.itens.toLocaleString('pt-BR') : '') + ' livros acompanhados.</p>'; return; }
-    if (!r.length) { el.innerHTML = '<p class="mu">Nenhum livro encontrado para "' + L.esc(q) + '". O catálogo cobre os mais vendidos e a categoria de HQs e mangás; tente menos palavras.</p>'; return; }
+    if (!r.length) { el.innerHTML = '<p class="mu">Nenhum livro encontrado para "' + L.esc(q) + '". O catálogo cobre os ~1.000 mais vendidos de cada categoria de livros; tente menos palavras.</p>'; return; }
     el.innerHTML = '<p class="mu">' + r.length.toLocaleString('pt-BR') + ' resultado' + (r.length > 1 ? 's' : '') + '</p><ul class="lst">' +
       r.slice(0, mostrados).map(function (it) {
         return '<li class="it"><div class="tt"><a href="livro.html?asin=' + it.asin + '">' + L.esc(it.titulo) + '</a>' + (it.formato ? '<span class="tag">' + L.esc(it.formato) + '</span>' : '') +
