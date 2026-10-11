@@ -49,6 +49,18 @@ class TestRelatorio(unittest.TestCase):
         pequeno = [mk(5000, "2026-09-28", "2026-11-26"), mk(4900, "2026-11-27", "2026-11-27")]
         self.assertEqual(relatorio.veredito(pequeno, ev).categoria, "pequeno")
 
+    def test_mediana_movel_90_dias(self):
+        mk = lambda p, a, b: relatorio.Trecho(date.fromisoformat(a), date.fromisoformat(b), p, None)
+        # 100 dias a 5000 e depois 10 dias a 9000: os últimos 90 dias ainda têm mediana 5000
+        tr = [mk(5000, "2026-01-01", "2026-04-10"), mk(9000, "2026-04-11", "2026-04-20")]
+        m = relatorio.mediana_movel(tr)
+        self.assertEqual(m[0], (date(2026, 1, 1), 5000))
+        self.assertEqual(m[-1], (date(2026, 4, 20), 5000))
+        # janela de 10 dias: o preço novo domina
+        self.assertEqual(relatorio.mediana_movel(tr, 10)[-1][1], 9000)
+        # dias antigos saem da janela
+        self.assertEqual(relatorio.mediana_movel([mk(100, "2026-01-01", "2026-03-01"), mk(300, "2026-03-02", "2026-06-30")])[-1][1], 300)
+
     def test_pagina_html(self):
         h = relatorio.pagina("Livro", "B1", relatorio.serie(banco(), "B1"),
                              [Evento("BF", date(2026, 11, 27), date(2026, 11, 27))])

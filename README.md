@@ -234,7 +234,7 @@ Os valores ficam em **centavos** e as datas em UTC. Para gráficos, use só `sta
 python -m comparador --db data/catalogo-vendidos.db grafico "título ou ASIN"
 ```
 
-Gera `data/grafico-<ASIN>.html` (abra no navegador): linha contínua = preço, tracejada = preço de
+Gera `data/grafico-<ASIN>.html` (abra no navegador): linha contínua = preço, pontilhada laranja = mediana dos últimos 90 dias, tracejada = preço de
 capa, faixa = Black Friday / Dia do Consumidor (datas em `eventos.csv`). Se o termo casar com
 vários livros, lista os ASINs para você repetir com o exato. Sem `--db`, usa `data/precos.db`
 (lista de desejos) se existir, senão `data/catalogo.db`.

@@ -87,6 +87,33 @@ def serie(conn: sqlite3.Connection, asin: str) -> list[Trecho]:
     return out
 
 
+JANELA_MEDIANA = 90  # dias da mediana desenhada no gráfico
+
+
+def mediana_movel(trechos: list[Trecho], janela: int = JANELA_MEDIANA) -> list[tuple[date, int]]:
+    """Para cada dia observado, a mediana dos preços dos últimos `janela` dias (inclusive o dia).
+
+    Cada dia entra uma vez, com o preço do trecho em que cai; dias sem observação não entram.
+    Devolve só os pontos em que o valor muda, mais o último dia.
+    """
+    por_dia: dict[date, int] = {}
+    for t in trechos:
+        d = t.desde
+        while d <= t.ate:
+            por_dia[d] = t.preco
+            d += timedelta(days=1)
+    dias = sorted(por_dia)
+    out: list[tuple[date, int]] = []
+    for d in dias:
+        w = [por_dia[x] for x in dias if d - timedelta(days=janela - 1) <= x <= d]
+        m = int(statistics.median(w))
+        if not out or out[-1][1] != m:
+            out.append((d, m))
+    if out and out[-1][0] != dias[-1]:
+        out.append((dias[-1], out[-1][1]))
+    return out
+
+
 def aviso(conn: sqlite3.Connection) -> str:
     """Texto da tabela `aviso`, que os bancos simulados trazem; vazio nos bancos reais."""
     if not conn.execute("SELECT name FROM sqlite_master WHERE name = 'aviso'").fetchone():
@@ -155,7 +182,8 @@ def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=360) 
         if d0 - timedelta(days=30) <= e.fim <= d1 + timedelta(days=120):
             d0, d1 = min(d0, e.inicio), max(d1, e.fim)
     d1 = max(d1, d0 + timedelta(days=6))
-    valores = [t.preco for t in trechos] + [t.capa for t in trechos if t.capa]
+    med = mediana_movel(trechos)
+    valores = [t.preco for t in trechos] + [t.capa for t in trechos if t.capa] + [m for _, m in med]
     lo, hi = min(valores), max(valores)
     folga = max((hi - lo) * 0.1, 50)
     lo, hi = max(0, lo - folga), hi + folga
@@ -182,6 +210,12 @@ def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=360) 
     if capas:
         pts = " ".join(f"{X(t.desde):.1f},{Y(t.capa):.1f} {X(t.ate):.1f},{Y(t.capa):.1f}" for t in capas)
         p.append(f'<polyline points="{pts}" class="capa"/>')
+    mp = ""
+    for i, (d, m) in enumerate(med):
+        if i:
+            mp += f"L{X(d):.1f},{Y(med[i - 1][1]):.1f}"  # degrau
+        mp += f"{'M' if not i else 'L'}{X(d):.1f},{Y(m):.1f}"
+    p.append(f'<path d="{mp}" class="med"><title>Mediana dos últimos {JANELA_MEDIANA} dias</title></path>')
     path = ""
     for i, t in enumerate(trechos):
         x0, x1, y = X(t.desde), X(t.ate), Y(t.preco)
@@ -199,11 +233,12 @@ def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=360) 
 
 
 CSS = """
-:root{--fg:#1d2327;--bg:#fff;--mu:#667;--pr:#0b6bcb;--ca:#999;--ev:#f5a62333;--gr:#0001}
-@media(prefers-color-scheme:dark){:root{--fg:#e8e8e8;--bg:#16191c;--mu:#9aa;--pr:#5aa9ff;--ca:#777;--ev:#f5a62344;--gr:#fff2}}
+:root{--fg:#1d2327;--bg:#fff;--mu:#667;--pr:#0b6bcb;--ca:#999;--me:#d9730d;--ev:#f5a62333;--gr:#0001}
+@media(prefers-color-scheme:dark){:root{--fg:#e8e8e8;--bg:#16191c;--mu:#9aa;--pr:#5aa9ff;--ca:#777;--me:#ffa94d;--ev:#f5a62344;--gr:#fff2}}
 body{font:15px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg);max-width:900px;margin:0 auto;padding:16px}
 svg{width:100%;height:auto;font-size:11px;fill:var(--mu)}.g{stroke:var(--gr)}
 .preco{fill:none;stroke:var(--pr);stroke-width:2}.pt{fill:var(--pr)}
+.med{fill:none;stroke:var(--me);stroke-width:2;stroke-dasharray:2 3}
 .capa{fill:none;stroke:var(--ca);stroke-width:1.5;stroke-dasharray:5 4}
 .ev{fill:var(--ev)}.evt{fill:var(--fg);font-size:11px}
 li{margin:.3em 0}small{color:var(--mu)}
@@ -214,6 +249,7 @@ def pagina(titulo: str, asin: str, trechos: list[Trecho], eventos: list[Evento],
     ultimo = trechos[-1]
     precos = [t.preco for t in trechos]
     resumo = (f"Atual {_brl(ultimo.preco)} · mínimo {_brl(min(precos))} · máximo {_brl(max(precos))}"
+              f" · mediana {JANELA_MEDIANA} dias {_brl(mediana_movel(trechos)[-1][1])}"
               f" · capa {_brl(next((t.capa for t in reversed(trechos) if t.capa), None))}"
               f" · observado de {trechos[0].desde:%d/%m/%Y} a {ultimo.ate:%d/%m/%Y}")
     vs = "".join(f"<li><b>{html.escape(v.evento.nome)}</b> ({v.evento.inicio:%d/%m/%Y}): {html.escape(v.texto)}</li>"
@@ -223,6 +259,6 @@ def pagina(titulo: str, asin: str, trechos: list[Trecho], eventos: list[Evento],
             f"<title>{html.escape(titulo)}</title><style>{CSS}</style><body>"
             f'{f"<p><b>{html.escape(aviso)}</b></p>" if aviso else ""}'
             f"<h1>{html.escape(titulo)}</h1><small>ASIN {html.escape(asin)} · linha contínua: preço; "
-            f"tracejada: preço de capa; faixa: promoção</small>{_svg(trechos, eventos)}"
+            f"tracejada cinza: preço de capa; pontilhada laranja: mediana dos últimos 90 dias; faixa: promoção</small>{_svg(trechos, eventos)}"
             f"<p>{html.escape(resumo)}</p><h2>Promoções</h2><ul>{vs or '<li>nenhum evento em eventos.csv</li>'}</ul>"
             f"</body></html>")
