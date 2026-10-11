@@ -13,6 +13,9 @@ from pathlib import Path
 from .db import dia_brasil
 
 JANELA_BASE = 60  # dias antes do evento usados como "preço normal"
+JANELA_PICO = 21  # dias antes do evento em que um aumento artificial é procurado
+LIMIAR_DESCONTO = 0.05  # abaixo disso a diferença é oscilação normal, não promoção
+LIMIAR_INFLADO = 0.10   # alta mínima sobre o normal para suspeitar de preço inflado
 
 
 @dataclass
@@ -38,6 +41,7 @@ class Veredito:
     minimo_antes: int | None
     capa: int | None
     texto: str
+    categoria: str = "sem_dado"  # sem_dado | real | pequeno | nao_desconto | inflado | antes_do_evento
 
 
 def ler_eventos(caminho: str | Path) -> list[Evento]:
@@ -83,6 +87,14 @@ def serie(conn: sqlite3.Connection, asin: str) -> list[Trecho]:
     return out
 
 
+def aviso(conn: sqlite3.Connection) -> str:
+    """Texto da tabela `aviso`, que os bancos simulados trazem; vazio nos bancos reais."""
+    if not conn.execute("SELECT name FROM sqlite_master WHERE name = 'aviso'").fetchone():
+        return ""
+    r = conn.execute("SELECT texto FROM aviso LIMIT 1").fetchone()
+    return r[0] if r else ""
+
+
 def _brl(c: int | None) -> str:
     return "–" if c is None else f"R$ {c / 100:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -92,11 +104,11 @@ def veredito(trechos: list[Trecho], ev: Evento) -> Veredito:
     durante = [t for t in trechos if t.desde <= ev.fim and t.ate >= ev.inicio]
     capa = next((t.capa for t in reversed(trechos) if t.capa), None)
     if not durante:
-        return Veredito(ev, None, None, None, capa, "sem observação durante o evento")
+        return Veredito(ev, None, None, None, capa, "sem observação durante o evento", "sem_dado")
     preco = min(t.preco for t in durante)
     if not antes:
         return Veredito(ev, preco, None, None, capa,
-                        f"{_brl(preco)} no evento; sem {JANELA_BASE} dias de histórico antes para comparar")
+                        f"{_brl(preco)} no evento; sem {JANELA_BASE} dias de histórico antes para comparar", "sem_dado")
     # mediana ponderada por dias de cada trecho (um preço que durou 50 dias pesa mais que um de 1 dia)
     dias: list[int] = []
     for t in antes:
@@ -104,16 +116,35 @@ def veredito(trechos: list[Trecho], ev: Evento) -> Veredito:
         dias += [t.preco] * ((t.ate - ini).days + 1)
     normal = int(statistics.median(dias))
     minimo = min(t.preco for t in antes)
-    desc = (normal - preco) / normal * 100
-    if preco >= normal:
-        juiz = "NÃO é desconto: o preço normal era igual ou menor"
-    elif preco > minimo:
-        juiz = f"{desc:.0f}% abaixo do normal, mas já esteve mais barato ({_brl(minimo)})"
-    else:
-        juiz = f"{desc:.0f}% abaixo do normal e é o menor preço da janela"
+    desc = (normal - preco) / normal
+    pico = max((t.preco for t in trechos
+                if t.ate >= ev.inicio - timedelta(days=JANELA_PICO) and t.desde < ev.inicio), default=normal)
+    subiu = pico / normal - 1
+    inflado = subiu >= LIMIAR_INFLADO
     extra = f"; {(capa - preco) / capa * 100:.0f}% abaixo da capa" if capa and capa > preco else ""
+    if desc < LIMIAR_DESCONTO:
+        if inflado:
+            cat = "inflado"
+            juiz = (f"NÃO é desconto: o preço subiu {subiu * 100:.0f}% nas semanas antes ({_brl(pico)}) "
+                    "e só voltou ao normal")
+        elif preco >= normal:
+            cat, juiz = "nao_desconto", "NÃO é desconto: o preço normal era igual ou menor"
+        else:
+            cat = "pequeno"
+            juiz = f"NÃO é desconto relevante: só {desc * 100:.0f}% abaixo do normal (oscilação comum)"
+    elif (antes[-1].preco * (1 - LIMIAR_DESCONTO) <= preco) and not inflado:
+        cat = "antes_do_evento"
+        juiz = (f"o preço já era {_brl(antes[-1].preco)} logo antes do evento: a queda "
+                f"({desc * 100:.0f}% abaixo do normal) não é da promoção")
+    else:
+        cat = "real"
+        juiz = (f"{desc * 100:.0f}% abaixo do normal e é o menor preço da janela" if preco <= minimo
+                else f"{desc * 100:.0f}% abaixo do normal, mas já esteve mais barato ({_brl(minimo)})")
+        if inflado:
+            cat = "inflado"
+            juiz += f"; atenção: antes disso o preço havia subido {subiu * 100:.0f}%"
     return Veredito(ev, preco, normal, minimo, capa,
-                    f"{_brl(preco)} no evento vs normal {_brl(normal)}: {juiz}{extra}")
+                    f"{_brl(preco)} no evento vs normal {_brl(normal)}: {juiz}{extra}", cat)
 
 
 def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=360) -> str:
@@ -179,7 +210,7 @@ li{margin:.3em 0}small{color:var(--mu)}
 """
 
 
-def pagina(titulo: str, asin: str, trechos: list[Trecho], eventos: list[Evento]) -> str:
+def pagina(titulo: str, asin: str, trechos: list[Trecho], eventos: list[Evento], aviso: str = "") -> str:
     ultimo = trechos[-1]
     precos = [t.preco for t in trechos]
     resumo = (f"Atual {_brl(ultimo.preco)} · mínimo {_brl(min(precos))} · máximo {_brl(max(precos))}"
@@ -190,6 +221,7 @@ def pagina(titulo: str, asin: str, trechos: list[Trecho], eventos: list[Evento])
     return (f'<!doctype html><html lang="pt-BR"><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<title>{html.escape(titulo)}</title><style>{CSS}</style><body>"
+            f'{f"<p><b>{html.escape(aviso)}</b></p>" if aviso else ""}'
             f"<h1>{html.escape(titulo)}</h1><small>ASIN {html.escape(asin)} · linha contínua: preço; "
             f"tracejada: preço de capa; faixa: promoção</small>{_svg(trechos, eventos)}"
             f"<p>{html.escape(resumo)}</p><h2>Promoções</h2><ul>{vs or '<li>nenhum evento em eventos.csv</li>'}</ul>"

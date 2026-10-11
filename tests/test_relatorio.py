@@ -39,6 +39,16 @@ class TestRelatorio(unittest.TestCase):
         v = relatorio.veredito(t, Evento("X", date(2026, 11, 28), date(2026, 12, 1)))
         self.assertIn("NÃO é desconto", v.texto)
 
+    def test_preco_inflado_antes_da_promocao(self):
+        ev = Evento("BF", date(2026, 11, 27), date(2026, 11, 27))
+        mk = lambda p, a, b: relatorio.Trecho(date.fromisoformat(a), date.fromisoformat(b), p, 8000)
+        inflado = [mk(5000, "2026-09-28", "2026-11-05"), mk(6500, "2026-11-06", "2026-11-26"), mk(5100, "2026-11-27", "2026-11-27")]
+        self.assertEqual(relatorio.veredito(inflado, ev).categoria, "inflado")
+        ja_baixo = [mk(6000, "2026-09-28", "2026-10-20"), mk(5000, "2026-10-21", "2026-11-26"), mk(5000, "2026-11-27", "2026-11-27")]
+        self.assertEqual(relatorio.veredito(ja_baixo, ev).categoria, "antes_do_evento")
+        pequeno = [mk(5000, "2026-09-28", "2026-11-26"), mk(4900, "2026-11-27", "2026-11-27")]
+        self.assertEqual(relatorio.veredito(pequeno, ev).categoria, "pequeno")
+
     def test_pagina_html(self):
         h = relatorio.pagina("Livro", "B1", relatorio.serie(banco(), "B1"),
                              [Evento("BF", date(2026, 11, 27), date(2026, 11, 27))])

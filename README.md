@@ -244,3 +244,20 @@ anteriores** (cada preço pesa pelos dias em que durou) e contra o preço de cap
 "normal" já era igual ou menor (não é desconto) e se já houve preço mais baixo na janela. Precisa
 de pelo menos algumas semanas de histórico antes do evento; sem isso, avisa que não dá para comparar.
 Os bancos do catálogo estão em *Releases → catalogo* (descompacte o `.db.gz`).
+
+### Simulação para testar antes da Black Friday
+
+```bash
+python scripts/simular_precos.py ORIGEM.db data/simulado.db --livros 2000
+python -m comparador --db data/simulado.db grafico "título ou ASIN"
+```
+
+Parte dos livros e preços **reais** de um banco do catálogo e inventa, num banco novo (o original
+não é tocado), preços diários de 28/09 a 30/11/2026 com oscilação de até ±12%. Cada livro recebe um
+cenário sorteado (`real`: queda de 15 a 40% na Black Friday; `falso`: preço sobe 15 a 35% nas 3
+semanas antes e "cai" de volta; `nenhum`: sem promoção), gravado em `simulacao.cenario` para conferir
+o veredito. O banco simulado leva um aviso nos gráficos e **não deve ser misturado ao real**.
+
+O veredito classifica cada evento em `real`, `pequeno` (abaixo de 5%, oscilação comum), `nao_desconto`,
+`inflado` (o preço subiu 10% ou mais nas 3 semanas antes) e `antes_do_evento` (o preço já era esse
+antes da promoção).

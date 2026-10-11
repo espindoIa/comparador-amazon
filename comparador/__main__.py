@@ -157,7 +157,7 @@ def main() -> None:
         saida = Path(args.saida or f"data/grafico-{asin}.html")
         saida.parent.mkdir(parents=True, exist_ok=True)
         eventos = relatorio.ler_eventos(args.eventos)
-        saida.write_text(relatorio.pagina(titulo or asin, asin, trechos, eventos), encoding="utf-8")
+        saida.write_text(relatorio.pagina(titulo or asin, asin, trechos, eventos, relatorio.aviso(conn)), encoding="utf-8")
         for e in eventos:
             print(relatorio.veredito(trechos, e).texto)
         print(f"gráfico em {saida}")
