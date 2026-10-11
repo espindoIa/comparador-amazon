@@ -53,3 +53,12 @@ CREATE TABLE IF NOT EXISTS execucoes (
     erros         INTEGER NOT NULL DEFAULT 0,
     observacao    TEXT
 );
+
+-- Dias (horário de Brasília) em que TODAS as fatias da categoria foram lidas.
+-- Dia ausente aqui = lacuna (ver `python -m comparador catalogo`).
+CREATE TABLE IF NOT EXISTS dias (
+    no          TEXT NOT NULL,
+    dia         TEXT NOT NULL,   -- AAAA-MM-DD
+    completo_em TEXT NOT NULL,
+    PRIMARY KEY (no, dia)
+);

@@ -12,10 +12,11 @@ Por que assim (medido em out/2026):
   o mesmo ASIN pode aparecer em mais de uma. Isso só gera observações repetidas, que
   o histórico por intervalos absorve.
 
-Cada execução tem um orçamento de tempo e retoma de onde a anterior parou (a página
-seguinte de cada fatia fica salva no banco). As fatias são visitadas da mais
-desatualizada para a mais recente, então execuções curtas e diárias cobrem a
-categoria inteira em rodízio.
+Modo diário: cada fatia precisa ser lida por inteiro uma vez por dia (horário de
+Brasília). Uma execução lê as fatias que ainda faltam hoje, salva o progresso a cada
+página e para quando o dia fica completo ou o tempo acaba; a execução seguinte continua
+dali. Medido: HQs e mangás = 33 fatias, ~2.050 páginas, ~1h40 a ~20 páginas/min, sem
+bloqueios, então um servidor por dia basta.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from pathlib import Path
 
 from . import db
 from .busca import ItemBusca, LayoutDesconhecido, parse_busca, url_busca
-from .coletor import PAUSA_APOS_BLOQUEIO, PAUSA_PADRAO, _baixar, _guardar_html
+from .coletor import PAUSA_APOS_BLOQUEIO, _baixar, _guardar_html
 
 SCHEMA = Path(__file__).with_name("schema_catalogo.sql")
 
@@ -41,6 +42,10 @@ FAIXAS_INICIAIS = [0, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 6000, 8000
                    10000, 15000, 20000, 50000]
 BURACO = timedelta(days=10)   # sem observação por mais que isso: novo intervalo no histórico
 LIMITE_FALHAS_SEGUIDAS = 3
+# Medido em out/2026: 1,5–3 s → 18 páginas/min e 0,3–1 s → 36 páginas/min, ambos sem
+# bloqueio. 1–3 s fica no meio, com folga. Depois de um bloqueio, fica 3x mais lento.
+PAUSA_VARREDURA = (1.0, 3.0)
+FATOR_LENTO = 3.0
 
 
 @dataclass
@@ -74,14 +79,30 @@ def semear(conn: sqlite3.Connection, no: str) -> None:
     conn.commit()
 
 
-def proxima_fatia(conn: sqlite3.Connection, no: str) -> Fatia | None:
-    """Passada em andamento primeiro; depois a fatia mais desatualizada (nunca visitada antes)."""
+def inicio_do_dia(dia=None) -> str:
+    """Meia-noite (Brasília) do dia, em UTC ISO: fatias lidas depois disso contam para o dia."""
+    dia = dia or db.hoje_brasil()
+    return datetime(dia.year, dia.month, dia.day, tzinfo=db.BRASILIA).astimezone(timezone.utc).isoformat(
+        timespec="seconds")
+
+
+def proxima_fatia(conn: sqlite3.Connection, no: str, desde: str) -> Fatia | None:
+    """Próxima fatia que ainda não foi lida inteira desde `desde` (passada em andamento primeiro)."""
     r = conn.execute(
-        "SELECT * FROM fatias WHERE no = ? AND ativa = 1 "
-        "ORDER BY proxima_pagina = 1, ultima_passada IS NOT NULL, ultima_passada, preco_min LIMIT 1",
-        (no,),
+        "SELECT * FROM fatias WHERE no = ? AND ativa = 1 AND (ultima_passada IS NULL OR ultima_passada < ?) "
+        "ORDER BY proxima_pagina = 1, preco_min LIMIT 1",
+        (no, desde),
     ).fetchone()
     return Fatia.de(r) if r else None
+
+
+def _fechar_dia_se_completo(conn: sqlite3.Connection, no: str, desde: str) -> bool:
+    if proxima_fatia(conn, no, desde) is not None:
+        return False
+    conn.execute("INSERT OR IGNORE INTO dias (no, dia, completo_em) VALUES (?, ?, ?)",
+                 (no, db.dia_brasil(desde).isoformat(), db.agora()))
+    conn.commit()
+    return True
 
 
 def dividir(conn: sqlite3.Connection, f: Fatia) -> None:
@@ -139,28 +160,38 @@ def varrer(
     no: str = NO_HQ_MANGA,
     minutos: float = 60,
     max_paginas: int | None = None,
-    pausa: tuple[float, float] = PAUSA_PADRAO,
+    pausa: tuple[float, float] = PAUSA_VARREDURA,
     dormir=time.sleep,
     relogio=time.monotonic,
     pasta_html: Path | None = None,
 ) -> int:
-    """Visita páginas de busca até acabar o tempo (ou `max_paginas`). Devolve o id da execução."""
+    """Lê as fatias que faltam hoje até completar o dia ou acabar o tempo (ou `max_paginas`).
+
+    Devolve o id da execução, ou None se o dia já estava completo (nada a fazer).
+    """
     criar_schema(conn)
     semear(conn, no)
-    inicio_iso = db.agora()
-    exec_id = conn.execute("INSERT INTO execucoes (iniciada_em) VALUES (?)", (inicio_iso,)).lastrowid
+    desde = inicio_do_dia()
+    if _fechar_dia_se_completo(conn, no, desde):
+        return None
+    # Passada que começou antes de hoje recomeça da página 1: todos os preços do dia
+    # precisam ser do dia.
+    conn.execute("UPDATE fatias SET proxima_pagina = 1 WHERE no = ? AND proxima_pagina > 1 "
+                 "AND passada_iniciada_em < ?", (no, desde))
+    exec_id = conn.execute("INSERT INTO execucoes (iniciada_em) VALUES (?)", (db.agora(),)).lastrowid
     conn.commit()
     inicio = relogio()
     paginas = itens = bloqueios = erros = falhas_seguidas = 0
+    fator = 1.0
     avisos: list[str] = []
 
     while relogio() - inicio < minutos * 60 and (max_paginas is None or paginas + bloqueios + erros < max_paginas):
-        f = proxima_fatia(conn, no)
-        if f is None or (f.proxima_pagina == 1 and f.ultima_passada and f.ultima_passada >= inicio_iso):
-            avisos.append("todas as fatias foram visitadas nesta execução")
+        f = proxima_fatia(conn, no, desde)
+        if f is None:
+            avisos.append("dia completo")
             break
         if paginas + bloqueios + erros:
-            dormir(random.uniform(*pausa) + (PAUSA_APOS_BLOQUEIO if falhas_seguidas else 0))
+            dormir(random.uniform(*pausa) * fator + (PAUSA_APOS_BLOQUEIO if falhas_seguidas else 0))
 
         pag = f.proxima_pagina
         url = url_busca(f.no, f.preco_min, f.preco_max, pag)
@@ -177,7 +208,8 @@ def varrer(
             falhas_seguidas += 1
             if erro is not None and erro.status == "bloqueado":
                 bloqueios += 1
-                print(f"[fatia {f.id} p{pag}] bloqueado")
+                fator = FATOR_LENTO  # daqui em diante, mais devagar
+                print(f"[fatia {f.id} p{pag}] bloqueado; diminuindo o ritmo")
             else:
                 erros += 1
                 print(f"[fatia {f.id} p{pag}] {erro.detalhe if erro else erro_txt}")
@@ -219,6 +251,7 @@ def varrer(
         print(f"[fatia {f.id} R$ {f.preco_min / 100:.2f}–{f.preco_max / 100:.2f} p{pag}/{ultima}] "
               f"{len(pagina.itens)} preços" + (" (fim da fatia)" if fim else ""))
 
+    _fechar_dia_se_completo(conn, no, desde)
     conn.execute(
         "UPDATE execucoes SET finalizada_em = ?, paginas = ?, itens = ?, bloqueios = ?, erros = ?, "
         "observacao = ? WHERE id = ?",
@@ -231,24 +264,34 @@ def varrer(
 @dataclass
 class Cobertura:
     itens: int
-    vistos_recentes: int
+    vistos_hoje: int
     fatias: int
-    fatias_atrasadas: int
-    pendentes_iniciais: int  # fatias novas que ainda não completaram a primeira passada
+    fatias_hoje: int        # fatias já lidas por inteiro hoje
+    dia_completo: bool
+    lacunas: list           # dias (date) sem varredura completa, da primeira execução até ontem
 
 
-def cobertura(conn: sqlite3.Connection, no: str = NO_HQ_MANGA, dias: int = 8) -> Cobertura:
+def cobertura(conn: sqlite3.Connection, no: str = NO_HQ_MANGA) -> Cobertura:
     criar_schema(conn)
-    limite = (datetime.now(timezone.utc) - timedelta(days=dias)).isoformat(timespec="seconds")
+    desde = inicio_do_dia()
     um = lambda sql, *a: conn.execute(sql, a).fetchone()[0]  # noqa: E731
+    completos = {datetime.fromisoformat(r[0]).date() for r in conn.execute("SELECT dia FROM dias WHERE no = ?", (no,))}
+    # Lacunas contam a partir do primeiro dia com execução (mesmo que nenhum dia tenha
+    # completado: bloqueio desde o início também é lacuna).
+    primeira = conn.execute("SELECT MIN(iniciada_em) FROM execucoes").fetchone()[0]
+    inicios = [d for d in (min(completos, default=None), primeira and db.dia_brasil(primeira)) if d]
+    lacunas = []
+    if inicios:
+        dia, ontem = min(inicios), db.hoje_brasil() - timedelta(days=1)
+        while dia <= ontem:
+            if dia not in completos:
+                lacunas.append(dia)
+            dia += timedelta(days=1)
     return Cobertura(
         itens=um("SELECT COUNT(*) FROM catalogo WHERE no = ?", no),
-        vistos_recentes=um("SELECT COUNT(*) FROM catalogo WHERE no = ? AND ultimo_visto >= ?", no, limite),
+        vistos_hoje=um("SELECT COUNT(*) FROM catalogo WHERE no = ? AND ultimo_visto >= ?", no, desde),
         fatias=um("SELECT COUNT(*) FROM fatias WHERE no = ? AND ativa = 1", no),
-        # Atrasada: passou do prazo sem passada completa (as novas têm `dias` de carência).
-        fatias_atrasadas=um(
-            "SELECT COUNT(*) FROM fatias WHERE no = ? AND ativa = 1 AND "
-            "COALESCE(ultima_passada, criada_em) < ?", no, limite),
-        pendentes_iniciais=um(
-            "SELECT COUNT(*) FROM fatias WHERE no = ? AND ativa = 1 AND ultima_passada IS NULL", no),
+        fatias_hoje=um("SELECT COUNT(*) FROM fatias WHERE no = ? AND ativa = 1 AND ultima_passada >= ?", no, desde),
+        dia_completo=db.hoje_brasil() in completos,
+        lacunas=lacunas,
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import timedelta
 from pathlib import Path
 
 from . import coletor, db, varredura
@@ -38,16 +39,17 @@ def main() -> None:
 
     sub.add_parser("status", help="mostra as últimas coletas e o último preço de cada livro")
 
-    v = sub.add_parser("varrer", help="varre uma categoria inteira pelas páginas de busca")
+    v = sub.add_parser("varrer", help="lê a categoria inteira (uma vez por dia) pelas páginas de busca")
     v.add_argument("--no", default=varredura.NO_HQ_MANGA,
                    help="nó da categoria (padrão: %(default)s = HQs, Mangás e Graphic Novels)")
-    v.add_argument("--minutos", type=float, default=60, help="orçamento de tempo (padrão: %(default)s)")
+    v.add_argument("--minutos", type=float, default=150, help="orçamento de tempo (padrão: %(default)s)")
     v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
     v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
 
-    k = sub.add_parser("catalogo", help="cobertura da varredura; código 1 se houver fatia atrasada")
+    k = sub.add_parser("catalogo", help="progresso de hoje e dias sem varredura completa")
     k.add_argument("--no", default=varredura.NO_HQ_MANGA)
-    k.add_argument("--dias", type=int, default=8, help="prazo para cada fatia ser revisitada")
+    k.add_argument("--exigir-ontem", action="store_true",
+                   help="sai com código 1 se ontem não teve varredura completa (para alertas)")
 
     args = p.parse_args()
     catalogo = args.cmd in ("varrer", "catalogo")
@@ -103,6 +105,9 @@ def main() -> None:
         finally:
             if hasattr(sessao, "fechar"):
                 sessao.fechar()
+        if eid is None:
+            print(f"{db.hoje_brasil()}: varredura do dia já está completa; nada a fazer")
+            return
         e = conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
         print(f"execução {eid}: {e['paginas']} páginas, {e['itens']} preços, "
               f"{e['bloqueios']} bloqueios, {e['erros']} erros")
@@ -111,16 +116,17 @@ def main() -> None:
         if e["paginas"] == 0 and (e["bloqueios"] or e["erros"]):
             raise SystemExit("nenhuma página lida")
     elif args.cmd == "catalogo":
-        c = varredura.cobertura(conn, args.no, args.dias)
-        print(f"{c.itens} itens no catálogo; {c.vistos_recentes} vistos nos últimos {args.dias} dias")
-        print(f"{c.fatias} fatias; {c.pendentes_iniciais} sem passada completa ainda; "
-              f"{c.fatias_atrasadas} atrasadas (mais de {args.dias} dias)")
+        c = varredura.cobertura(conn, args.no)
+        print(f"{c.itens} itens no catálogo; {c.vistos_hoje} com preço lido hoje")
+        print(f"hoje: {c.fatias_hoje} de {c.fatias} fatias lidas" + (" (dia completo)" if c.dia_completo else ""))
+        print("dias sem varredura completa: " + (", ".join(map(str, c.lacunas)) if c.lacunas else "nenhum"))
         for r in conn.execute("SELECT * FROM execucoes ORDER BY id DESC LIMIT 5"):
             print(f"execução {r['id']}: {r['iniciada_em']}  {r['paginas']} páginas, {r['itens']} preços, "
                   f"{r['bloqueios']} bloqueios, {r['erros']} erros"
                   + (f"  ({r['observacao']})" if r["observacao"] else ""))
-        if c.fatias_atrasadas:
-            raise SystemExit(1)
+        ontem = db.hoje_brasil() - timedelta(days=1)
+        if args.exigir_ontem and ontem in c.lacunas:
+            raise SystemExit(f"{ontem} ficou sem varredura completa")
     elif args.cmd == "status":
         for r in conn.execute("SELECT * FROM coletas ORDER BY id DESC LIMIT 5"):
             print(f"coleta {r['id']}: {r['iniciada_em']}  {r['sucesso']}/{r['tentados']} ok"

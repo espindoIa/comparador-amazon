@@ -131,7 +131,18 @@ class TestVarredura(unittest.TestCase):
     def varrer(self, amazon, **kw):
         kw.setdefault("minutos", 10_000)
         eid = varredura.varrer(self.conn, amazon, no="1", dormir=lambda s: None, **kw)
+        if eid is None:
+            return None
         return self.conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
+
+    def para_ontem(self, *colunas):
+        """Simula que o que foi feito hoje aconteceu ontem."""
+        ontem = (datetime.fromisoformat(varredura.inicio_do_dia()) - timedelta(hours=1)).isoformat(timespec="seconds")
+        for c in colunas:
+            self.conn.execute(f"UPDATE fatias SET {c} = ? WHERE {c} IS NOT NULL", (ontem,))
+        self.conn.execute("UPDATE execucoes SET iniciada_em = ?", (ontem,))
+        self.conn.execute("UPDATE dias SET dia = ?", (db.dia_brasil(ontem).isoformat(),))
+        self.conn.commit()
 
     def vistos(self):
         return {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
@@ -144,7 +155,9 @@ class TestVarredura(unittest.TestCase):
         precos["CARO000001"] = 1_500_000  # R$ 15.000: cai na última fatia
         e = self.varrer(AmazonFalsa(precos))
         self.assertEqual(self.vistos(), set(precos))
-        self.assertIn("todas as fatias foram visitadas", e["observacao"])
+        self.assertIn("dia completo", e["observacao"])
+        self.assertIsNone(self.varrer(AmazonFalsa(precos)))  # mesmo dia: nada a fazer
+        self.assertTrue(varredura.cobertura(self.conn, "1").dia_completo)
         self.assertIn("preço único", e["observacao"])
         grandes = self.conn.execute(
             "SELECT COUNT(*) FROM fatias WHERE ativa = 1 AND paginas > ? AND preco_min < preco_max",
@@ -179,13 +192,30 @@ class TestVarredura(unittest.TestCase):
         self.assertIn("layout desconhecido", e["observacao"])
         self.assertEqual(self.vistos(), {"A000000001"})
 
-    def test_cobertura_e_fatias_atrasadas(self):
-        self.varrer(AmazonFalsa({"A000000001": 1000}))
-        c = varredura.cobertura(self.conn, "1", dias=8)
-        self.assertEqual((c.itens, c.vistos_recentes, c.fatias_atrasadas, c.pendentes_iniciais), (1, 1, 0, 0))
-        velho = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat(timespec="seconds")
-        self.conn.execute("UPDATE fatias SET ultima_passada = ? WHERE preco_min = 0", (velho,))
-        self.assertEqual(varredura.cobertura(self.conn, "1", dias=8).fatias_atrasadas, 1)
+    def test_dia_seguinte_le_tudo_de_novo(self):
+        amazon = AmazonFalsa({"A000000001": 1000})
+        self.varrer(amazon)
+        self.para_ontem("ultima_passada", "passada_iniciada_em")
+        self.assertIsNotNone(self.varrer(amazon))  # novo dia: tudo de novo
+        c = varredura.cobertura(self.conn, "1")
+        self.assertEqual((c.dia_completo, c.fatias_hoje, c.fatias, c.lacunas), (True, 15, 15, []))
+
+    def test_passada_de_ontem_recomeca_da_pagina_1(self):
+        precos = {f"A{i:09d}": 2000 + i for i in range(100)}  # 7 páginas
+        amazon = AmazonFalsa(precos)
+        self.varrer(amazon, max_paginas=6)  # parou na página 4 da fatia R$ 20–25
+        self.para_ontem("passada_iniciada_em")
+        amazon.chamadas.clear()
+        self.varrer(amazon)
+        self.assertIn("p_36%3A2000-2499&s=price-asc-rank&page=1", " ".join(amazon.chamadas))
+
+    def test_lacunas_e_bloqueio_desde_o_primeiro_dia(self):
+        cachorros = Resposta("<html><head><title>Amazon.com.br Algo deu errado</title></head></html>", 503)
+        self.varrer(AmazonFalsa({"A000000001": 1000}, falhas=[cachorros] * 3))
+        self.para_ontem()
+        c = varredura.cobertura(self.conn, "1")
+        self.assertEqual(c.lacunas, [db.hoje_brasil() - timedelta(days=1)])
+        self.assertFalse(c.dia_completo)
 
 
 class TestHistorico(unittest.TestCase):

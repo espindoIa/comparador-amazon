@@ -102,22 +102,41 @@ python -m comparador status
 O dia é contado no horário de Brasília. Para forçar uma coleta extra no mesmo dia, use
 *Run workflow* com "forcar" marcado.
 
-## Varredura de uma categoria inteira (HQs, mangás e graphic novels)
+## Varredura diária de categorias inteiras (HQs, mangás e graphic novels)
 
-Para acompanhar uma categoria inteira (mais de 30 mil itens), e não só a sua lista, o
-comando `varrer` lê as páginas de busca da Amazon, que trazem ~16 livros com preço por
-requisição. Isso é ~16x mais barato que consultar livro por livro.
+Para acompanhar uma categoria inteira, e não só a sua lista, o comando `varrer` lê
+**todos os dias** todas as páginas de busca da categoria. Cada página traz ~16 livros com
+preço, o que é ~16x mais barato que consultar livro por livro.
 
 ```bash
-python -m comparador varrer --minutos 60     # banco em data/catalogo.db
-python -m comparador catalogo                # cobertura: itens, fatias atrasadas, execuções
+python -m comparador varrer --no 7842710011     # banco em data/catalogo.db
+python -m comparador catalogo --no 7842710011   # progresso de hoje e dias sem varredura completa
 ```
 
-O workflow `.github/workflows/varredura.yml` roda isso todo dia por 90 minutos e guarda o
-banco como arquivo na release `catalogo` do repositório. Medido: ~10 s por página, ~6
-páginas e ~95 preços por minuto, sem bloqueios. A categoria inteira leva alguns dias e
-depois é revisitada em rodízio. Para baixar o banco: *Releases → catalogo*, arquivo mais
+Medido em out/2026 para HQs, Mangás e Graphic Novels (nó `7842710011`):
+
+| | |
+|---|---|
+| Tamanho | 33 fatias, ~2.050 páginas, ~32 mil itens (cada formato é um item) |
+| Ritmo | pausa de 1–3 s, ~20 páginas/min, sem bloqueios (testado também com 0,3–1 s: 36 páginas/min, sem bloqueio) |
+| Tempo por dia | ~1h40 num único servidor |
+
+O workflow `.github/workflows/varredura.yml` roda 4 vezes por dia. A primeira normalmente
+completa o dia; as outras só continuam o que faltou (o progresso é salvo a cada página) ou
+terminam em segundos. Uma passada que ficou pela metade ontem recomeça da página 1, para
+que todos os preços de um dia sejam daquele dia. A primeira execução de cada dia falha (e
+o GitHub avisa por e-mail) se o dia anterior ficou incompleto.
+
+Os bancos ficam na release `catalogo` do repositório, um arquivo por categoria
+(`catalogo-<nó>-<data>.db.gz`). Para baixar: *Releases → catalogo*, o arquivo mais
 recente, e `gunzip`.
+
+**Outras categorias:** acrescente o nó na lista `matrix.no` do workflow; cada categoria
+roda em paralelo, num servidor próprio. Os nós aparecem no link da categoria na Amazon
+(`rh=n:NÚMERO`). Exemplos: Fantasia, Horror e Ficção Científica `7841775011`, Literatura e
+Ficção `7872687011`, Infantil `7844001011`. O catálogo **inteiro** de livros (mais de 1
+milhão de itens, só o preço R$ 49,90 tem mais de 40 mil) não cabe num dia com esta
+abordagem; categorias do tamanho de HQs e mangás, sim.
 
 **Problemas encontrados e como foram resolvidos (todos medidos em páginas reais):**
 
@@ -131,19 +150,20 @@ recente, e `gunzip`.
 | Sem o parâmetro de ordenação, a Amazon devolve uma vitrine sem resultados | Toda URL tem `s=price-asc-rank`. Página sem resultados e sem a marca "Nenhum resultado" é tratada como mudança de layout (erro), não como fim |
 | O filtro de preço vale para qualquer formato do card: as fatias se sobrepõem | Observações repetidas não duplicam o histórico |
 | Execução interrompida (tempo, bloqueio, queda) | O progresso é salvo a cada página; a próxima execução continua da página seguinte |
-| Bloqueio | Repete a mesma página depois de uma pausa maior; para depois de 3 falhas seguidas |
+| Bloqueio | Repete a mesma página depois de uma pausa maior, fica 3x mais lento até o fim da execução e para depois de 3 falhas seguidas; a próxima execução do dia continua |
 | Histórico gigante (milhões de linhas por mês) | O histórico guarda intervalos ("R$ X de tal dia a tal dia"): só cresce quando o preço muda. Mais de 10 dias sem ver o item abre um intervalo novo, para o buraco ficar visível |
 | Banco publicado vazio ou corrompido por um erro | `scripts/verificar_banco.py` recusa banco corrompido ou com menos linhas que o anterior. Cada execução publica uma cópia nova com data e só depois apaga as antigas (mantém 14) |
-| Fatia esquecida | `catalogo` sai com erro (e o GitHub avisa por e-mail) se alguma fatia ficar mais de 8 dias sem visita |
+| Dia incompleto | 4 execuções por dia continuam de onde a anterior parou; se mesmo assim o dia ficar incompleto, a primeira execução do dia seguinte falha e o GitHub avisa por e-mail. `catalogo` lista os dias sem varredura completa |
 
 **Limites que continuam existindo:**
 - Itens sem preço (indisponíveis) não aparecem na busca, então não entram no catálogo.
-- Se o preço muda no meio de uma passada, o item pode mudar de fatia e ser visto duas
-  vezes ou nenhuma naquela passada; aparece na seguinte.
+- Se o preço muda no meio da leitura, o item pode mudar de fatia e ser visto duas vezes
+  ou nenhuma naquele dia. Medido: a fatia de R$ 29,90 (710 resultados) devolveu 709 itens
+  distintos, sem repetição, em 45 páginas.
 - O preço de capa só aparece na busca quando há desconto. Sem desconto, fica vazio.
 - Os termos de uso do GitHub Actions dizem que ele serve para o software do próprio
-  repositório; uma varredura diária longa pode ser considerada uso indevido. Se isso
-  preocupar, o mesmo comando roda em qualquer máquina sempre ligada (`cron`).
+  repositório; ~2 horas diárias de varredura podem ser consideradas uso indevido. Se
+  isso preocupar, o mesmo comando roda em qualquer máquina sempre ligada (`cron`).
 - Os termos da Amazon proíbem robôs. Quanto mais volume, maior o risco de bloqueio.
 
 ## Banco (`data/precos.db`)
