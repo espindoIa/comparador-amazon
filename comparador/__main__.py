@@ -91,3 +91,7 @@ def main() -> None:
         ontem = db.hoje_brasil() - timedelta(days=1)
         if args.exigir_ontem and ontem in c.lacunas:
             raise SystemExit(f"{ontem} ficou sem varredura completa")
+
+
+if __name__ == "__main__":
+    main()

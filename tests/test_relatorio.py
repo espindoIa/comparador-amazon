@@ -85,6 +85,26 @@ class TestRelatorio(unittest.TestCase):
         longo = relatorio._dados_js([mk(5000, "2026-01-01", "2026-12-31")], [])
         self.assertEqual(longo["def"][1] - longo["def"][0], 89)    # histórico longo: abre nos últimos 90 dias
 
+    def test_cli_grafico(self):
+        import contextlib, io, os, subprocess, sys, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            c = sqlite3.connect(f"{d}/c.db")
+            varredura.criar_schema(c)
+            c.execute("INSERT INTO catalogo VALUES ('B1','Livro Teste','Capa comum','n','2026-09-01','2026-12-01')")
+            c.execute("INSERT INTO historico (asin, preco_centavos, desde, ate) VALUES ('B1', 5000, "
+                      "'2026-10-01T12:00:00+00:00', '2026-10-05T12:00:00+00:00')")
+            c.commit(); c.close()
+            raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            r = subprocess.run([sys.executable, "-m", "comparador", "--db", f"{d}/c.db", "grafico", "teste",
+                                "--saida", f"{d}/g.html", "--eventos", f"{raiz}/eventos.csv"],
+                               cwd=raiz, capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("gráfico em", r.stdout)
+            self.assertIn("Livro Teste", open(f"{d}/g.html", encoding="utf-8").read())
+            r = subprocess.run([sys.executable, "-m", "comparador", "--db", f"{d}/c.db", "grafico", "inexistente"],
+                               cwd=raiz, capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(r.returncode, 0)
+
     def test_pagina_com_lacuna_e_um_so_dia(self):
         relatorio.pagina("L", "X", [mk(5000, "2026-01-01", "2026-01-05"), mk(5200, "2026-03-01", "2026-03-02")], [])
         relatorio.pagina("L", "X", [mk(5000, "2026-01-01", "2026-01-01", None)], [])
