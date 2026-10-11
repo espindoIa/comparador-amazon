@@ -104,6 +104,11 @@ class TestRelatorio(unittest.TestCase):
             r = subprocess.run([sys.executable, "-m", "comparador", "--db", f"{d}/c.db", "grafico", "inexistente"],
                                cwd=raiz, capture_output=True, text=True, timeout=60)
             self.assertNotEqual(r.returncode, 0)
+            # o workflow depende destes comandos imprimirem algo e saírem com o código certo
+            r = subprocess.run([sys.executable, "-m", "comparador", "--db", f"{d}/c.db", "catalogo"],
+                               cwd=raiz, capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("itens no catálogo", r.stdout)
 
     def test_pagina_com_lacuna_e_um_so_dia(self):
         relatorio.pagina("L", "X", [mk(5000, "2026-01-01", "2026-01-05"), mk(5200, "2026-03-01", "2026-03-02")], [])
