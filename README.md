@@ -8,7 +8,8 @@ no resto do ano, e não só com o preço de capa.
 ## Uso
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt     # inclui o Playwright, que controla o Chrome/Edge já instalado
+# só se você não tiver Chrome nem Edge: python -m playwright install chromium
 python -m comparador init            # cria data/precos.db e importa eventos.csv
 # cole o link da sua lista de desejos em desejos.txt (a lista precisa ser Pública ou Compartilhada)
 python -m comparador coletar
@@ -21,12 +22,28 @@ Opções de `coletar`:
 - `--desejos LINK` passa o link direto, sem usar `desejos.txt` (pode repetir).
 - `--lista livros.txt` define o arquivo de ASINs avulsos, fora de qualquer lista.
 - `--detalhar auto|todos|nenhum` define quando consultar a lista de ofertas de cada livro (veja abaixo).
-- `--cliente auto|curl|requests` define o cliente HTTP. O padrão usa o `curl` do sistema, que vem
-  instalado no Windows 10+, no macOS e no Linux, e cai para o `requests` se o curl não existir.
+- `--cliente auto|navegador|curl|requests` define o cliente HTTP (veja "Por que um navegador").
+  O padrão usa o navegador se o Playwright estiver instalado, senão o `curl`, senão o `requests`.
 
 Para rodar todo dia, agende o comando no `cron` (Linux/Mac) ou no Agendador de Tarefas
 (Windows), com o computador ligado. Exemplo de cron, às 9h:
 `0 9 * * * cd /caminho/comparador-amazon && python3 -m comparador coletar`
+
+## Por que um navegador
+
+A Amazon responde com erro 503 ou captcha a clientes que não parecem um navegador.
+Nos testes, a partir do mesmo IP e nos mesmos minutos:
+
+| Cliente | Lista de desejos (página 1) | Páginas seguintes | Lista de ofertas |
+|---|---|---|---|
+| `requests` | 0 de 4 | – | captcha |
+| `curl` | 2 de 3 | 0 de 6 | intermitente |
+| **navegador (Playwright)** | **sempre 200** | **9 de 9 (82 itens)** | **3 de 3** |
+
+O cliente navegador abre a primeira página de verdade, como você faria, e busca as
+seguintes com `fetch` dentro dela, na mesma sessão. Ele roda sem janela (headless) e usa
+o Chrome ou o Edge que você já tem. Para indicar outro navegador, defina a variável
+`COMPARADOR_NAVEGADOR` com o caminho do executável.
 
 ## De onde vêm os preços
 
@@ -66,7 +83,8 @@ Os valores ficam em **centavos** e as datas em UTC. Para gráficos, use só `sta
 | Captcha, ou erro 500/503 da Amazon | `bloqueado`. Espera 90 s a mais antes da próxima requisição e encerra após 3 bloqueios seguidos. Não tenta resolver captcha |
 | Livro sem oferta principal | Usa a primeira oferta **nova** da lista e anota isso em `detalhe` |
 | Layout mudou | `erro_parse` ou `sem_preco`, com o HTML bruto salvo em `data/html/AAAA-MM-DD/` para ajustar os seletores |
-| `requests` reconhecido como robô | O padrão é o `curl` do sistema: numa comparação intercalada na mesma URL, o curl passou em 2 de 3 tentativas e o `requests` em 0 de 3. Se usar `--cliente requests`, a sessão envia só 4 cabeçalhos fixos |
+| Cliente HTTP reconhecido como robô (503) | O padrão é o navegador real (veja acima). Sem Playwright, usa o `curl` e, por último, o `requests` com cabeçalhos mínimos |
+| Navegador não encontrado | Tenta Chrome, Edge e o Chromium do Playwright, nessa ordem. Se nenhum abrir, avisa e usa o `curl` |
 | 503 intermitente na lista de desejos | Até 3 tentativas por página, com espera de 90 s e depois 180 s |
 | Página do meio da lista falha de vez | Os itens já lidos são gravados e a coleta registra o aviso "lista incompleta" |
 | Aviso oculto "Algo deu errado" na página da lista | Não conta como bloqueio. A página de erro é reconhecida pelo `<title>` |

@@ -223,7 +223,17 @@ def coletar(
     dormir=time.sleep,
 ) -> int:
     """Roda uma coleta e devolve o id dela."""
-    sessao = sessao or nova_sessao(cliente)
+    if sessao is None:
+        sessao = nova_sessao(cliente)
+        try:
+            return _coletar(conn, asins, listas_desejos, detalhar, sessao, pasta_html, pausa, dormir)
+        finally:
+            if hasattr(sessao, "fechar"):
+                sessao.fechar()
+    return _coletar(conn, asins, listas_desejos, detalhar, sessao, pasta_html, pausa, dormir)
+
+
+def _coletar(conn, asins, listas_desejos, detalhar, sessao, pasta_html, pausa, dormir) -> int:
     coleta_id = conn.execute("INSERT INTO coletas (iniciada_em) VALUES (?)", (db.agora(),)).lastrowid
     conn.commit()
     tentados = sucesso = 0

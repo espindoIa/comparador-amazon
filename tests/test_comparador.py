@@ -353,8 +353,8 @@ class TestClienteCurl(unittest.TestCase):
         cls.srv.shutdown()
         cls.srv.server_close()
 
-    def test_auto_prefere_curl(self):
-        self.assertIsInstance(cliente_http.nova_sessao("auto"), cliente_http.ClienteCurl)
+    def test_cliente_curl_explicito(self):
+        self.assertIsInstance(cliente_http.nova_sessao("curl"), cliente_http.ClienteCurl)
 
     def test_get_ok_utf8_e_cabecalhos(self):
         r = self.cliente.get(self.base + "/pagina")
@@ -377,6 +377,52 @@ class TestClienteCurl(unittest.TestCase):
     def test_falha_de_conexao_vira_erro_http(self):
         porta_fechada = "http://127.0.0.1:9/"
         status, html, erro = coletor._baixar(self.cliente, porta_fechada)
+        self.assertEqual(erro.status, "erro_http")
+
+
+def _navegador_disponivel() -> bool:
+    if not cliente_http._playwright_instalado():
+        return False
+    try:
+        cliente_http.ClienteNavegador().fechar()
+        return True
+    except Exception:
+        return False
+
+
+@unittest.skipUnless(_navegador_disponivel(), "Playwright ou navegador não instalado")
+class TestClienteNavegador(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), _Servidor)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        self.cliente = cliente_http.ClienteNavegador()
+        self.addCleanup(self.cliente.fechar)
+
+    def test_navegacao_depois_fetch_com_cookies(self):
+        r1 = self.cliente.get(self.base + "/define-cookie")  # 1ª: navegação real
+        self.assertEqual(r1.status_code, 200)
+        self.assertIn("ação ok", r1.text)
+        r2 = self.cliente.get(self.base + "/pagina2")  # 2ª: fetch na mesma sessão
+        self.assertEqual((r2.status_code, r2.text), (200, "ação ok"))
+        self.assertIn("session-id=123-456", _Servidor.recebidos[-1].get("Cookie", ""))
+
+    def test_status_de_erro_e_redirecionamento(self):
+        self.cliente.get(self.base + "/pagina")
+        self.assertEqual(self.cliente.get(self.base + "/erro").status_code, 503)
+        self.assertTrue(self.cliente.get(self.base + "/redireciona").url.endswith("/hz/wishlist/ls/ABCDEFGH1234"))
+
+    def test_falha_de_conexao_vira_erro_http(self):
+        self.cliente.get(self.base + "/pagina")
+        _, _, erro = coletor._baixar(self.cliente, "http://127.0.0.1:9/")
         self.assertEqual(erro.status, "erro_http")
 
 

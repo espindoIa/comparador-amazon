@@ -23,8 +23,9 @@ def main() -> None:
                    help="link de uma lista de desejos (pode repetir)")
     c.add_argument("--detalhar", choices=["auto", "todos", "nenhum"], default="auto",
                    help="quando consultar a lista de ofertas de cada livro (padrão: %(default)s)")
-    c.add_argument("--cliente", choices=["auto", "curl", "requests"], default="auto",
-                   help="cliente HTTP; auto = curl se existir no sistema (padrão: %(default)s)")
+    c.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto",
+                   help="cliente HTTP; auto = navegador se o Playwright estiver instalado, "
+                        "senão curl, senão requests (padrão: %(default)s)")
     c.add_argument("--sem-html", action="store_true", help="não guardar o HTML bruto")
 
     sub.add_parser("status", help="mostra as últimas coletas e o último preço de cada livro")
