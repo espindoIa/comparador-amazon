@@ -21,7 +21,10 @@ CREATE TABLE IF NOT EXISTS coletas (
     tentados      INTEGER NOT NULL DEFAULT 0,
     sucesso       INTEGER NOT NULL DEFAULT 0,
     falhas        INTEGER NOT NULL DEFAULT 0,
-    observacao    TEXT
+    observacao    TEXT,
+    -- 1 quando a lista de desejos foi lida inteira. Só coletas completas
+    -- contam como "dia coberto" (ver `python -m comparador lacunas`).
+    completa      INTEGER NOT NULL DEFAULT 0
 );
 
 -- Uma linha por tentativa de coleta de um livro (inclusive as que falharam,

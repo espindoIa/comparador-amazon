@@ -1,4 +1,4 @@
-"""Linha de comando: python -m comparador {init,coletar,status}."""
+"""Linha de comando: python -m comparador {init,coletar,status,lacunas}."""
 
 from __future__ import annotations
 
@@ -27,6 +27,13 @@ def main() -> None:
                    help="cliente HTTP; auto = navegador se o Playwright estiver instalado, "
                         "senão curl, senão requests (padrão: %(default)s)")
     c.add_argument("--sem-html", action="store_true", help="não guardar o HTML bruto")
+    c.add_argument("--uma-por-dia", action="store_true",
+                   help="não faz nada se já houver coleta completa hoje (horário de Brasília); "
+                        "feito para ser agendado várias vezes ao dia")
+
+    l = sub.add_parser("lacunas", help="lista os dias sem coleta completa")
+    l.add_argument("--ultimos", type=int, metavar="N",
+                   help="só os últimos N dias; sai com código 1 se faltar algum (para alertas)")
 
     sub.add_parser("status", help="mostra as últimas coletas e o último preço de cada livro")
 
@@ -38,6 +45,9 @@ def main() -> None:
         n = db.importar_eventos(conn, args.eventos) if Path(args.eventos).exists() else 0
         print(f"banco pronto em {args.db}; {n} eventos importados")
     elif args.cmd == "coletar":
+        if args.uma_por_dia and db.hoje_brasil() in db.dias_cobertos(conn):
+            print(f"{db.hoje_brasil()}: já existe coleta completa hoje; nada a fazer")
+            return
         asins = coletor.ler_lista(args.lista) if Path(args.lista).exists() else []
         listas = list(args.desejos)
         if Path(args.desejos_arquivo).exists():
@@ -55,6 +65,19 @@ def main() -> None:
         obs = conn.execute("SELECT observacao FROM coletas WHERE id = ?", (cid,)).fetchone()[0]
         if obs:
             print(f"atenção: {obs}")
+        if not conn.execute("SELECT completa FROM coletas WHERE id = ?", (cid,)).fetchone()[0]:
+            raise SystemExit("coleta incompleta: o dia ainda não está coberto")
+    elif args.cmd == "lacunas":
+        faltam = db.lacunas(conn)
+        if args.ultimos:
+            faltam = [d for d in faltam if (db.hoje_brasil() - d).days <= args.ultimos]
+        if not db.dias_cobertos(conn):
+            raise SystemExit("nenhuma coleta completa registrada ainda")
+        for d in faltam:
+            print(f"sem coleta completa em {d}")
+        print(f"{len(faltam)} dia(s) sem coleta" if faltam else "nenhuma lacuna")
+        if args.ultimos and faltam:
+            raise SystemExit(1)
     elif args.cmd == "status":
         for r in conn.execute("SELECT * FROM coletas ORDER BY id DESC LIMIT 5"):
             print(f"coleta {r['id']}: {r['iniciada_em']}  {r['sucesso']}/{r['tentados']} ok"
