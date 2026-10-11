@@ -1,7 +1,7 @@
 # Comparador de preços de livros (Amazon Brasil)
 
-Lê, todo dia, os preços de milhares de livros da Amazon Brasil (os ~20 mil mais vendidos e a
-categoria inteira de HQs e mangás) e guarda o histórico. O objetivo é saber se uma oferta de
+Lê, todo dia, os preços dos ~1.000 livros mais vendidos de cada categoria de livros da Amazon
+Brasil (cerca de 20 mil livros diferentes) e guarda o histórico. O objetivo é saber se uma oferta de
 Black Friday ou Dia do Consumidor é boa de verdade, comparando com o preço praticado no resto
 do ano, e não só com o preço de capa.
 
@@ -52,18 +52,23 @@ formato (capa comum, capa dura, Kindle, audiolivro) e o preço de capa quando h�
 No workflow `varredura.yml` é a linha `vendidos` da matrix, num servidor próprio; o
 banco vai para a release `catalogo` como `catalogo-vendidos-<data>.db.gz`.
 
-Por que por gênero (medido em out/2026): na ordem "Mais vendidos", a Amazon só mostra
-**75 páginas (1.200 livros) por consulta**, embora a paginação anuncie 400, e as páginas de
-busca não mostram a posição de vendas de cada livro. Não existe, então, como ler um
-ranking geral de 20 mil. Somando os 1.200 primeiros de cada gênero chega-se a até ~35 mil
-posições (30 consultas x 75 páginas = ~2.250 páginas, ~1h50 por dia); como um livro pode
-estar em mais de um gênero, o número de livros distintos fica abaixo disso. Os gêneros
-estão em `GENEROS`, em `comparador/varredura.py`.
+**Os ~1.000 mais vendidos de cada categoria, só com preço de compra.** Na ordem "Mais vendidos", a
+Amazon só mostra **75 páginas (1.200 livros) por consulta**, embora a paginação anuncie 400, e as
+páginas de busca não mostram a posição de vendas de cada livro. Por isso a leitura é por gênero, e
+para ao completar **1.000 livros com preço de compra** (ou ao chegar à página 75). Livros "fora de
+catálogo", isto é, sem preço de compra na busca (indisponíveis, ou e-books só do Kindle Unlimited,
+que aparecem como "R$ 0,00"), não entram na base e não contam nos 1.000; a leitura segue um pouco
+mais fundo para compensar. Se um deles voltar a aparecer com preço em outro dia, entra na base nesse
+dia; o que já estava na base nunca é apagado. São 30 consultas (29 gêneros mais o ranking geral),
+~2.000 páginas, ~1h40 por dia; como um livro pode estar em mais de um gênero, o número de livros
+distintos fica abaixo de 30 mil. Os gêneros (inclusive HQs e mangás, que não são mais varridos
+à parte) estão em `GENEROS`, em `comparador/varredura.py`.
 
-## Varredura diária de categorias inteiras (HQs, mangás e graphic novels)
+## Varredura de uma categoria inteira (disponível, mas não agendada)
 
-Para acompanhar uma categoria inteira, e não só a sua lista, o comando `varrer` lê
-**todos os dias** todas as páginas de busca da categoria. Cada página traz ~16 livros com
+A categoria inteira de HQs e mangás já foi varrida todo dia, e o comando continua disponível, mas
+o workflow não a agenda mais: os HQs mais vendidos entram pelo ranking acima. Para acompanhar uma
+categoria inteira, o comando `varrer --no` lê todas as páginas de busca da categoria. Cada página traz ~16 livros com
 preço, o que é ~16x mais barato que consultar livro por livro.
 
 ```bash
@@ -79,7 +84,7 @@ Medido em out/2026 para HQs, Mangás e Graphic Novels (nó `7842710011`):
 | Ritmo | pausa de 1–3 s, ~20 páginas/min, sem bloqueios (testado também com 0,3–1 s: 36 páginas/min, sem bloqueio) |
 | Tempo por dia | ~1h40 num único servidor |
 
-O workflow `.github/workflows/varredura.yml` roda 4 vezes por dia. A primeira normalmente
+O workflow `.github/workflows/varredura.yml` (hoje só com a linha `vendidos`) roda 4 vezes por dia. A primeira normalmente
 completa o dia; as outras só continuam o que faltou (o progresso é salvo a cada página) ou
 terminam em segundos. Uma passada que ficou pela metade ontem recomeça da página 1, para
 que todos os preços de um dia sejam daquele dia. A primeira execução de cada dia falha (e
@@ -156,10 +161,10 @@ Um site estático (sem servidor, grátis no GitHub Pages) com:
   diferença para o preço mais comum dos últimos 90 dias e o mais barato do período, e pode ser
   ordenada por título, preço ou diferença. **A lista fica só no navegador de quem a cria** (não há
   conta nem servidor). Para levá-la a outro aparelho, use "Levar a lista para outro aparelho": copie
-  num e cole no outro. Só entram livros que o catálogo acompanha (os mais vendidos e HQs/mangás).
+  num e cole no outro. Só entram livros que o catálogo acompanha (os ~1.000 mais vendidos de cada categoria).
 
 ```bash
-python -m comparador site data/catalogo-vendidos.db data/catalogo-7842710011.db --saida site
+python -m comparador site data/catalogo-vendidos.db --saida site
 cd site && python -m http.server 8000      # abra http://localhost:8000
 ```
 

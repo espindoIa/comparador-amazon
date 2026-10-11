@@ -46,7 +46,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/bancos"
           nomes=$(gh release view catalogo --json assets --jq '.assets[].name')
-          for alvo in vendidos 7842710011; do
+          for alvo in vendidos; do
             ultimo=$(printf '%s\n' "$nomes" | grep -E "^catalogo-${alvo}-[0-9-]+\.db\.gz$" | sort | tail -n 1 || true)
             if [ -z "$ultimo" ]; then echo "sem banco para $alvo; seguindo sem ele"; continue; fi
             gh release download catalogo --pattern "$ultimo" --dir "$RUNNER_TEMP"

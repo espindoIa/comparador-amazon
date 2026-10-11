@@ -65,6 +65,13 @@ class TestParseBusca(unittest.TestCase):
         html = pagina_busca([("AAAAAAAAAA", 1000)], ultima=1, total=1, patrocinado=True)
         self.assertEqual(parse_busca(html).cards, 0)
 
+    def test_livros_sem_preco_nao_entram_nem_contam(self):
+        p = parse_busca(pagina_busca([("AAAAAAAAAA", 1000), ("BBBBBBBBBB", None), ("CCCCCCCCCC", 0), ("DDDDDDDDDD", 2500)],
+                                     ultima=1, total=4))
+        self.assertEqual(p.cards, 4)
+        self.assertEqual(p.livros, 2)                       # sem preço e Kindle Unlimited (R$ 0,00) ficam de fora
+        self.assertEqual({i.asin for i in p.itens}, {"AAAAAAAAAA", "DDDDDDDDDD"})
+
     def test_url_mais_vendidos(self):
         self.assertEqual(url_busca("6740748011", 0, 1, 2, "vendidos"),
                          "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A6740748011"
@@ -77,13 +84,16 @@ class TestParseBusca(unittest.TestCase):
 
 
 def card(asin, preco, patrocinado=False):
-    reais, cent = divmod(preco, 100)
+    """`preco=None`: livro sem preço de compra (indisponível); 0: Kindle Unlimited (R$ 0,00)."""
+    reais, cent = divmod(preco or 0, 100)
+    link_preco = "" if preco is None else (
+        f'<a href="/x/dp/{asin}/ref=sr"><span class="a-price" data-a-color="base">'
+        f'<span class="a-offscreen">R$&nbsp;{reais},{cent:02d}</span></span></a>')
     return f"""<div data-component-type="s-search-result" data-asin="{asin}">
       {'<span class="puis-sponsored-label-text">Patrocinado</span>' if patrocinado else ''}
       <h2><span>Livro {asin}</span></h2>
       <a href="/x/dp/{asin}/ref=sr">Capa Comum</a>
-      <a href="/x/dp/{asin}/ref=sr"><span class="a-price" data-a-color="base">
-        <span class="a-offscreen">R$&nbsp;{reais},{cent:02d}</span></span></a></div>"""
+      {link_preco}</div>"""
 
 
 def pagina_busca(itens, *, ultima, total, primeiro=1, patrocinado=False):
@@ -245,16 +255,17 @@ class TestMaisVendidos(unittest.TestCase):
         self.conn = db.conectar(":memory:")
         self.addCleanup(self.conn.close)
 
-    def test_le_ate_75_paginas_por_genero_sem_dividir(self):
+    def test_le_ate_1000_livros_por_genero_sem_dividir(self):
         # Gênero 1: 1.300 livros (só os 1.200 primeiros aparecem); gênero 2: 50 livros,
         # 10 deles também no gênero 1.
         g1 = [(f"G1{i:08d}", 1000 + i) for i in range(1300)]
         g2 = [(f"G2{i:08d}", 2000 + i) for i in range(40)] + g1[:10]
+        g2 = g2[:40]
         amazon = AmazonFalsaVendidos({"1": g1, "2": g2})
         eid = varredura.varrer(self.conn, amazon, vendidos=["1", "2"], minutos=10_000, dormir=lambda s: None)
         vistos = {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
-        self.assertEqual(vistos, {a for a, _ in g1[:1200]} | {a for a, _ in g2})
-        self.assertEqual(len([u for u in amazon.chamadas if "n%3A1&" in u]), 75)  # nem 76, nem 400
+        self.assertEqual(vistos, {a for a, _ in g1[:1008]} | {a for a, _ in g2})   # 63 páginas de 16 = 1.008
+        self.assertEqual(len([u for u in amazon.chamadas if "n%3A1&" in u]), 63)  # para ao completar 1.000 livros
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias").fetchone()[0], 2)  # sem divisão
         self.assertTrue(varredura.cobertura(self.conn, varredura.GRUPO_VENDIDOS).dia_completo)
         e = self.conn.execute("SELECT observacao FROM execucoes WHERE id = ?", (eid,)).fetchone()[0]
@@ -263,6 +274,28 @@ class TestMaisVendidos(unittest.TestCase):
         amazon.por_no["3"] = [("G300000001", 999)]
         varredura.varrer(self.conn, amazon, vendidos=["1", "2", "3"], minutos=10_000, dormir=lambda s: None)
         self.assertIn("G300000001", {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")})
+
+    def test_livros_sem_preco_nao_contam_e_aparecem_quando_voltam(self):
+        # a cada 10 livros, 1 sem preço: 15 de 16 por página têm preço
+        g = [(f"G{i:09d}", None if i % 10 == 9 else 1000 + i) for i in range(1300)]
+        amazon = AmazonFalsaVendidos({"1": g})
+        varredura.varrer(self.conn, amazon, vendidos=["1"], minutos=10_000, dormir=lambda s: None)
+        vistos = {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
+        self.assertFalse(any(a in vistos for a, p in g if p is None))      # sem preço: nunca entra
+        com_preco = [a for a, p in g if p is not None]
+        self.assertGreaterEqual(len(vistos), 1000)
+        self.assertLess(len(vistos), 1000 + 16)                           # lê até completar 1.000 com preço, não 75 páginas
+        self.assertEqual(self.conn.execute("SELECT livros FROM fatias").fetchone()[0], len(vistos))
+        self.assertLess(len([u for u in amazon.chamadas]), 75)
+        # no dia seguinte, alguns voltam a ter preço (e outros saem do topo): quem voltou entra na base
+        indisponiveis = [a for a, p in g if p is None][:5]
+        amazon.por_no["1"] = [(a, 1500 if a in indisponiveis else p) for a, p in g]
+        self.conn.execute("UPDATE fatias SET ultima_passada = '2000-01-01T00:00:00+00:00'")
+        self.conn.execute("DELETE FROM dias")
+        varredura.varrer(self.conn, amazon, vendidos=["1"], minutos=10_000, dormir=lambda s: None)
+        vistos2 = {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
+        self.assertTrue(set(indisponiveis) <= vistos2)
+        self.assertTrue(vistos <= vistos2)                                # o que já estava na base continua lá
 
     def test_migra_banco_da_varredura_antiga(self):
         self.conn.executescript(

@@ -1,12 +1,13 @@
-# Varredura DIÁRIA, cada linha da matrix num servidor próprio:
-# - "7842710011": HQs, Mangás e Graphic Novels inteira (33 fatias por preço, ~2.050 páginas,
-#   ~32 mil itens, ~1h40).
-# - "vendidos": os 1.200 mais vendidos de cada um dos 29 gêneros de Livros e do ranking
-#   geral (30 consultas x 75 páginas = ~2.250 páginas, ~1h50). A Amazon só mostra 75
-#   páginas na ordem "mais vendidos", por isso a soma por gênero.
+# Varredura DIÁRIA dos mais vendidos ("vendidos"): os ~1.000 livros mais vendidos (com preço de
+# compra) de cada um dos 29 gêneros de Livros e do ranking geral. A Amazon só mostra 75 páginas
+# na ordem "mais vendidos", então a leitura de cada categoria para ao completar 1.000 livros
+# disponíveis ou ao chegar à página 75. Livros sem preço (indisponíveis, só Kindle Unlimited)
+# não entram; se voltarem a aparecer com preço em outro dia, entram na base nesse dia.
+# A categoria inteira de HQs e mangás NÃO é mais varrida à parte (os HQs mais vendidos
+# continuam entrando como um dos gêneros).
 # Medido em out/2026: ~20 páginas/min, sem bloqueios.
 #
-# Robustez, no mesmo esquema da coleta da lista de desejos:
+# Robustez:
 # - 4 horários por dia. O primeiro normalmente completa o dia; os outros só continuam o
 #   que faltou (o progresso é salvo a cada página) ou terminam em segundos.
 # - Cada categoria roda num servidor separado (matrix), com IP diferente.
@@ -40,9 +41,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # "vendidos" = mais vendidos por gênero; número = categoria inteira, fatiada por
-        # preço. Para acompanhar outra categoria inteira, acrescente o nó aqui.
-        alvo: ["7842710011", "vendidos"]
+        # "vendidos" = mais vendidos por gênero; um número seria uma categoria inteira, fatiada
+        # por preço (python -m comparador varrer --no NÓ), hoje não usada.
+        alvo: ["vendidos"]
     concurrency:
       group: varredura-${{ matrix.alvo }}
       cancel-in-progress: false
