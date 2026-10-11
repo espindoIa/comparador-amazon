@@ -24,7 +24,8 @@ from bs4 import BeautifulSoup
 
 from .parser import parse_preco
 
-URL_BUSCA = "https://www.amazon.com.br/s?i=stripbooks&rh={rh}&s=price-asc-rank&page={pagina}"
+URL_BUSCA = "https://www.amazon.com.br/s?i=stripbooks&rh={rh}&s={ordem}&page={pagina}"
+ORDENS = {"preco": "price-asc-rank", "vendidos": "exact-aware-popularity-rank"}
 _ASIN_LINK_RE = re.compile(r"/dp/([A-Z0-9]{10})")
 _TOTAL_RE = re.compile(r"de\s+(mais de\s+)?([\d.]+)\s+resultados")
 _FORMATOS = {
@@ -56,10 +57,15 @@ class PaginaBusca:
     ultima_pagina: int | None = None
 
 
-def url_busca(no: str, preco_min: int, preco_max: int, pagina: int) -> str:
-    """URL de uma fatia: categoria `no`, preços em centavos (inclusive), ordem crescente."""
-    rh = f"n:{no},p_36:{preco_min}-{preco_max}"
-    return URL_BUSCA.format(rh=quote(rh, safe=""), pagina=pagina)
+def url_busca(no: str, preco_min: int, preco_max: int, pagina: int, ordem: str = "preco") -> str:
+    """URL de uma fatia.
+
+    ordem "preco": categoria `no`, preços em centavos (inclusive), do menor para o maior.
+    ordem "vendidos": categoria `no` inteira, dos mais vendidos para os menos (sem filtro de
+    preço; a Amazon só mostra as 75 primeiras páginas nessa ordem).
+    """
+    rh = f"n:{no}" if ordem == "vendidos" else f"n:{no},p_36:{preco_min}-{preco_max}"
+    return URL_BUSCA.format(rh=quote(rh, safe=""), ordem=ORDENS[ordem], pagina=pagina)
 
 
 _NAO_E_FORMATO = re.compile(r"\d|^(ver|mais|outr|menor preço|oferta|promo)", re.I)

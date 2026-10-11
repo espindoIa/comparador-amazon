@@ -42,12 +42,16 @@ def main() -> None:
     v = sub.add_parser("varrer", help="lê a categoria inteira (uma vez por dia) pelas páginas de busca")
     v.add_argument("--no", default=varredura.NO_HQ_MANGA,
                    help="nó da categoria (padrão: %(default)s = HQs, Mangás e Graphic Novels)")
+    v.add_argument("--vendidos", action="store_true",
+                   help="em vez da categoria --no, os 1.200 mais vendidos de cada gênero de Livros "
+                        "e do ranking geral (~2.250 páginas por dia)")
     v.add_argument("--minutos", type=float, default=150, help="orçamento de tempo (padrão: %(default)s)")
     v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
     v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
 
     k = sub.add_parser("catalogo", help="progresso de hoje e dias sem varredura completa")
     k.add_argument("--no", default=varredura.NO_HQ_MANGA)
+    k.add_argument("--vendidos", action="store_true", help="banco dos mais vendidos")
     k.add_argument("--exigir-ontem", action="store_true",
                    help="sai com código 1 se ontem não teve varredura completa (para alertas)")
 
@@ -100,7 +104,8 @@ def main() -> None:
     elif args.cmd == "varrer":
         sessao = coletor.nova_sessao(args.cliente)
         try:
-            eid = varredura.varrer(conn, sessao, no=args.no, minutos=args.minutos,
+            vendidos = [varredura.NO_LIVROS, *varredura.GENEROS] if args.vendidos else None
+            eid = varredura.varrer(conn, sessao, no=args.no, vendidos=vendidos, minutos=args.minutos,
                                    max_paginas=args.max_paginas, pasta_html=Path("data/html"))
         finally:
             if hasattr(sessao, "fechar"):
@@ -116,7 +121,7 @@ def main() -> None:
         if e["paginas"] == 0 and (e["bloqueios"] or e["erros"]):
             raise SystemExit("nenhuma página lida")
     elif args.cmd == "catalogo":
-        c = varredura.cobertura(conn, args.no)
+        c = varredura.cobertura(conn, varredura.GRUPO_VENDIDOS if args.vendidos else args.no)
         print(f"{c.itens} itens no catálogo; {c.vistos_hoje} com preço lido hoje")
         print(f"hoje: {c.fatias_hoje} de {c.fatias} fatias lidas" + (" (dia completo)" if c.dia_completo else ""))
         print("dias sem varredura completa: " + (", ".join(map(str, c.lacunas)) if c.lacunas else "nenhum"))
