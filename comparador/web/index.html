@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Preços de livros</title>
+<link rel="stylesheet" href="estilo.css">
+<body class="app">
+<header class="topo"><h1>Preços de livros</h1><span id="info" class="mu">carregando…</span></header>
+<p id="aviso" class="aviso" hidden></p>
+<nav class="abas" role="tablist">
+  <button type="button" id="t-busca" role="tab" aria-selected="true">Buscar</button>
+  <button type="button" id="t-lista" role="tab" aria-selected="false">Minha lista<span id="cont"></span></button>
+</nav>
+<main>
+  <section id="aba-busca">
+    <input id="q" type="search" placeholder="Título, autor ou ASIN/ISBN-10" autocomplete="off" aria-label="Buscar livro">
+    <div id="res"></div>
+  </section>
+  <section id="aba-lista" hidden>
+    <label class="ord">Ordenar por
+      <select id="ord"><option value="adicao">ordem em que adicionei</option><option value="nome">título</option>
+        <option value="preco">menor preço</option><option value="dif">preço em relação ao mais comum (do menor para o maior)</option></select></label>
+    <div id="lst"></div>
+    <details class="io"><summary>Levar a lista para outro aparelho</summary>
+      <p class="mu">A lista fica só neste navegador: não há conta nem servidor. Para usar em outro aparelho, copie aqui e cole lá.</p>
+      <textarea id="io" rows="3" placeholder="Cole aqui a lista copiada, ASINs ou links da Amazon"></textarea>
+      <p><button type="button" id="copiar" class="bt">Copiar minha lista</button> <button type="button" id="importar" class="bt">Importar o texto acima</button></p>
+      <p id="msg" class="mu" role="status"></p></details>
+  </section>
+</main>
+<footer class="mu">Preços lidos do site da Amazon.com.br, sem vínculo com a Amazon. Confira o preço na loja antes de comprar.</footer>
+<script src="livro.js"></script><script src="lista.js"></script><script src="app.js"></script>
+</body>
+</html>
