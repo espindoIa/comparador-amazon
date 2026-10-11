@@ -329,6 +329,8 @@ class _Servidor(BaseHTTPRequestHandler):
             return
         corpo = ("ação ok" if self.path != "/erro" else "fora").encode("utf-8")
         self.send_response(503 if self.path == "/erro" else 200)
+        if self.path == "/define-cookie":
+            self.send_header("Set-Cookie", "session-id=123-456; Path=/")
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(corpo)
@@ -365,6 +367,12 @@ class TestClienteCurl(unittest.TestCase):
         self.assertEqual(self.cliente.get(self.base + "/erro").status_code, 503)
         r = self.cliente.get(self.base + "/redireciona")
         self.assertTrue(r.url.endswith("/hz/wishlist/ls/ABCDEFGH1234"))
+
+    def test_guarda_cookies_entre_requisicoes(self):
+        cliente = cliente_http.nova_sessao("curl")
+        cliente.get(self.base + "/define-cookie")
+        cliente.get(self.base + "/pagina2")
+        self.assertIn("session-id=123-456", _Servidor.recebidos[-1].get("Cookie", ""))
 
     def test_falha_de_conexao_vira_erro_http(self):
         porta_fechada = "http://127.0.0.1:9/"

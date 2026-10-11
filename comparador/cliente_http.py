@@ -8,9 +8,11 @@ com o `requests` como alternativa.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,10 +40,17 @@ class Resposta:
 
 
 class ClienteCurl:
-    """Interface mínima igual à do requests.Session (get -> .status_code/.text/.url)."""
+    """Interface mínima igual à do requests.Session (get -> .status_code/.text/.url).
+
+    Guarda os cookies entre requisições, como um navegador: a paginação da lista de
+    desejos usa um token que provavelmente depende da sessão criada pela página 1.
+    """
 
     def __init__(self, executavel: str):
         self.executavel = executavel
+        fd, self.cookies = tempfile.mkstemp(prefix="comparador-cookies-", suffix=".txt")
+        os.close(fd)
+        weakref.finalize(self, _apagar, self.cookies)
 
     def get(self, url: str, timeout: float = 30) -> Resposta:
         with tempfile.TemporaryDirectory() as d:
@@ -49,6 +58,7 @@ class ClienteCurl:
             cmd = [
                 self.executavel, "-sS", "-L", "--compressed",
                 "--max-time", str(int(timeout)),
+                "-b", self.cookies, "-c", self.cookies,
                 "-A", USER_AGENT,
                 "-H", "Accept-Language: pt-BR,pt;q=0.9",
                 "-o", str(corpo),
@@ -64,6 +74,13 @@ class ClienteCurl:
             codigo, _, url_final = proc.stdout.strip().partition(" ")
             texto = corpo.read_text(encoding="utf-8", errors="replace") if corpo.exists() else ""
             return Resposta(int(codigo), texto, url_final or url)
+
+
+def _apagar(caminho: str) -> None:
+    try:
+        os.remove(caminho)
+    except OSError:
+        pass
 
 
 def sessao_requests() -> requests.Session:
