@@ -238,17 +238,17 @@ Gera `data/grafico-<ASIN>.html` (abra no navegador). A página **não tira concl
 dados para quem compra decidir. Sem `--db`, usa `data/precos.db` (lista de desejos) se existir,
 senão `data/catalogo.db`. Se o termo casar com vários livros, lista os ASINs para repetir com o exato.
 
-**Gráfico:** preço (degraus), mediana dos últimos 90 dias (pontilhada), faixa usual (do 1º ao 3º
-quartil dos últimos 90 dias, onde ficou a metade central dos dias), preço de capa (tracejado, só se
-couber na escala), faixas dos eventos de `eventos.csv` com o menor preço de cada um marcado, e
-lacunas de coleta hachuradas (nada é desenhado como se tivesse sido observado). Passando o mouse
-(ou o dedo) aparece, para cada dia, o preço, a mediana e a faixa usual.
+**Gráfico:** só o preço (degraus), o preço mais comum dos últimos 90 dias (a mediana, pontilhada) e
+a faixa do evento com o menor preço dele marcado. Passando o mouse (ou o dedo) aparece o preço de
+cada dia. Períodos sem coleta ficam em branco hachurado, nunca preenchidos como se tivessem sido
+observados. A página funciona no celular.
 
-**Números:** preço atual, mediana, faixa usual, mínimo e máximo (com as datas), preço de capa e
-quantos dos 90 dias têm coleta. Para cada evento: o menor preço durante ele ao lado da mediana, da
-faixa, do mínimo e do máximo dos 90 dias *anteriores*, do pico nas 3 semanas antes, da última vez
-em que o preço foi igual ou menor e do preço de capa, sempre com a variação percentual em
-relação a cada um e quantos dias de coleta sustentam a conta.
+**Números, em linguagem comum:** no topo, quatro cartões: preço de hoje, preço mais comum (mediana
+de 90 dias), o mais barato e o mais caro, com as datas. Para cada evento: o preço no evento e quanto
+está acima ou abaixo do preço mais comum dos 90 dias *anteriores*, o intervalo em que andou, o pico
+das 3 semanas antes e a última vez em que esteve igual ou menor. Em "Mais detalhes" (recolhido):
+faixa onde ficou a metade central dos dias, preço de capa e quantos dias de coleta sustentam a conta.
+Com pouco histórico, a página avisa.
 
 Os bancos do catálogo estão em *Releases → catalogo* (descompacte o `.db.gz`).
 

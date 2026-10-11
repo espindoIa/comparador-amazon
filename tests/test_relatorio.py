@@ -67,7 +67,8 @@ class TestRelatorio(unittest.TestCase):
     def test_pagina_sem_conclusoes_e_com_numeros(self):
         h = relatorio.pagina("Livro", "B1", relatorio.serie(banco(), "B1"), [BF], aviso="SIMULADO")
         self.assertIn("<svg", h)
-        self.assertIn("Mediana", h)
+        self.assertIn("Preço mais comum", h)
+        self.assertIn("Mais barato", h)
         self.assertIn("SIMULADO", h)
         for palavra in ("NÃO é desconto", "desconto real", "Desconto real", "inflado"):
             self.assertNotIn(palavra, h)

@@ -172,17 +172,25 @@ def _cartao(rotulo: str, valor: str, nota: str = "") -> str:
             f'{f"<small>{html.escape(nota)}</small>" if nota else ""}</div>')
 
 
-def _cartoes_atuais(f: Fatos, trechos: list[Trecho]) -> str:
-    c = [_cartao("Preço atual", _brl(f.preco), f"em {_data(f.ate)}")]
+def _comparar(valor: int, ref: int) -> str:
+    pct = round(abs(valor - ref) / ref * 100)
+    return "igual a" if pct == 0 else f"{pct}% {'acima' if valor > ref else 'abaixo'} do"
+
+
+def _cartoes_atuais(f: Fatos) -> str:
+    c = [_cartao("Hoje", _brl(f.preco), _data(f.ate))]
     if f.mediana is not None:
-        c.append(_cartao(f"Mediana {f.dias_janela} dias", _brl(f.mediana),
-                         f"preço atual {_pct(f.preco, f.mediana)}" if f.preco else ""))
-        c.append(_cartao("Faixa usual", f"{_brl(f.q1)} a {_brl(f.q3)}", "metade dos dias ficou aqui"))
-        c.append(_cartao("Mínimo", _brl(f.minimo), _data(f.dia_minimo)))
-        c.append(_cartao("Máximo", _brl(f.maximo), _data(f.dia_maximo)))
-    c.append(_cartao("Preço de capa", _brl(f.capa), "informado pela Amazon" if f.capa else ""))
-    c.append(_cartao("Dias com coleta", f"{f.dias_observados} de {f.dias_janela}", "na janela de 90 dias"))
+        c += [_cartao("Preço mais comum", _brl(f.mediana), f"mediana dos últimos {f.dias_janela} dias"),
+              _cartao("Mais barato", _brl(f.minimo), _data(f.dia_minimo)),
+              _cartao("Mais caro", _brl(f.maximo), _data(f.dia_maximo))]
     return "".join(c)
+
+
+def _aviso_dados(f: Fatos) -> str:
+    if f.dias_observados >= f.dias_janela * 0.5:
+        return ""
+    return (f'<p class="mu">Ainda temos poucos dados: só {f.dias_observados} dias com preço registrado '
+            f'nos últimos {f.dias_janela}.</p>')
 
 
 def resumo_evento(ev: Evento, f: Fatos | None) -> str:
@@ -191,30 +199,36 @@ def resumo_evento(ev: Evento, f: Fatos | None) -> str:
         return f"{ev.nome}: sem coleta durante o evento"
     if f.mediana is None:
         return f"{ev.nome}: {_brl(f.preco)} (sem coleta nos {f.dias_janela} dias anteriores)"
-    return (f"{ev.nome}: {_brl(f.preco)}; mediana dos {f.dias_janela} dias antes {_brl(f.mediana)} "
-            f"({_pct(f.preco, f.mediana)}); faixa usual {_brl(f.q1)} a {_brl(f.q3)}; "
-            f"mínimo {_brl(f.minimo)}, máximo {_brl(f.maximo)}; {f.dias_observados} dias com coleta")
+    return (f"{ev.nome}: {_brl(f.preco)}, {_comparar(f.preco, f.mediana)} preço mais comum dos "
+            f"{f.dias_janela} dias antes ({_brl(f.mediana)}); mais barato antes {_brl(f.minimo)}, "
+            f"mais caro {_brl(f.maximo)}; {f.dias_observados} dias com coleta")
 
 
 def _bloco_evento(ev: Evento, f: Fatos | None) -> str:
-    cab = f"<h3>{html.escape(ev.nome)} <small>{_data(ev.inicio)}"
-    cab += f" a {_data(ev.fim)}</small></h3>" if ev.fim != ev.inicio else "</small></h3>"
+    quando = _data(ev.inicio) + (f" a {_data(ev.fim)}" if ev.fim != ev.inicio else "")
+    cab = f"<h3>{html.escape(ev.nome)} <small>{quando}</small></h3>"
     if f is None:
-        return f'<section class="ev-b">{cab}<p class="mu">Sem coleta de preço durante o evento.</p></section>'
-    c = [_cartao("Preço no evento", _brl(f.preco), f"menor preço do período")]
-    if f.mediana is not None:
-        c += [_cartao(f"Mediana dos {f.dias_janela} dias antes", _brl(f.mediana), f"no evento {_pct(f.preco, f.mediana)}"),
-              _cartao("Faixa usual antes", f"{_brl(f.q1)} a {_brl(f.q3)}"),
-              _cartao("Mínimo antes", _brl(f.minimo), _data(f.dia_minimo)),
-              _cartao("Máximo antes", _brl(f.maximo), _data(f.dia_maximo)),
-              _cartao(f"Pico nos {JANELA_PICO} dias antes", _brl(f.pico_recente),
-                      f"evento {_pct(f.preco, f.pico_recente)} sobre o pico" if f.pico_recente else ""),
-              _cartao("Última vez igual ou menor", _data(f.ultima_vez_igual_ou_menor)
-                      if f.ultima_vez_igual_ou_menor else "nunca", "antes do evento, no período coletado")]
+        return f'<section>{cab}<p class="mu">Sem preço registrado durante o evento.</p></section>'
+    if f.mediana is None:
+        return (f'<section>{cab}<p><b>{_brl(f.preco)}</b> no evento. Não há preços registrados nos '
+                f'{f.dias_janela} dias anteriores para comparar.</p></section>')
+    li = [f"Antes do evento, o preço mais comum era <b>{_brl(f.mediana)}</b> "
+          f"(entre {_brl(f.minimo)}, em {_data(f.dia_minimo)}, e {_brl(f.maximo)}, em {_data(f.dia_maximo)}).",
+          ]
+    if f.pico_recente:
+        li.append(f"Nas 3 semanas antes, chegou a {_brl(f.pico_recente)}.")
+    li.append("Última vez com preço igual ou menor: " + (_data(f.ultima_vez_igual_ou_menor)
+              if f.ultima_vez_igual_ou_menor else "nunca, desde o início da coleta") + ".")
+    det = [f"Faixa onde ficou a metade central dos dias: {_brl(f.q1)} a {_brl(f.q3)}.",
+           f"Dias com preço registrado na janela: {f.dias_observados} de {f.dias_janela}."]
     if f.capa:
-        c.append(_cartao("Preço de capa", _brl(f.capa), f"evento {_pct(f.preco, f.capa)}"))
-    c.append(_cartao("Dias com coleta antes", f"{f.dias_observados} de {f.dias_janela}"))
-    return f'<section class="ev-b">{cab}<div class="cs">{"".join(c)}</div></section>'
+        det.insert(1, f"Preço de capa informado pela Amazon: {_brl(f.capa)} "
+                      f"(evento {_comparar(f.preco, f.capa)} preço de capa).")
+    return (f"<section>{cab}<p class=\"gr\"><b>{_brl(f.preco)}</b> no evento, "
+            f"{_comparar(f.preco, f.mediana)} preço mais comum.</p>"
+            f"<ul>{''.join(f'<li>{x}</li>' for x in li)}</ul>"
+            f"<details><summary>Mais detalhes</summary><ul>{''.join(f'<li>{html.escape(x)}</li>' for x in det)}</ul>"
+            f"</details></section>")
 
 
 def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=380) -> tuple[str, list]:
@@ -227,10 +241,7 @@ def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=380) 
             d0, d1 = min(d0, e.inicio), max(d1, e.fim)
     d1 = max(d1, d0 + timedelta(days=6))
     precos = [t.preco for t in trechos]
-    valores = precos + [q for _, a, _, b in mov for q in (a, b)]
-    capa = next((t.capa for t in reversed(trechos) if t.capa), None)
-    if capa and capa <= max(precos) * 1.5:  # capa muito acima achataria a curva; fica só nos números
-        valores.append(capa)
+    valores = precos + [m for _, _, m, _ in mov]
     lo, hi = min(valores), max(valores)
     folga = max((hi - lo) * 0.12, 50)
     lo, hi = max(0, lo - folga), hi + folga
@@ -261,18 +272,10 @@ def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=380) 
         p.append(f'<rect x="{x0:.1f}" y="{mt}" width="{w:.1f}" height="{base - mt}" class="ev"/>'
                  f'<text x="{x0 - 4 if right else x0 + w + 4:.1f}" y="{mt + 12}" class="evt" '
                  f'text-anchor="{"end" if right else "start"}">{html.escape(e.nome)}</text>')
-    # faixa usual (1º a 3º quartil) e mediana móvel
-    if len(mov) > 1:
-        topo = "".join(f"{'M' if i == 0 else 'L'}{X(d):.1f},{Y(b):.1f}" for i, (d, _, _, b) in enumerate(mov))
-        fundo = "".join(f"L{X(d):.1f},{Y(a):.1f}" for d, a, _, _ in reversed(mov))
-        p.append(f'<path d="{topo}{fundo}Z" class="faixa"/>')
     mp = ""
     for i, (d, _, m, _) in enumerate(mov):
         mp += f"{'M' if i == 0 else 'L'}{X(d):.1f},{Y(m):.1f}"
     p.append(f'<path d="{mp}" class="med"/>')
-    if capa and capa <= max(precos) * 1.5:
-        p.append(f'<line x1="{ml}" x2="{largura - mr}" y1="{Y(capa):.1f}" y2="{Y(capa):.1f}" class="capa"/>'
-                 f'<text x="{largura - mr}" y="{Y(capa) - 4:.1f}" text-anchor="end">capa {html.escape(_brl(capa))}</text>')
     path = ""
     for i, t in enumerate(trechos):
         x0, x1, y = X(t.desde), X(t.ate), Y(t.preco)
@@ -304,10 +307,9 @@ var o=(x-G.ml)/(G.w-G.ml-G.mr)*(G.d1-G.d0)+G.d0,b=null,bd=1e9;
 D.forEach(function(r){var n=Date.parse(r[0])/864e5+719163,k=Math.abs(n-o);if(k<bd){bd=k;b=r}});
 if(!b)return;var n=Date.parse(b[0])/864e5+719163,px=G.ml+(n-G.d0)/(G.d1-G.d0)*(G.w-G.ml-G.mr);
 c.setAttribute('x1',px);c.setAttribute('x2',px);c.setAttribute('visibility','visible');
-var p=b[0].split('-');t.textContent=p[2]+'/'+p[1]+'/'+p[0]+' · preço '+brl(b[1])+' · mediana 90 dias '+brl(b[3])+
-' · faixa usual '+brl(b[2])+' a '+brl(b[4])}
+var p=b[0].split('-');t.textContent=p[2]+'/'+p[1]+'/'+p[0]+': '+brl(b[1])+' (preço mais comum: '+brl(b[3])+')'}
 s.addEventListener('pointermove',mover);s.addEventListener('pointerleave',function(){c.setAttribute('visibility','hidden');
-t.textContent='Passe o mouse (ou o dedo) sobre o gráfico para ver cada dia.'})})();
+t.textContent='Toque ou passe o mouse no gráfico para ver o preço de cada dia.'})})();
 """
 
 CSS = """
@@ -318,18 +320,21 @@ h1{font-size:1.4em;margin:.2em 0}h2{font-size:1.1em;margin:1.4em 0 .4em}h3{font-
 svg{width:100%;height:auto;font-size:11px;fill:var(--mu);touch-action:pan-y}.g{stroke:var(--gr)}
 .preco{fill:none;stroke:var(--pr);stroke-width:2}.pt{fill:var(--pr)}
 .pe{fill:var(--bg);stroke:var(--pr);stroke-width:2.5}.pet{fill:var(--fg);font-size:12px;font-weight:600}
-.faixa{fill:var(--fx);stroke:none}.med{fill:none;stroke:var(--me);stroke-width:2;stroke-dasharray:2 3}
+.med{fill:none;stroke:var(--me);stroke-width:2;stroke-dasharray:2 3}
 .capa{stroke:var(--ca);stroke-width:1.2;stroke-dasharray:5 4}
 .ev{fill:var(--ev)}.evt{fill:var(--evl);font-size:11px;font-weight:600}.cur{stroke:var(--mu);stroke-width:1}
 .lacl{stroke:var(--ca);stroke-width:1;opacity:.5}
+@media(max-width:600px){svg{font-size:21px}.pet,.evt{font-size:22px}}
 #tip{min-height:1.5em;color:var(--fg);font-size:13px;margin:.3em 0}
 .leg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--mu);margin:.3em 0 .6em}
 .leg i{display:inline-block;width:22px;height:0;border-top:2px solid;vertical-align:middle;margin-right:5px}
 .leg .b{height:10px;border:0;background:var(--fx);border-top:0}
-.cs{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:8px}
+.cs{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
 .c{background:var(--cd);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column}
 .c span{font-size:12px;color:var(--mu)}.c b{font-size:1.05em}.c small{color:var(--mu);font-size:11px}
 .mu,small{color:var(--mu)}
+ul{margin:.3em 0;padding-left:1.2em}li{margin:.25em 0}.gr{font-size:1.05em;margin:.3em 0}
+details{margin:.4em 0;color:var(--mu);font-size:14px}summary{cursor:pointer}
 """
 
 
@@ -338,17 +343,15 @@ def pagina(titulo: str, asin: str, trechos: list[Trecho], eventos: list[Evento],
     atual = fatos(trechos, trechos[-1].ate)
     blocos = "".join(_bloco_evento(e, fatos_evento(trechos, e)) for e in eventos)
     legenda = ('<div class="leg"><span><i style="border-color:var(--pr)"></i>preço</span>'
-               f'<span><i style="border-color:var(--me);border-top-style:dotted"></i>mediana dos últimos {JANELA} dias</span>'
-               '<span><i class="b"></i>faixa usual (1º a 3º quartil)</span>'
-               '<span><i style="border-color:var(--ca);border-top-style:dashed"></i>preço de capa</span>'
-               '<span style="color:var(--evl)">▮ evento</span><span>▨ sem coleta</span></div>')
+               '<span><i style="border-color:var(--me);border-top-style:dotted"></i>preço mais comum (últimos 90 dias)</span>'
+               '<span style="color:var(--evl)">▮ evento</span></div>')
     return (f'<!doctype html><html lang="pt-BR"><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<title>{html.escape(titulo)}</title><style>{CSS}</style><body>"
             f'{f"<p><b>{html.escape(aviso)}</b></p>" if aviso else ""}'
-            f"<h1>{html.escape(titulo)}</h1><small>ASIN {html.escape(asin)} · coletado de "
+            f"<h1>{html.escape(titulo)}</h1><small>ASIN {html.escape(asin)} · preços de "
             f"{_data(trechos[0].desde)} a {_data(trechos[-1].ate)}</small>"
-            f'<div class="cs" style="margin:12px 0">{_cartoes_atuais(atual, trechos)}</div>'
-            f'{legenda}{svg}<div id="tip">Passe o mouse (ou o dedo) sobre o gráfico para ver cada dia.</div>'
-            f"{f'<h2>Eventos</h2>{blocos}' if blocos else ''}"
+            f'<div class="cs" style="margin:12px 0">{_cartoes_atuais(atual)}</div>{_aviso_dados(atual)}'
+            f'{legenda}{svg}<div id="tip">Toque ou passe o mouse no gráfico para ver o preço de cada dia.</div>'
+            f"{f'<h2>Black Friday e outras promoções</h2>{blocos}' if blocos else ''}"
             f"<script>{JS % json.dumps(dados)}</script></body></html>")
