@@ -21,6 +21,8 @@ Opções de `coletar`:
 - `--desejos LINK` passa o link direto, sem usar `desejos.txt` (pode repetir).
 - `--lista livros.txt` define o arquivo de ASINs avulsos, fora de qualquer lista.
 - `--detalhar auto|todos|nenhum` define quando consultar a lista de ofertas de cada livro (veja abaixo).
+- `--cliente auto|curl|requests` define o cliente HTTP. O padrão usa o `curl` do sistema, que vem
+  instalado no Windows 10+, no macOS e no Linux, e cai para o `requests` se o curl não existir.
 
 Para rodar todo dia, agende o comando no `cron` (Linux/Mac) ou no Agendador de Tarefas
 (Windows), com o computador ligado. Exemplo de cron, às 9h:
@@ -64,14 +66,17 @@ Os valores ficam em **centavos** e as datas em UTC. Para gráficos, use só `sta
 | Captcha, ou erro 500/503 da Amazon | `bloqueado`. Espera 90 s a mais antes da próxima requisição e encerra após 3 bloqueios seguidos. Não tenta resolver captcha |
 | Livro sem oferta principal | Usa a primeira oferta **nova** da lista e anota isso em `detalhe` |
 | Layout mudou | `erro_parse` ou `sem_preco`, com o HTML bruto salvo em `data/html/AAAA-MM-DD/` para ajustar os seletores |
-| Cabeçalhos HTTP | A sessão envia só 4 cabeçalhos fixos. Os padrões do `requests` causavam captcha em 100% dos testes |
+| `requests` reconhecido como robô | O padrão é o `curl` do sistema: numa comparação intercalada na mesma URL, o curl passou em 2 de 3 tentativas e o `requests` em 0 de 3. Se usar `--cliente requests`, a sessão envia só 4 cabeçalhos fixos |
+| 503 intermitente na lista de desejos | Até 3 tentativas por página, com espera de 90 s e depois 180 s |
+| Página do meio da lista falha de vez | Os itens já lidos são gravados e a coleta registra o aviso "lista incompleta" |
+| Aviso oculto "Algo deu errado" na página da lista | Não conta como bloqueio. A página de erro é reconhecida pelo `<title>` |
 
 ## Avisos
 
-- O parser da lista de ofertas foi validado com uma resposta real (em `tests/fixtures/`).
-  O leitor da lista de desejos segue a estrutura documentada, mas **ainda não foi testado
-  com uma lista real**. Na primeira coleta, confira se `lista de desejos: N itens` bate
-  com a sua lista.
+- O parser da lista de ofertas e o leitor da lista de desejos foram validados com
+  respostas reais (em `tests/fixtures/`). A paginação real (página 2 em diante) ainda não
+  foi confirmada. Na primeira coleta, confira se `lista de desejos: N itens` bate com a
+  sua lista.
 - Ler as páginas da Amazon por script vai contra os termos de uso dela. O coletor faz o
   mínimo de requisições, com pausas, e para quando é bloqueado.
 - `data/` (banco e HTML) não vai para o git.

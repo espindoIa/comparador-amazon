@@ -44,7 +44,9 @@ def extrair_id(url_ou_id: str) -> str | None:
 
 
 def url_da_lista(lista_id: str) -> str:
-    return f"{BASE}/hz/wishlist/ls/{lista_id}?filter=unpurchased&sort=default&viewType=list"
+    # Endereço simples, igual ao link de compartilhamento: com parâmetros extras
+    # (filter/sort/viewType) a primeira página recebeu 503 nos testes.
+    return f"{BASE}/hz/wishlist/ls/{lista_id}"
 
 
 def _preco_attr(valor: str | None) -> int | None:

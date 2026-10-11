@@ -21,6 +21,7 @@ from pathlib import Path
 import requests
 
 from . import db
+from .cliente_http import nova_sessao
 from .lista_desejos import (
     ItemLista,
     ListaIndisponivel,
@@ -34,32 +35,15 @@ from .parser import Observacao, parece_bloqueio, parse_ofertas
 URL_PRODUTO = "https://www.amazon.com.br/dp/{asin}"
 URL_OFERTAS = "https://www.amazon.com.br/gp/product/ajax/aodAjaxMain/?asin={asin}&pc=dp"
 
-# Exatamente estes cabeçalhos, nesta ordem. Os padrões do `requests` (com
-# "Connection: keep-alive") levavam a captcha em todas as requisições nos testes.
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    ),
-    "Accept": "*/*",
-    "Accept-Encoding": "gzip, deflate",
-    "Accept-Language": "pt-BR,pt;q=0.9",
-}
 PAUSA_PADRAO = (6.0, 14.0)  # segundos entre requisições
 PAUSA_APOS_BLOQUEIO = 90.0  # espera extra depois de um bloqueio
 LIMITE_BLOQUEIOS = 3  # bloqueios seguidos que interrompem a execução
 DETALHE_VALIDO_POR = timedelta(days=7)
 MAX_PAGINAS_LISTA = 100
+TENTATIVAS_PAGINA_LISTA = 3  # a lista é a fonte principal: vale insistir um pouco
 
 _ASIN_RE = re.compile(r"^[A-Z0-9]{10}$")
 _URL_ASIN_RE = re.compile(r"/(?:dp|gp/product)/([A-Z0-9]{10})")
-
-
-def nova_sessao() -> requests.Session:
-    s = requests.Session()
-    s.headers.clear()
-    s.headers.update(HEADERS)
-    return s
 
 
 def extrair_asin(texto: str) -> str | None:
@@ -135,7 +119,9 @@ def _resolver_id(sessao, url_ou_id: str) -> str:
 
 def ler_lista_desejos(
     sessao, url_ou_id: str, *, pasta_html=None, pausa=PAUSA_PADRAO, dormir=time.sleep
-) -> list[ItemLista]:
+) -> tuple[list[ItemLista], str | None]:
+    """Devolve (itens, aviso). Se uma página do meio falhar de vez, devolve os itens
+    já lidos com um aviso de lista incompleta, em vez de perder tudo."""
     lista_id = _resolver_id(sessao, url_ou_id)
     url: str | None = url_da_lista(lista_id)
     vistos: set[str] = set()
@@ -146,12 +132,21 @@ def ler_lista_desejos(
         if pagina:
             dormir(random.uniform(*pausa))
         pagina += 1
-        status, html, erro = _baixar(sessao, url)
-        _guardar_html(pasta_html, f"lista-{lista_id}-p{pagina}", html)
+        # O 503 da Amazon é intermitente: tenta de novo com espera crescente.
+        for tentativa in range(TENTATIVAS_PAGINA_LISTA):
+            if tentativa:
+                dormir(PAUSA_APOS_BLOQUEIO * tentativa)
+            status, html, erro = _baixar(sessao, url)
+            _guardar_html(pasta_html, f"lista-{lista_id}-p{pagina}", html)
+            if erro is None or erro.status != "bloqueado":
+                break
         if status == 404:
             raise ListaIndisponivel("lista não encontrada (404): confira o link")
         if erro:
-            raise ListaIndisponivel(f"página {pagina} da lista: {erro.detalhe}")
+            msg = f"página {pagina} da lista: {erro.detalhe} (após {TENTATIVAS_PAGINA_LISTA} tentativas)"
+            if not itens:
+                raise ListaIndisponivel(msg)
+            return list(itens.values()), f"lista incompleta ({len(itens)} itens lidos); {msg}"
         novos, url = parse_pagina(html)
         if pagina == 1 and not novos:
             if eh_tela_de_login(html):
@@ -166,7 +161,7 @@ def ler_lista_desejos(
                 )
         for item in novos:
             itens.setdefault(item.asin, item)
-    return list(itens.values())
+    return list(itens.values()), None
 
 
 def _registrar(conn, coleta_id, asin, obs: Observacao, fonte: str, html_arquivo=None) -> None:
@@ -222,12 +217,13 @@ def coletar(
     listas_desejos: list[str] = (),
     detalhar: str = "auto",  # "auto", "todos" ou "nenhum"
     sessao=None,
+    cliente: str = "auto",
     pasta_html: Path | None = Path("data/html"),
     pausa: tuple[float, float] = PAUSA_PADRAO,
     dormir=time.sleep,
 ) -> int:
     """Roda uma coleta e devolve o id dela."""
-    sessao = sessao or nova_sessao()
+    sessao = sessao or nova_sessao(cliente)
     coleta_id = conn.execute("INSERT INTO coletas (iniciada_em) VALUES (?)", (db.agora(),)).lastrowid
     conn.commit()
     tentados = sucesso = 0
@@ -240,13 +236,16 @@ def coletar(
         if requisicoes:
             dormir(random.uniform(*pausa))
         try:
-            itens = ler_lista_desejos(sessao, url, pasta_html=pasta_html, pausa=pausa, dormir=dormir)
+            itens, aviso = ler_lista_desejos(sessao, url, pasta_html=pasta_html, pausa=pausa, dormir=dormir)
         except ListaIndisponivel as e:
             avisos.append(f"lista {url}: {e}")
             print(f"aviso: lista de desejos {url}: {e}")
             continue
         finally:
             requisicoes += 1
+        if aviso:
+            avisos.append(f"lista {url}: {aviso}")
+            print(f"aviso: {aviso}")
         print(f"lista de desejos: {len(itens)} itens")
         for item in itens:
             _garantir_livro(conn, item.asin)

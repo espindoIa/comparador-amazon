@@ -15,14 +15,16 @@ from bs4 import BeautifulSoup, Tag
 
 _PRECO_RE = re.compile(r"(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})")
 
-# Página de captcha / página de erro "cachorros da Amazon".
+# Página de captcha / página de erro "cachorros da Amazon". Cuidado com textos
+# genéricos: a lista de desejos tem um aviso oculto "Algo deu errado e não pode ser
+# removido...", por isso o erro é reconhecido pelo <title>, não pela frase solta.
 _MARCAS_DE_BLOQUEIO = (
     "/errors/validateCaptcha",
     "Digite os caracteres",
     "Enter the characters you see",
     "amazon.com.br/error/500",
-    "Algo deu errado",
 )
+_TITULO_ERRO_RE = re.compile(r"<title>[^<]*Algo deu errado", re.I)
 
 
 @dataclass
@@ -49,7 +51,7 @@ def parse_preco(texto: str | None) -> int | None:
 
 
 def parece_bloqueio(html: str) -> bool:
-    return any(marca in html for marca in _MARCAS_DE_BLOQUEIO)
+    return any(marca in html for marca in _MARCAS_DE_BLOQUEIO) or bool(_TITULO_ERRO_RE.search(html))
 
 
 def _texto(el: Tag | None) -> str | None:

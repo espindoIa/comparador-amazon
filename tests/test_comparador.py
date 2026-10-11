@@ -1,9 +1,8 @@
 """Testes. Rodar: python -m unittest discover -s tests
 
-`fixtures/ofertas_8501116432.html` é uma resposta REAL da lista de ofertas da Amazon
-(out/2026). As páginas de lista de desejos são sintéticas, montadas com a estrutura
-documentada (li[data-itemid], data-price, data-reposition-action-params, showMoreUrl,
-endOfListMarker), porque ainda não temos uma lista real para fixture.
+Fixtures REAIS da Amazon (out/2026): `ofertas_8501116432.html` (lista de ofertas) e
+`lista_desejos_p1.html` (trecho anonimizado da 1ª página de uma lista de desejos).
+As demais páginas de lista são sintéticas, com a mesma estrutura.
 """
 
 import gzip
@@ -12,12 +11,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from comparador import coletor, db
+import shutil
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from comparador import cliente_http, coletor, db
 from comparador.lista_desejos import ListaIndisponivel, extrair_id, parse_pagina
-from comparador.parser import parse_ofertas, parse_preco
+from comparador.parser import parece_bloqueio, parse_ofertas, parse_preco
 
 FIXTURES = Path(__file__).with_name("fixtures")
 OFERTAS_REAL = (FIXTURES / "ofertas_8501116432.html").read_text(encoding="utf-8")
+LISTA_REAL = (FIXTURES / "lista_desejos_p1.html").read_text(encoding="utf-8")
+PAGINA_CACHORROS = "<html><head><title>Amazon.com.br Algo deu errado</title></head><body></body></html>"
 
 
 def oferta_sintetica(*, preco="R$ 39,90", capa="R$ 59,90", heading="Novo", vendedor="Amazon.com.br"):
@@ -115,6 +120,21 @@ class TestListaDesejos(unittest.TestCase):
         self.assertEqual(itens[0].titulo, "A paciente silenciosa")
         self.assertEqual(itens[0].autor, "Fulana de Tal")
         self.assertEqual(prox, "https://www.amazon.com.br/hz/wishlist/slv/items?paginationToken=abc")
+
+    def test_pagina_real(self):
+        itens, prox = parse_pagina(LISTA_REAL)
+        self.assertEqual(
+            [(i.asin, i.titulo, i.preco_centavos) for i in itens],
+            [("8551013335", "Namorando com um vampiro", 3754), ("8551010654", "Morando com um vampiro", 3790)],
+        )
+        self.assertEqual(itens[0].autor, "Jenna Levine, Lígia Azevedo")
+        self.assertIn("/hz/wishlist/slv/items?", prox)
+        self.assertIn("paginationToken=TOKEN2", prox)
+
+    def test_aviso_oculto_da_lista_nao_e_bloqueio(self):
+        # A página real tem um alerta escondido "Algo deu errado e não pode ser removido..."
+        self.assertFalse(parece_bloqueio(LISTA_REAL))
+        self.assertTrue(parece_bloqueio(PAGINA_CACHORROS))
 
     def test_fim_da_lista(self):
         _, prox = parse_pagina(pagina_lista([item_lista("8501116432", "10.5")]))
@@ -231,8 +251,25 @@ class TestColetor(unittest.TestCase):
         self.assertEqual(self.linhas(), [("8501116432", "lista_desejos", "ok", 3499)])
 
     def test_lista_bloqueada(self):
-        c, _ = self.rodar([], {"wishlist/ls/": Resposta("", 503)}, listas=[LISTA])
+        c, sessao = self.rodar([], {"wishlist/ls/": Resposta(PAGINA_CACHORROS, 503)}, listas=[LISTA])
         self.assertIn("página 1", c["observacao"])
+        self.assertEqual(len(sessao.chamadas), coletor.TENTATIVAS_PAGINA_LISTA)
+
+    def test_lista_real_com_503_intermitente(self):
+        p2 = pagina_lista([item_lista("6581339202", "73.53")])
+        rotas = {
+            "wishlist/ls/": [Resposta(PAGINA_CACHORROS, 503), Resposta(LISTA_REAL)],
+            "paginationToken=TOKEN2": [Resposta(PAGINA_CACHORROS, 503), Resposta(p2)],
+        }
+        c, _ = self.rodar([], rotas, listas=[LISTA], detalhar="nenhum")
+        self.assertIsNone(c["observacao"])
+        self.assertEqual([r[0] for r in self.linhas()], ["8551013335", "8551010654", "6581339202"])
+
+    def test_lista_parcial_quando_pagina_do_meio_falha(self):
+        rotas = {"wishlist/ls/": Resposta(LISTA_REAL), "paginationToken=TOKEN2": Resposta(PAGINA_CACHORROS, 503)}
+        c, _ = self.rodar([], rotas, listas=[LISTA], detalhar="nenhum")
+        self.assertIn("lista incompleta (2 itens lidos)", c["observacao"])
+        self.assertEqual(len(self.linhas()), 2)  # os itens da página 1 não se perdem
 
     def test_lista_vazia_ou_layout_novo(self):
         c, _ = self.rodar([], {"wishlist/ls/": Resposta("<html><body>?</body></html>")}, listas=[LISTA])
@@ -266,10 +303,10 @@ class TestColetor(unittest.TestCase):
         db.criar_schema(antigo)
         self.assertEqual(antigo.execute("SELECT fonte FROM precos").fetchone()[0], "ofertas")
 
-    def test_sessao_sem_cabecalhos_padrao(self):
-        s = coletor.nova_sessao()
+    def test_sessao_requests_sem_cabecalhos_padrao(self):
+        s = cliente_http.nova_sessao("requests")
         self.assertNotIn("Connection", s.headers)
-        self.assertEqual(list(s.headers), list(coletor.HEADERS))
+        self.assertEqual(list(s.headers), list(cliente_http.HEADERS))
 
     def test_eventos_importar_e_atualizar(self):
         csv = Path(self.tmp.name) / "e.csv"
@@ -278,6 +315,61 @@ class TestColetor(unittest.TestCase):
         csv.write_text("nome,inicio,fim\nBlack Friday,2026-11-27,2026-11-30\n", encoding="utf-8")
         db.importar_eventos(self.conn, csv)
         self.assertEqual([r[0] for r in self.conn.execute("SELECT fim FROM eventos")], ["2026-11-30"])
+
+
+class _Servidor(BaseHTTPRequestHandler):
+    recebidos: list = []
+
+    def do_GET(self):
+        _Servidor.recebidos.append(dict(self.headers))
+        if self.path == "/redireciona":
+            self.send_response(302)
+            self.send_header("Location", "/hz/wishlist/ls/ABCDEFGH1234")
+            self.end_headers()
+            return
+        corpo = ("ação ok" if self.path != "/erro" else "fora").encode("utf-8")
+        self.send_response(503 if self.path == "/erro" else 200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def log_message(self, *a):
+        pass
+
+
+@unittest.skipUnless(shutil.which("curl"), "curl não instalado")
+class TestClienteCurl(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), _Servidor)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+        cls.cliente = cliente_http.nova_sessao("curl")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def test_auto_prefere_curl(self):
+        self.assertIsInstance(cliente_http.nova_sessao("auto"), cliente_http.ClienteCurl)
+
+    def test_get_ok_utf8_e_cabecalhos(self):
+        r = self.cliente.get(self.base + "/pagina")
+        self.assertEqual((r.status_code, r.text), (200, "ação ok"))
+        h = _Servidor.recebidos[-1]
+        self.assertEqual(h["User-Agent"], cliente_http.USER_AGENT)
+        self.assertEqual(h["Accept-Language"], "pt-BR,pt;q=0.9")
+
+    def test_status_de_erro_e_redirecionamento(self):
+        self.assertEqual(self.cliente.get(self.base + "/erro").status_code, 503)
+        r = self.cliente.get(self.base + "/redireciona")
+        self.assertTrue(r.url.endswith("/hz/wishlist/ls/ABCDEFGH1234"))
+
+    def test_falha_de_conexao_vira_erro_http(self):
+        porta_fechada = "http://127.0.0.1:9/"
+        status, html, erro = coletor._baixar(self.cliente, porta_fechada)
+        self.assertEqual(erro.status, "erro_http")
 
 
 if __name__ == "__main__":
