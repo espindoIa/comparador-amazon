@@ -1,0 +1,21 @@
+# TEMPORÁRIO: testa se a Amazon atende os servidores do GitHub. Será removido antes do merge.
+name: diagnostico-temp
+on:
+  push:
+    branches: [coleta-automatica]
+jobs:
+  amazon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r requirements.txt
+      - run: |
+          curl -s https://api.ipify.org; echo
+          which google-chrome || true
+          echo "8501116432" > "$RUNNER_TEMP/livros.txt"
+          python -m comparador --db "$RUNNER_TEMP/teste.db" coletar --lista "$RUNNER_TEMP/livros.txt" \
+            --desejos-arquivo /dev/null --sem-html --detalhar todos
+          python -m comparador --db "$RUNNER_TEMP/teste.db" status
