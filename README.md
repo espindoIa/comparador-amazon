@@ -227,3 +227,48 @@ Os valores ficam em **centavos** e as datas em UTC. Para gráficos, use só `sta
 - Ler as páginas da Amazon por script vai contra os termos de uso dela. O coletor faz o
   mínimo de requisições, com pausas, e para quando é bloqueado.
 - `data/` (banco e HTML) não vai para o git.
+
+## Histórico de preço por livro (gráfico e números)
+
+```bash
+python -m comparador --db data/catalogo-vendidos.db grafico "título ou ASIN"
+```
+
+Gera `data/grafico-<ASIN>.html` (abra no navegador). A página **não tira conclusões**: mostra os
+dados para quem compra decidir. Sem `--db`, usa `data/precos.db` (lista de desejos) se existir,
+senão `data/catalogo.db`. Se o termo casar com vários livros, lista os ASINs para repetir com o exato.
+
+**Gráfico (ajustável):** abre só com o preço (degraus), o preço mais comum dos últimos 90 dias
+(pontilhada) e as promoções. Abaixo dele há botões:
+
+- **Período:** 30 dias, 90 dias, Tudo, e um atalho por promoção (mostra os 45 dias antes e 7 depois).
+- **Zoom:** aproximar, afastar e andar para trás/frente no tempo. A escala de preço se ajusta ao trecho visível.
+- **Mostrar** (liga e desliga; a escolha fica guardada no navegador): preço mais comum, faixa usual
+  (onde ficou a metade central dos dias), preço de capa, promoções, dias sem coleta (hachurado) e
+  um ponto para cada dia coletado.
+
+Passando o mouse (ou o dedo) aparece o preço de cada dia. Períodos sem coleta nunca são preenchidos
+como se tivessem sido observados. Funciona no celular. O gráfico é desenhado no navegador (precisa de
+JavaScript); os números da página funcionam sem ele.
+
+**Números, em linguagem comum:** no topo, quatro cartões: preço de hoje, preço mais comum (mediana
+de 90 dias), o mais barato e o mais caro, com as datas. Para cada evento: o preço no evento e quanto
+está acima ou abaixo do preço mais comum dos 90 dias *anteriores*, o intervalo em que andou, o pico
+das 3 semanas antes e a última vez em que esteve igual ou menor. Em "Mais detalhes" (recolhido):
+faixa onde ficou a metade central dos dias, preço de capa e quantos dias de coleta sustentam a conta.
+Com pouco histórico, a página avisa.
+
+Os bancos do catálogo estão em *Releases → catalogo* (descompacte o `.db.gz`).
+
+### Simulação para testar antes da Black Friday
+
+```bash
+python scripts/simular_precos.py ORIGEM.db data/simulado.db --livros 2000
+python -m comparador --db data/simulado.db grafico "título ou ASIN"
+```
+
+Parte dos livros e preços **reais** de um banco do catálogo e inventa, num banco novo (o original
+não é tocado), preços diários de 28/09 a 30/11/2026 com oscilação de até ±12%. Cada livro recebe
+um cenário sorteado (`real`: queda de 15 a 40% na Black Friday; `falso`: preço sobe 15 a 35% nas 3
+semanas antes e volta; `nenhum`: sem promoção), gravado em `simulacao.cenario`. O banco simulado
+leva um aviso nos gráficos e **não deve ser misturado ao real**.
