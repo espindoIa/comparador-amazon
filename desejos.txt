@@ -1,0 +1,4 @@
+# Links das suas listas de desejos da Amazon Brasil, um por linha.
+# A lista precisa ser Pública ou Compartilhada (Suas listas > ... > Gerenciar lista > Privacidade).
+# Exemplo:
+# https://www.amazon.com.br/hz/wishlist/ls/XXXXXXXXXXXX

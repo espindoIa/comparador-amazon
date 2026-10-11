@@ -26,6 +26,14 @@ def conectar(caminho: str | Path) -> sqlite3.Connection:
 
 def criar_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA.read_text(encoding="utf-8"))
+    # Migração de bancos criados antes da coluna `fonte` existir.
+    colunas = {r["name"] for r in conn.execute("PRAGMA table_info(precos)")}
+    if "fonte" not in colunas:
+        conn.execute(
+            "ALTER TABLE precos ADD COLUMN fonte TEXT NOT NULL DEFAULT 'ofertas' "
+            "CHECK (fonte IN ('ofertas', 'lista_desejos'))"
+        )
+        conn.commit()
 
 
 def importar_eventos(conn: sqlite3.Connection, csv_path: str | Path) -> int:
