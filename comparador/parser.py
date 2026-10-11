@@ -1,9 +1,9 @@
-"""Extrai preço e demais dados do HTML de uma página de produto da Amazon Brasil.
+"""Extrai preço e demais dados da lista de ofertas ("todas as ofertas") de um produto.
 
-Os seletores abaixo vêm do conhecimento do layout e NÃO foram validados contra
-páginas reais. Quando a Amazon mudar o layout, o coletor grava status
-'erro_parse' ou 'sem_preco' e guarda o HTML bruto, que é o material para ajustar
-este arquivo.
+Usamos o endpoint de ofertas, e não a página do produto, porque em visitas
+automatizadas a página do produto costuma esconder o preço ("adicione ao carrinho
+para ver o preço"), enquanto a lista de ofertas traz a oferta principal completa:
+preço, preço de capa, condição e vendedor. Também é ~25x menor.
 """
 
 from __future__ import annotations
@@ -14,30 +14,14 @@ from dataclasses import dataclass
 from bs4 import BeautifulSoup, Tag
 
 _PRECO_RE = re.compile(r"(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})")
-_CAPA_RE = re.compile(r"\b(?:Preço de capa|Preço de lista|De)\s*:?\s*R\$\s*([\d.]+,\d{2})", re.I)
-_VENDIDO_RE = re.compile(r"vendido por\s+(.+?)(?:\s+e\s+(?:entregue|enviado)\b|\.|$)", re.I)
 
+# Página de captcha / página de erro "cachorros da Amazon".
 _MARCAS_DE_BLOQUEIO = (
     "/errors/validateCaptcha",
     "Digite os caracteres",
     "Enter the characters you see",
-)
-
-# Só procuramos preço dentro do bloco de preço principal; um seletor global
-# pegaria preços de carrosséis de "quem comprou também comprou".
-_CONTAINERS_PRECO = (
-    "#corePrice_feature_div",
-    "#corePriceDisplay_desktop_feature_div",
-    "#apex_desktop",
-    "#apex_offerDisplay_desktop",
-)
-_SEL_PRECO_ATUAL = (
-    ".priceToPay .a-offscreen",
-    ".a-price:not(.a-text-price) .a-offscreen",
-)
-_SEL_PRECO_CAPA = (
-    ".a-price.a-text-price .a-offscreen",
-    ".basisPrice .a-offscreen",
+    "amazon.com.br/error/500",
+    "Algo deu errado",
 )
 
 
@@ -64,6 +48,10 @@ def parse_preco(texto: str | None) -> int | None:
     return int(m.group(1).replace(".", "")) * 100 + int(m.group(2))
 
 
+def parece_bloqueio(html: str) -> bool:
+    return any(marca in html for marca in _MARCAS_DE_BLOQUEIO)
+
+
 def _texto(el: Tag | None) -> str | None:
     if el is None:
         return None
@@ -71,89 +59,90 @@ def _texto(el: Tag | None) -> str | None:
     return t or None
 
 
-def _primeiro_preco(escopo: Tag, seletores: tuple[str, ...]) -> int | None:
-    for sel in seletores:
-        for el in escopo.select(sel):
+def _preco_da_oferta(oferta: Tag) -> int | None:
+    for sel in (
+        ".apex-pricetopay-value .a-offscreen",
+        ".apex-pricetopay-accessibility-label",
+    ):
+        for el in oferta.select(sel):
+            preco = parse_preco(el.get_text())
+            if preco is not None:
+                return preco
+    # Último recurso: partes visíveis "34," + "99"
+    inteiro = oferta.select_one(".apex-pricetopay-value .a-price-whole")
+    fracao = oferta.select_one(".apex-pricetopay-value .a-price-fraction")
+    if inteiro and fracao:
+        return parse_preco(inteiro.get_text(strip=True).rstrip(",") + "," + fracao.get_text(strip=True))
+    return None
+
+
+def _capa_da_oferta(oferta: Tag) -> int | None:
+    for sel in (".apex-basisprice-value .a-offscreen", ".apex-basisprice-offscreen-label"):
+        for el in oferta.select(sel):
             preco = parse_preco(el.get_text())
             if preco is not None:
                 return preco
     return None
 
 
-def _precos(soup: BeautifulSoup) -> tuple[int | None, int | None]:
-    for sel in _CONTAINERS_PRECO:
-        bloco = soup.select_one(sel)
-        if bloco is None:
-            continue
-        atual = _primeiro_preco(bloco, _SEL_PRECO_ATUAL)
-        if atual is None:
-            continue
-        capa = _primeiro_preco(bloco, _SEL_PRECO_CAPA)
-        if capa is None:
-            m = _CAPA_RE.search(_texto(bloco) or "")
-            capa = parse_preco(m.group(1)) if m else None
-        return atual, capa
-    # Layouts antigos
-    el = soup.select_one("#price_inside_buybox, #priceblock_ourprice")
-    atual = parse_preco(el.get_text()) if el else None
-    capa = parse_preco(_texto(soup.select_one("#listPrice")))
-    return atual, capa
+def _condicao(oferta: Tag) -> str | None:
+    t = (_texto(oferta.select_one("#aod-offer-heading")) or "").lower()
+    if t.startswith("novo"):
+        return "novo"
+    if t.startswith("usado"):
+        return "usado"
+    return t or None
 
 
-def _vendedor(soup: BeautifulSoup) -> str | None:
-    nome = None
-    for el in soup.select("#tabular-buybox .tabular-buybox-text"):
-        if (el.get("tabular-attribute-name") or "").strip().lower() == "vendido por":
-            nome = _texto(el)
-            break
-    if nome is None:
-        m = _VENDIDO_RE.search(_texto(soup.select_one("#merchant-info")) or "")
-        nome = m.group(1).strip() if m else None
-    if nome and "amazon" in nome.lower():
-        return "Amazon"
-    return nome
-
-
-def _estoque(soup: BeautifulSoup) -> bool | None:
-    if soup.select_one("#outOfStock"):
-        return False
-    txt = (_texto(soup.select_one("#availability")) or "").lower()
-    if "indispon" in txt or "não disponível" in txt or "esgotado" in txt:
-        return False
-    if "em estoque" in txt or "disponível" in txt:
-        return True
+def _vendedor(oferta: Tag) -> str | None:
+    bloco = oferta.select_one("#aod-offer-soldBy .a-col-right")
+    if bloco is None:
+        return None
+    for el in bloco.select("a, span.a-color-base"):
+        nome = _texto(el)
+        if nome and "devolução" not in nome.lower():
+            return "Amazon" if "amazon" in nome.lower() else nome
     return None
 
 
-def parse_produto(html: str) -> Observacao:
-    if any(marca in html for marca in _MARCAS_DE_BLOQUEIO):
-        return Observacao("bloqueado", detalhe="página de captcha / verificação de robô")
+def parse_ofertas(html: str) -> Observacao:
+    if parece_bloqueio(html):
+        return Observacao("bloqueado", detalhe="captcha ou página de erro da Amazon")
 
     soup = BeautifulSoup(html, "html.parser")
-    titulo = _texto(soup.select_one("#productTitle"))
-    if titulo is None:
+    titulo = _texto(soup.select_one("#aod-asin-title-text"))
+    principal = soup.select_one("#aod-pinned-offer")
+    if titulo is None and principal is None:
+        return Observacao("erro_parse", detalhe="resposta não parece a lista de ofertas")
+
+    preco = _preco_da_oferta(principal) if principal else None
+    detalhe = None
+    oferta = principal
+    if preco is None:
+        # Sem oferta principal: usamos a primeira oferta nova da lista, se houver.
+        for o in soup.select("#aod-offer-list #aod-offer"):
+            if _condicao(o) == "novo" and _preco_da_oferta(o) is not None:
+                oferta, preco = o, _preco_da_oferta(o)
+                detalhe = "sem oferta principal; usada a primeira oferta nova"
+                break
+
+    if preco is None:
+        total = soup.select_one("#aod-total-offer-count")
+        sem_ofertas = total is not None and (total.get("value") or "0").strip() == "0"
         return Observacao(
-            "erro_parse",
-            detalhe="#productTitle ausente: layout mudou ou não é página de produto",
+            "indisponivel" if sem_ofertas else "sem_preco",
+            titulo=titulo,
+            em_estoque=False if sem_ofertas else None,
+            detalhe=None if sem_ofertas else "ofertas presentes, mas sem preço legível",
         )
 
-    autores = [_texto(a) for a in soup.select("#bylineInfo .author > a")]
-    autor = ", ".join(a for a in autores if a) or None
-    estoque = _estoque(soup)
-    atual, capa = _precos(soup)
-
-    base = dict(titulo=titulo, autor=autor, preco_capa_centavos=capa)
-    if atual is not None:
-        return Observacao(
-            "ok",
-            preco_centavos=atual,
-            vendido_por=_vendedor(soup),
-            em_estoque=False if estoque is False else True,
-            condicao="novo",
-            **base,
-        )
-    if estoque is False:
-        return Observacao("indisponivel", em_estoque=False, **base)
     return Observacao(
-        "sem_preco", em_estoque=estoque, detalhe="nenhum preço no bloco principal", **base
+        "ok",
+        titulo=titulo,
+        preco_centavos=preco,
+        preco_capa_centavos=_capa_da_oferta(oferta),
+        vendido_por=_vendedor(oferta),
+        em_estoque=True,
+        condicao=_condicao(oferta),
+        detalhe=detalhe,
     )

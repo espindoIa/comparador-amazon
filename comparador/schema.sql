@@ -26,12 +26,16 @@ CREATE TABLE IF NOT EXISTS coletas (
 
 -- Uma linha por tentativa de coleta de um livro (inclusive as que falharam,
 -- com o motivo em `status`). Para gráficos, filtre status = 'ok'.
+-- `fonte`: 'lista_desejos' (preço da lista, todo dia, barato) ou 'ofertas'
+-- (lista de ofertas do produto: também preço de capa, vendedor e condição).
 CREATE TABLE IF NOT EXISTS precos (
     id                  INTEGER PRIMARY KEY,
     asin                TEXT NOT NULL REFERENCES livros(asin),
     coleta_id           INTEGER NOT NULL REFERENCES coletas(id),
     coletado_em         TEXT NOT NULL,
-    status              TEXT NOT NULL CHECK (status IN (
+    fonte               TEXT NOT NULL DEFAULT 'ofertas'
+                        CHECK (fonte IN ('ofertas', 'lista_desejos')),
+    status             TEXT NOT NULL CHECK (status IN (
                             'ok',           -- preço lido
                             'indisponivel', -- página lida, sem oferta/estoque
                             'sem_preco',    -- página lida, mas sem preço nem aviso de estoque (suspeito)

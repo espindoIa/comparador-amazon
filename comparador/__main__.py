@@ -16,8 +16,13 @@ def main() -> None:
     i = sub.add_parser("init", help="cria o banco e importa eventos.csv")
     i.add_argument("--eventos", default="eventos.csv")
 
-    c = sub.add_parser("coletar", help="coleta o preço dos livros de livros.txt")
-    c.add_argument("--lista", default="livros.txt")
+    c = sub.add_parser("coletar", help="coleta os preços da lista de desejos e de livros.txt")
+    c.add_argument("--lista", default="livros.txt", help="arquivo com ASINs avulsos")
+    c.add_argument("--desejos-arquivo", default="desejos.txt", help="arquivo com links de listas")
+    c.add_argument("--desejos", action="append", default=[], metavar="LINK",
+                   help="link de uma lista de desejos (pode repetir)")
+    c.add_argument("--detalhar", choices=["auto", "todos", "nenhum"], default="auto",
+                   help="quando consultar a lista de ofertas de cada livro (padrão: %(default)s)")
     c.add_argument("--sem-html", action="store_true", help="não guardar o HTML bruto")
 
     sub.add_parser("status", help="mostra as últimas coletas e o último preço de cada livro")
@@ -30,22 +35,36 @@ def main() -> None:
         n = db.importar_eventos(conn, args.eventos) if Path(args.eventos).exists() else 0
         print(f"banco pronto em {args.db}; {n} eventos importados")
     elif args.cmd == "coletar":
-        asins = coletor.ler_lista(args.lista)
-        if not asins:
-            raise SystemExit(f"nenhum ASIN em {args.lista}; adicione um por linha")
-        coletor.coletar(conn, asins, pasta_html=None if args.sem_html else Path("data/html"))
+        asins = coletor.ler_lista(args.lista) if Path(args.lista).exists() else []
+        listas = list(args.desejos)
+        if Path(args.desejos_arquivo).exists():
+            listas += coletor.ler_desejos(args.desejos_arquivo)
+        if not asins and not listas:
+            raise SystemExit(
+                f"nada para coletar: coloque o link da sua lista de desejos em {args.desejos_arquivo} "
+                f"ou ASINs em {args.lista}"
+            )
+        cid = coletor.coletar(
+            conn, asins, listas_desejos=list(dict.fromkeys(listas)), detalhar=args.detalhar,
+            pasta_html=None if args.sem_html else Path("data/html"),
+        )
+        obs = conn.execute("SELECT observacao FROM coletas WHERE id = ?", (cid,)).fetchone()[0]
+        if obs:
+            print(f"atenção: {obs}")
     elif args.cmd == "status":
         for r in conn.execute("SELECT * FROM coletas ORDER BY id DESC LIMIT 5"):
             print(f"coleta {r['id']}: {r['iniciada_em']}  {r['sucesso']}/{r['tentados']} ok"
                   + (f"  ({r['observacao']})" if r["observacao"] else ""))
         print()
         for r in conn.execute(
-            "SELECT l.asin, l.titulo, p.coletado_em, p.status, p.preco_centavos "
-            "FROM livros l LEFT JOIN precos p ON p.id = ("
-            "  SELECT id FROM precos WHERE asin = l.asin ORDER BY coletado_em DESC, id DESC LIMIT 1)"
+            "SELECT l.asin, l.titulo, p.coletado_em, p.fonte, p.status, p.preco_centavos, "
+            "p.preco_capa_centavos FROM livros l LEFT JOIN precos p ON p.id = ("
+            "  SELECT id FROM precos WHERE asin = l.asin AND status = 'ok' "
+            "  ORDER BY coletado_em DESC, id DESC LIMIT 1) ORDER BY l.titulo"
         ):
-            preco = f"R$ {r['preco_centavos'] / 100:.2f}" if r["preco_centavos"] else "-"
-            print(f"{r['asin']}  {(r['titulo'] or '')[:40]:40}  {r['status'] or '-':12} {preco}")
+            preco = f"R$ {r['preco_centavos'] / 100:7.2f}" if r["preco_centavos"] else "         -"
+            capa = f"capa R$ {r['preco_capa_centavos'] / 100:.2f}" if r["preco_capa_centavos"] else ""
+            print(f"{r['asin']}  {(r['titulo'] or '')[:40]:40}  {preco}  {capa}")
 
 
 if __name__ == "__main__":

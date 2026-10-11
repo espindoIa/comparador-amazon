@@ -1,42 +1,59 @@
-"""Testes com HTML SINTÉTICO que imita a estrutura esperada da página da Amazon.
+"""Testes. Rodar: python -m unittest discover -s tests
 
-Eles provam que a lógica do parser e do coletor está coerente, mas não que os
-seletores batem com as páginas reais: isso só se confirma com a primeira coleta.
-Rodar: python -m unittest discover -s tests
+`fixtures/ofertas_8501116432.html` é uma resposta REAL da lista de ofertas da Amazon
+(out/2026). As páginas de lista de desejos são sintéticas, montadas com a estrutura
+documentada (li[data-itemid], data-price, data-reposition-action-params, showMoreUrl,
+endOfListMarker), porque ainda não temos uma lista real para fixture.
 """
 
 import gzip
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from comparador import coletor, db
-from comparador.parser import parse_preco, parse_produto
+from comparador.lista_desejos import ListaIndisponivel, extrair_id, parse_pagina
+from comparador.parser import parse_ofertas, parse_preco
+
+FIXTURES = Path(__file__).with_name("fixtures")
+OFERTAS_REAL = (FIXTURES / "ofertas_8501116432.html").read_text(encoding="utf-8")
 
 
-def pagina(
-    *,
-    titulo="Um Livro",
-    bloco_preco="",
-    vendedor="",
-    estoque="",
-    extra="",
-):
-    return f"""<html><body>
-    <span id="productTitle"> {titulo} </span>
-    <div id="bylineInfo"><span class="author"><a>Fulana de Tal</a></span></div>
-    {bloco_preco}{vendedor}
-    <div id="availability"><span>{estoque}</span></div>
-    {extra}
-    </body></html>"""
+def oferta_sintetica(*, preco="R$ 39,90", capa="R$ 59,90", heading="Novo", vendedor="Amazon.com.br"):
+    capa_html = (
+        f'<span class="a-price a-text-price apex-basisprice-value"><span class="a-offscreen">{capa}</span></span>'
+        if capa else ""
+    )
+    return f"""<div id="aod-offer-heading">{heading}</div>
+      <span class="a-price apex-pricetopay-value"><span class="a-offscreen">{preco}</span></span>
+      {capa_html}
+      <div id="aod-offer-soldBy"><div class="a-col-right">
+        <span class="a-size-small a-color-base">{vendedor}</span><a>Política de devolução</a>
+      </div></div>"""
 
 
-PRECO_COM_CAPA = """<div id="corePrice_feature_div">
-  <span class="a-price priceToPay"><span class="a-offscreen">R$&nbsp;39,90</span></span>
-  <span class="a-price a-text-price"><span class="a-offscreen">R$&nbsp;1.059,00</span></span>
-</div>"""
+def pagina_ofertas(*, principal="", lista="", total=5, titulo="Um Livro"):
+    return f"""<html><body><h5 id="aod-asin-title-text"> {titulo} </h5>
+      <input id="aod-total-offer-count" type="hidden" value="{total}"/>
+      {f'<div id="aod-pinned-offer">{principal}</div>' if principal else ''}
+      <div id="aod-offer-list">{lista}</div></body></html>"""
 
-CARROSSEL = """<div id="similarities"><span class="a-price"><span class="a-offscreen">R$ 9,99</span></span></div>"""
+
+def item_lista(asin, preco, titulo="Livro", item_id=None):
+    item_id = item_id or f"I{asin}"
+    params = json.dumps({"itemExternalId": f"ASIN:{asin}|A2Q3Y263D00KWC", "listType": "WishList"})
+    return f"""<li data-itemid="{item_id}" data-price="{preco}" class="g-item-sortable"
+        data-reposition-action-params='{params}'>
+      <a id="itemName_{item_id}" title="{titulo}" href="/dp/{asin}/?coliid=x">{titulo}</a>
+      <span id="item-byline-{item_id}">por Fulana de Tal (Capa comum)</span></li>"""
+
+
+def pagina_lista(itens, proxima=None):
+    fim = '<div id="endOfListMarker"></div>' if proxima is None else (
+        f'<input type="hidden" name="showMoreUrl" class="showMoreUrl" value="{proxima}">'
+    )
+    return f"<html><body><ul id='g-items'>{''.join(itens)}</ul>{fim}</body></html>"
 
 
 class TestParsePreco(unittest.TestCase):
@@ -48,63 +65,67 @@ class TestParsePreco(unittest.TestCase):
         self.assertIsNone(parse_preco(None))
 
 
-class TestParseProduto(unittest.TestCase):
-    def test_preco_e_capa(self):
-        html = pagina(
-            bloco_preco=PRECO_COM_CAPA,
-            vendedor='<div id="merchant-info">Enviado por Amazon e vendido por Amazon.com.br.</div>',
-            estoque="Em estoque",
-        )
-        o = parse_produto(html)
+class TestParseOfertas(unittest.TestCase):
+    def test_pagina_real(self):
+        o = parse_ofertas(OFERTAS_REAL)
         self.assertEqual(o.status, "ok")
-        self.assertEqual(o.preco_centavos, 3990)
-        self.assertEqual(o.preco_capa_centavos, 105900)
+        self.assertEqual(o.titulo, "A paciente silenciosa")
+        self.assertEqual(o.preco_centavos, 3499)
+        self.assertEqual(o.preco_capa_centavos, 6490)
         self.assertEqual(o.vendido_por, "Amazon")
         self.assertEqual(o.condicao, "novo")
-        self.assertTrue(o.em_estoque)
-        self.assertEqual(o.titulo, "Um Livro")
-        self.assertEqual(o.autor, "Fulana de Tal")
 
-    def test_vendedor_terceiro(self):
-        html = pagina(
-            bloco_preco=PRECO_COM_CAPA,
-            vendedor='<div id="merchant-info">Vendido por Livraria X e entregue pela Amazon.</div>',
-        )
-        self.assertEqual(parse_produto(html).vendido_por, "Livraria X")
+    def test_vendedor_terceiro_e_usado(self):
+        o = parse_ofertas(pagina_ofertas(principal=oferta_sintetica(heading="Usado - Bom", vendedor="Sebo Y", capa=None)))
+        self.assertEqual((o.vendido_por, o.condicao, o.preco_capa_centavos), ("Sebo Y", "usado", None))
 
-    def test_vendedor_tabela(self):
-        html = pagina(
-            bloco_preco=PRECO_COM_CAPA,
-            vendedor='<div id="tabular-buybox"><span class="tabular-buybox-text" '
-            'tabular-attribute-name="Vendido por"><a>Sebo Y</a></span></div>',
-        )
-        self.assertEqual(parse_produto(html).vendido_por, "Sebo Y")
+    def test_sem_oferta_principal_usa_primeira_nova(self):
+        lista = (f'<div id="aod-offer">{oferta_sintetica(heading="Usado - Bom", preco="R$ 10,00")}</div>'
+                 f'<div id="aod-offer">{oferta_sintetica(preco="R$ 45,00")}</div>')
+        o = parse_ofertas(pagina_ofertas(lista=lista))
+        self.assertEqual((o.status, o.preco_centavos, o.condicao), ("ok", 4500, "novo"))
+        self.assertIn("sem oferta principal", o.detalhe)
 
-    def test_capa_por_texto(self):
-        bloco = """<div id="corePrice_feature_div">
-          <span class="a-price priceToPay"><span class="a-offscreen">R$ 50,00</span></span>
-          <span>Preço de capa: R$ 80,00</span></div>"""
-        self.assertEqual(parse_produto(pagina(bloco_preco=bloco)).preco_capa_centavos, 8000)
-
-    def test_ignora_preco_de_carrossel(self):
-        o = parse_produto(pagina(extra=CARROSSEL))
-        self.assertNotEqual(o.preco_centavos, 999)
-        self.assertEqual(o.status, "sem_preco")
-
-    def test_indisponivel(self):
-        o = parse_produto(pagina(estoque="Atualmente indisponível."))
+    def test_sem_ofertas(self):
+        o = parse_ofertas(pagina_ofertas(total=0))
         self.assertEqual(o.status, "indisponivel")
-        self.assertFalse(o.em_estoque)
 
-    def test_bloqueado(self):
-        o = parse_produto('<form action="/errors/validateCaptcha">Digite os caracteres</form>')
-        self.assertEqual(o.status, "bloqueado")
+    def test_bloqueios(self):
+        self.assertEqual(parse_ofertas('<form action="/errors/validateCaptcha"></form>').status, "bloqueado")
+        pagina_500 = '<script>window.location.replace("https://www.amazon.com.br/error/500");</script>'
+        self.assertEqual(parse_ofertas(pagina_500).status, "bloqueado")
 
-    def test_layout_inesperado(self):
-        self.assertEqual(parse_produto("<html><body>nada</body></html>").status, "erro_parse")
+    def test_resposta_estranha(self):
+        self.assertEqual(parse_ofertas("<html><body>nada</body></html>").status, "erro_parse")
 
 
-class TestLista(unittest.TestCase):
+class TestListaDesejos(unittest.TestCase):
+    def test_extrair_id(self):
+        self.assertEqual(extrair_id("https://www.amazon.com.br/hz/wishlist/ls/2ABCDEF123XYZ?ref_=x"), "2ABCDEF123XYZ")
+        self.assertEqual(extrair_id("https://www.amazon.com.br/registry/wishlist/2ABCDEF123XYZ"), "2ABCDEF123XYZ")
+        self.assertIsNone(extrair_id("https://www.amazon.com.br/dp/8535902775"))
+
+    def test_parse_pagina(self):
+        html = pagina_lista(
+            [item_lista("8501116432", "34.99", "A paciente silenciosa"), item_lista("B0ABCDEFGH", "-Infinity")],
+            proxima="/hz/wishlist/slv/items?paginationToken=abc",
+        )
+        itens, prox = parse_pagina(html)
+        self.assertEqual([(i.asin, i.preco_centavos) for i in itens], [("8501116432", 3499), ("B0ABCDEFGH", None)])
+        self.assertEqual(itens[0].titulo, "A paciente silenciosa")
+        self.assertEqual(itens[0].autor, "Fulana de Tal")
+        self.assertEqual(prox, "https://www.amazon.com.br/hz/wishlist/slv/items?paginationToken=abc")
+
+    def test_fim_da_lista(self):
+        _, prox = parse_pagina(pagina_lista([item_lista("8501116432", "10.5")]))
+        self.assertIsNone(prox)
+
+    def test_item_sem_asin_ignorado(self):
+        html = pagina_lista(['<li data-itemid="X1" data-price="5.0"><span>uma ideia</span></li>'])
+        self.assertEqual(parse_pagina(html)[0], [])
+
+
+class TestArquivos(unittest.TestCase):
     def test_extrair_asin(self):
         self.assertEqual(coletor.extrair_asin("b0abcdefgh"), "B0ABCDEFGH")
         self.assertEqual(coletor.extrair_asin("https://www.amazon.com.br/Nome/dp/8535902775/ref=x"), "8535902775")
@@ -117,18 +138,26 @@ class TestLista(unittest.TestCase):
             self.assertEqual(coletor.ler_lista(f), ["8535902775", "B0ABCDEFGH"])
 
 
-class RespostaFalsa:
-    def __init__(self, texto, status=200):
-        self.text, self.status_code = texto, status
+class Resposta:
+    def __init__(self, texto, status=200, url=""):
+        self.text, self.status_code, self.url = texto, status, url
 
 
 class SessaoFalsa:
-    def __init__(self, respostas):
-        self.respostas, self.chamadas = respostas, []
+    """Responde por trecho de URL; cada valor é uma Resposta ou uma lista consumida em ordem."""
+
+    def __init__(self, rotas):
+        self.rotas, self.chamadas = rotas, []
 
     def get(self, url, **kw):
         self.chamadas.append(url)
-        return self.respostas[len(self.chamadas) - 1]
+        for trecho, resp in self.rotas.items():
+            if trecho in url:
+                return resp.pop(0) if isinstance(resp, list) else resp
+        raise AssertionError(f"URL inesperada: {url}")
+
+
+LISTA = "https://www.amazon.com.br/hz/wishlist/ls/2ABCDEF123XYZ"
 
 
 class TestColetor(unittest.TestCase):
@@ -136,57 +165,111 @@ class TestColetor(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.conn = db.conectar(Path(self.tmp.name) / "t.db")
+        self.addCleanup(self.conn.close)
         db.criar_schema(self.conn)
         self.pausas = []
 
-    def rodar(self, asins, respostas, pasta_html=None):
-        sessao = SessaoFalsa(respostas)
-        cid = coletor.coletar(
-            self.conn, asins, sessao=sessao, pasta_html=pasta_html, dormir=self.pausas.append
-        )
-        return cid, sessao
+    def rodar(self, asins, rotas, *, listas=(), detalhar="auto", pasta_html=None):
+        sessao = SessaoFalsa(rotas)
+        cid = coletor.coletar(self.conn, asins, listas_desejos=list(listas), detalhar=detalhar,
+                              sessao=sessao, pasta_html=pasta_html, dormir=self.pausas.append)
+        return self.conn.execute("SELECT * FROM coletas WHERE id=?", (cid,)).fetchone(), sessao
 
-    def test_grava_preco_e_atualiza_livro(self):
-        ok = RespostaFalsa(pagina(bloco_preco=PRECO_COM_CAPA, estoque="Em estoque"))
-        cid, _ = self.rodar(["8535902775"], [ok])
-        p = self.conn.execute("SELECT * FROM precos").fetchone()
-        self.assertEqual((p["status"], p["preco_centavos"], p["preco_capa_centavos"]), ("ok", 3990, 105900))
-        self.assertEqual(self.conn.execute("SELECT titulo FROM livros").fetchone()[0], "Um Livro")
-        c = self.conn.execute("SELECT * FROM coletas WHERE id=?", (cid,)).fetchone()
+    def linhas(self):
+        return [tuple(r) for r in self.conn.execute(
+            "SELECT asin, fonte, status, preco_centavos FROM precos ORDER BY id")]
+
+    def test_livro_avulso_usa_ofertas(self):
+        c, _ = self.rodar(["8501116432"], {"aodAjaxMain": Resposta(OFERTAS_REAL)})
+        self.assertEqual(self.linhas(), [("8501116432", "ofertas", "ok", 3499)])
+        self.assertEqual(self.conn.execute("SELECT titulo FROM livros").fetchone()[0], "A paciente silenciosa")
         self.assertEqual((c["tentados"], c["sucesso"], c["falhas"]), (1, 1, 0))
-        self.assertIsNotNone(c["finalizada_em"])
 
-    def test_falhas_ficam_registradas(self):
-        cid, _ = self.rodar(
-            ["AAAAAAAAAA", "BBBBBBBBBB"],
-            [RespostaFalsa("", 404), RespostaFalsa("<html>nada</html>")],
-        )
-        st = [r[0] for r in self.conn.execute("SELECT status FROM precos ORDER BY id")]
-        self.assertEqual(st, ["erro_http", "erro_parse"])
-        c = self.conn.execute("SELECT * FROM coletas WHERE id=?", (cid,)).fetchone()
-        self.assertEqual((c["sucesso"], c["falhas"]), (0, 2))
-        self.assertEqual(len(self.pausas), 1)  # pausa só entre livros, não antes do primeiro
+    def test_lista_paginada_e_detalhes(self):
+        p1 = pagina_lista([item_lista("8501116432", "34.99")], proxima="/hz/wishlist/slv/items?paginationToken=t2")
+        p2 = pagina_lista([item_lista("B0ABCDEFGH", "-Infinity")])
+        rotas = {"wishlist/ls/": Resposta(p1), "paginationToken=t2": Resposta(p2),
+                 "aodAjaxMain": [Resposta(OFERTAS_REAL), Resposta(pagina_ofertas(total=0))]}
+        c, sessao = self.rodar([], rotas, listas=[LISTA])
+        self.assertEqual(self.linhas(), [
+            ("8501116432", "lista_desejos", "ok", 3499),
+            ("B0ABCDEFGH", "lista_desejos", "indisponivel", None),
+            ("8501116432", "ofertas", "ok", 3499),
+            ("B0ABCDEFGH", "ofertas", "indisponivel", None),
+        ])
+        self.assertEqual(len(sessao.chamadas), 4)
+        self.assertEqual(self.conn.execute("SELECT autor FROM livros WHERE asin='8501116432'").fetchone()[0], "Fulana de Tal")
+
+    def test_auto_pula_ofertas_quando_preco_nao_mudou(self):
+        lista = pagina_lista([item_lista("8501116432", "34.99")])
+        self.rodar([], {"wishlist/ls/": Resposta(lista), "aodAjaxMain": Resposta(OFERTAS_REAL)}, listas=[LISTA])
+        # Segundo dia, mesmo preço: só a lista é lida.
+        _, sessao = self.rodar([], {"wishlist/ls/": Resposta(lista)}, listas=[LISTA])
+        self.assertEqual(len(sessao.chamadas), 1)
+        # Terceiro dia, preço caiu: consulta as ofertas de novo.
+        lista2 = pagina_lista([item_lista("8501116432", "29.90")])
+        _, sessao = self.rodar([], {"wishlist/ls/": Resposta(lista2), "aodAjaxMain": Resposta(OFERTAS_REAL)}, listas=[LISTA])
+        self.assertEqual(len(sessao.chamadas), 2)
+
+    def test_detalhar_nenhum(self):
+        lista = pagina_lista([item_lista("8501116432", "34.99")])
+        _, sessao = self.rodar([], {"wishlist/ls/": Resposta(lista)}, listas=[LISTA], detalhar="nenhum")
+        self.assertEqual(len(sessao.chamadas), 1)
+
+    def test_lista_privada_nao_derruba_coleta(self):
+        rotas = {"wishlist/ls/": Resposta('<form action="/ap/signin"></form>'),
+                 "aodAjaxMain": Resposta(OFERTAS_REAL)}
+        c, _ = self.rodar(["8501116432"], rotas, listas=[LISTA])
+        self.assertIn("privada", c["observacao"])
+        self.assertEqual(self.linhas(), [("8501116432", "ofertas", "ok", 3499)])
+
+    def test_link_de_login_no_menu_nao_e_lista_privada(self):
+        menu = '<a href="https://www.amazon.com.br/ap/signin?openid.return_to=x">Faça login</a>'
+        lista = pagina_lista([menu, item_lista("8501116432", "34.99")])
+        c, _ = self.rodar([], {"wishlist/ls/": Resposta(lista)}, listas=[LISTA], detalhar="nenhum")
+        self.assertIsNone(c["observacao"])
+        self.assertEqual(self.linhas(), [("8501116432", "lista_desejos", "ok", 3499)])
+
+    def test_lista_bloqueada(self):
+        c, _ = self.rodar([], {"wishlist/ls/": Resposta("", 503)}, listas=[LISTA])
+        self.assertIn("página 1", c["observacao"])
+
+    def test_lista_vazia_ou_layout_novo(self):
+        c, _ = self.rodar([], {"wishlist/ls/": Resposta("<html><body>?</body></html>")}, listas=[LISTA])
+        self.assertIn("nenhum item", c["observacao"])
+
+    def test_paginacao_em_loop_para(self):
+        p = pagina_lista([item_lista("8501116432", "34.99")], proxima="/hz/wishlist/slv/items?paginationToken=t")
+        rotas = {"wishlist/ls/": Resposta(p), "paginationToken=t": Resposta(p), "aodAjaxMain": Resposta(OFERTAS_REAL)}
+        _, sessao = self.rodar([], rotas, listas=[LISTA])
+        self.assertEqual(len(sessao.chamadas), 3)  # lista p1, p2 (repete o token), ofertas
 
     def test_para_apos_bloqueios_seguidos(self):
-        bloq = RespostaFalsa("", 503)
         asins = [f"AAAAAAAAA{i}" for i in range(6)]
-        cid, sessao = self.rodar(asins, [bloq] * 6)
+        c, sessao = self.rodar(asins, {"aodAjaxMain": Resposta("", 503)})
         self.assertEqual(len(sessao.chamadas), coletor.LIMITE_BLOQUEIOS)
-        c = self.conn.execute("SELECT * FROM coletas WHERE id=?", (cid,)).fetchone()
-        self.assertEqual(c["tentados"], coletor.LIMITE_BLOQUEIOS)
         self.assertIn("interrompida", c["observacao"])
-
-    def test_bloqueio_isolado_nao_interrompe(self):
-        ok = RespostaFalsa(pagina(bloco_preco=PRECO_COM_CAPA))
-        _, sessao = self.rodar(["AAAAAAAAAA", "BBBBBBBBBB", "CCCCCCCCCC"], [RespostaFalsa("", 503), ok, ok])
-        self.assertEqual(len(sessao.chamadas), 3)
+        self.assertTrue(any(p >= coletor.PAUSA_APOS_BLOQUEIO for p in self.pausas))
 
     def test_guarda_html_comprimido(self):
-        html = pagina(bloco_preco=PRECO_COM_CAPA)
         pasta = Path(self.tmp.name) / "html"
-        self.rodar(["8535902775"], [RespostaFalsa(html)], pasta_html=pasta)
+        self.rodar(["8501116432"], {"aodAjaxMain": Resposta(OFERTAS_REAL)}, pasta_html=pasta)
         arq = self.conn.execute("SELECT html_arquivo FROM precos").fetchone()[0]
-        self.assertEqual(gzip.decompress(Path(arq).read_bytes()).decode(), html)
+        self.assertEqual(gzip.decompress(Path(arq).read_bytes()).decode(), OFERTAS_REAL)
+
+    def test_migra_banco_antigo(self):
+        antigo = db.conectar(Path(self.tmp.name) / "antigo.db")
+        self.addCleanup(antigo.close)
+        antigo.executescript(
+            "CREATE TABLE precos (id INTEGER PRIMARY KEY, asin TEXT, coleta_id INTEGER, "
+            "coletado_em TEXT, status TEXT); INSERT INTO precos VALUES (1,'X',1,'2026-01-01','ok');")
+        db.criar_schema(antigo)
+        self.assertEqual(antigo.execute("SELECT fonte FROM precos").fetchone()[0], "ofertas")
+
+    def test_sessao_sem_cabecalhos_padrao(self):
+        s = coletor.nova_sessao()
+        self.assertNotIn("Connection", s.headers)
+        self.assertEqual(list(s.headers), list(coletor.HEADERS))
 
     def test_eventos_importar_e_atualizar(self):
         csv = Path(self.tmp.name) / "e.csv"
@@ -194,8 +277,7 @@ class TestColetor(unittest.TestCase):
         db.importar_eventos(self.conn, csv)
         csv.write_text("nome,inicio,fim\nBlack Friday,2026-11-27,2026-11-30\n", encoding="utf-8")
         db.importar_eventos(self.conn, csv)
-        rows = self.conn.execute("SELECT fim FROM eventos").fetchall()
-        self.assertEqual([r[0] for r in rows], ["2026-11-30"])
+        self.assertEqual([r[0] for r in self.conn.execute("SELECT fim FROM eventos")], ["2026-11-30"])
 
 
 if __name__ == "__main__":
