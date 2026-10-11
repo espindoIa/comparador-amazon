@@ -102,6 +102,50 @@ python -m comparador status
 O dia é contado no horário de Brasília. Para forçar uma coleta extra no mesmo dia, use
 *Run workflow* com "forcar" marcado.
 
+## Varredura de uma categoria inteira (HQs, mangás e graphic novels)
+
+Para acompanhar uma categoria inteira (mais de 30 mil itens), e não só a sua lista, o
+comando `varrer` lê as páginas de busca da Amazon, que trazem ~16 livros com preço por
+requisição. Isso é ~16x mais barato que consultar livro por livro.
+
+```bash
+python -m comparador varrer --minutos 60     # banco em data/catalogo.db
+python -m comparador catalogo                # cobertura: itens, fatias atrasadas, execuções
+```
+
+O workflow `.github/workflows/varredura.yml` roda isso todo dia por 90 minutos e guarda o
+banco como arquivo na release `catalogo` do repositório. Medido: ~10 s por página, ~6
+páginas e ~95 preços por minuto, sem bloqueios. A categoria inteira leva alguns dias e
+depois é revisitada em rodízio. Para baixar o banco: *Releases → catalogo*, arquivo mais
+recente, e `gunzip`.
+
+**Problemas encontrados e como foram resolvidos (todos medidos em páginas reais):**
+
+| Problema | Solução |
+|---|---|
+| A busca mostra no máximo 400 páginas, e as mais fundas vêm incompletas | A categoria é dividida em fatias por faixa de preço. Uma fatia com mais de 100 páginas é dividida ao meio automaticamente. Um preço exato comum (R$ 29,90) tem ~45 páginas, então sempre cabe |
+| Card com vários formatos (capa comum, Kindle, capa dura), cada um com ASIN e preço próprios. O card pode até ser do Kindle | O preço é lido de dentro do link `/dp/ASIN` que o contém: cada formato fica com o próprio ASIN e o próprio "De:" |
+| Parcelas ("em até 2x de R$ 21,73") e "outras ofertas" perto do preço | Ficam fora do link do formato, então são ignoradas |
+| Kindle Unlimited aparece como R$ 0,00 | Descartado (não é preço de venda) |
+| Formatos inesperados ("Canoa, Grampeado ou Costurado") | Rótulo desconhecido é guardado como veio, em vez de perdido |
+| Sem o parâmetro de ordenação, a Amazon devolve uma vitrine sem resultados | Toda URL tem `s=price-asc-rank`. Página sem resultados e sem a marca "Nenhum resultado" é tratada como mudança de layout (erro), não como fim |
+| O filtro de preço vale para qualquer formato do card: as fatias se sobrepõem | Observações repetidas não duplicam o histórico |
+| Execução interrompida (tempo, bloqueio, queda) | O progresso é salvo a cada página; a próxima execução continua da página seguinte |
+| Bloqueio | Repete a mesma página depois de uma pausa maior; para depois de 3 falhas seguidas |
+| Histórico gigante (milhões de linhas por mês) | O histórico guarda intervalos ("R$ X de tal dia a tal dia"): só cresce quando o preço muda. Mais de 10 dias sem ver o item abre um intervalo novo, para o buraco ficar visível |
+| Banco publicado vazio ou corrompido por um erro | `scripts/verificar_banco.py` recusa banco corrompido ou com menos linhas que o anterior. Cada execução publica uma cópia nova com data e só depois apaga as antigas (mantém 14) |
+| Fatia esquecida | `catalogo` sai com erro (e o GitHub avisa por e-mail) se alguma fatia ficar mais de 8 dias sem visita |
+
+**Limites que continuam existindo:**
+- Itens sem preço (indisponíveis) não aparecem na busca, então não entram no catálogo.
+- Se o preço muda no meio de uma passada, o item pode mudar de fatia e ser visto duas
+  vezes ou nenhuma naquela passada; aparece na seguinte.
+- O preço de capa só aparece na busca quando há desconto. Sem desconto, fica vazio.
+- Os termos de uso do GitHub Actions dizem que ele serve para o software do próprio
+  repositório; uma varredura diária longa pode ser considerada uso indevido. Se isso
+  preocupar, o mesmo comando roda em qualquer máquina sempre ligada (`cron`).
+- Os termos da Amazon proíbem robôs. Quanto mais volume, maior o risco de bloqueio.
+
 ## Banco (`data/precos.db`)
 
 | Tabela | Conteúdo |

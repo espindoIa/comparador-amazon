@@ -1,0 +1,95 @@
+# Varredura diária, em rodízio, da categoria HQs, Mangás e Graphic Novels.
+#
+# Cada execução lê páginas de busca por até 90 minutos e retoma de onde a anterior
+# parou; a categoria inteira é coberta em poucos dias e depois revisitada. O banco
+# (data/catalogo.db) fica em assets da release "catalogo", e não no git, porque é grande e
+# muda todo dia: cada execução publica uma cópia nova com data no nome e só então apaga
+# as antigas (mantém as 14 mais recentes). Uma falha no meio nunca deixa o banco sem cópia.
+name: varredura
+
+on:
+  schedule:
+    - cron: "41 4 * * *"    # 01:41 em Brasília
+  workflow_dispatch:
+    inputs:
+      minutos:
+        description: "Orçamento de tempo, em minutos"
+        default: "90"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: varredura
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  DB: data/catalogo.db
+
+jobs:
+  varrer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Baixa o catálogo (release catalogo)
+        run: |
+          mkdir -p data
+          # Só começa do zero se a release comprovadamente não existir; qualquer outro
+          # erro interrompe, para não publicar depois um banco vazio por engano.
+          if ! nomes=$(gh release view catalogo --json assets --jq '.assets[].name' 2>"$RUNNER_TEMP/erro"); then
+            if grep -qi "not found" "$RUNNER_TEMP/erro"; then
+              echo "release catalogo ainda não existe; começando do zero"
+              exit 0
+            fi
+            cat "$RUNNER_TEMP/erro" >&2
+            exit 1
+          fi
+          ultimo=$(printf '%s\n' "$nomes" | grep -E '^catalogo-[0-9-]+\.db\.gz$' | sort | tail -n 1 || true)
+          if [ -z "$ultimo" ]; then
+            echo "release sem banco; começando do zero"
+            exit 0
+          fi
+          gh release download catalogo --pattern "$ultimo" --dir "$RUNNER_TEMP"
+          gunzip -c "$RUNNER_TEMP/$ultimo" > "$DB"
+          cp "$DB" "$RUNNER_TEMP/catalogo_antes.db"
+          echo "baixado: $ultimo"
+
+      - name: Varre
+        env:
+          MINUTOS: ${{ inputs.minutos || '90' }}
+        run: python -m comparador --db "$DB" varrer --minutos "$MINUTOS" --cliente navegador
+
+      # Roda mesmo se a varredura falhou: o progresso até ali fica salvo.
+      - name: Publica o catálogo
+        if: always()
+        run: |
+          [ -f "$DB" ] || exit 0
+          ANTES=""; [ -f "$RUNNER_TEMP/catalogo_antes.db" ] && ANTES="$RUNNER_TEMP/catalogo_antes.db"
+          python scripts/verificar_banco.py "$DB" $ANTES --tabela catalogo --tabela historico --tabela fatias
+          nome="catalogo-$(date -u +%Y-%m-%d-%H%M).db.gz"
+          gzip -c "$DB" > "$RUNNER_TEMP/$nome"
+          gh release view catalogo >/dev/null 2>&1 || gh release create catalogo --latest=false \
+            --title "Catálogo (dados da varredura)" \
+            --notes "Banco SQLite gerado pelo workflow varredura. Baixe o arquivo mais recente."
+          gh release upload catalogo "$RUNNER_TEMP/$nome"
+          # Só depois do upload: apaga as cópias além das 14 mais recentes.
+          gh release view catalogo --json assets --jq '.assets[].name' \
+            | grep -E '^catalogo-[0-9-]+\.db\.gz$' | sort | head -n -14 \
+            | while read -r velho; do gh release delete-asset catalogo "$velho" --yes; done
+
+      # Falha (e o GitHub avisa por e-mail) se alguma fatia ficou mais de 8 dias sem visita.
+      - name: Cobertura
+        if: always()
+        run: |
+          [ -f "$DB" ] || exit 0
+          python -m comparador --db "$DB" catalogo --dias 8 | tee -a "$GITHUB_STEP_SUMMARY"

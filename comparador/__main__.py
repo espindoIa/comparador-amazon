@@ -1,16 +1,17 @@
-"""Linha de comando: python -m comparador {init,coletar,status,lacunas}."""
+"""Linha de comando: python -m comparador {init,coletar,status,lacunas,varrer,catalogo}."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from . import coletor, db
+from . import coletor, db, varredura
 
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="comparador", description=__doc__)
-    p.add_argument("--db", default="data/precos.db", help="arquivo do banco (padrão: %(default)s)")
+    p.add_argument("--db", help="arquivo do banco (padrão: data/precos.db; data/catalogo.db "
+                                "para varrer e catalogo)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     i = sub.add_parser("init", help="cria o banco e importa eventos.csv")
@@ -37,9 +38,25 @@ def main() -> None:
 
     sub.add_parser("status", help="mostra as últimas coletas e o último preço de cada livro")
 
+    v = sub.add_parser("varrer", help="varre uma categoria inteira pelas páginas de busca")
+    v.add_argument("--no", default=varredura.NO_HQ_MANGA,
+                   help="nó da categoria (padrão: %(default)s = HQs, Mangás e Graphic Novels)")
+    v.add_argument("--minutos", type=float, default=60, help="orçamento de tempo (padrão: %(default)s)")
+    v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
+    v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
+
+    k = sub.add_parser("catalogo", help="cobertura da varredura; código 1 se houver fatia atrasada")
+    k.add_argument("--no", default=varredura.NO_HQ_MANGA)
+    k.add_argument("--dias", type=int, default=8, help="prazo para cada fatia ser revisitada")
+
     args = p.parse_args()
+    catalogo = args.cmd in ("varrer", "catalogo")
+    args.db = args.db or ("data/catalogo.db" if catalogo else "data/precos.db")
     conn = db.conectar(args.db)
-    db.criar_schema(conn)
+    if catalogo:
+        varredura.criar_schema(conn)
+    else:
+        db.criar_schema(conn)
 
     if args.cmd == "init":
         n = db.importar_eventos(conn, args.eventos) if Path(args.eventos).exists() else 0
@@ -77,6 +94,32 @@ def main() -> None:
             print(f"sem coleta completa em {d}")
         print(f"{len(faltam)} dia(s) sem coleta" if faltam else "nenhuma lacuna")
         if args.ultimos and faltam:
+            raise SystemExit(1)
+    elif args.cmd == "varrer":
+        sessao = coletor.nova_sessao(args.cliente)
+        try:
+            eid = varredura.varrer(conn, sessao, no=args.no, minutos=args.minutos,
+                                   max_paginas=args.max_paginas, pasta_html=Path("data/html"))
+        finally:
+            if hasattr(sessao, "fechar"):
+                sessao.fechar()
+        e = conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
+        print(f"execução {eid}: {e['paginas']} páginas, {e['itens']} preços, "
+              f"{e['bloqueios']} bloqueios, {e['erros']} erros")
+        if e["observacao"]:
+            print(f"atenção: {e['observacao']}")
+        if e["paginas"] == 0 and (e["bloqueios"] or e["erros"]):
+            raise SystemExit("nenhuma página lida")
+    elif args.cmd == "catalogo":
+        c = varredura.cobertura(conn, args.no, args.dias)
+        print(f"{c.itens} itens no catálogo; {c.vistos_recentes} vistos nos últimos {args.dias} dias")
+        print(f"{c.fatias} fatias; {c.pendentes_iniciais} sem passada completa ainda; "
+              f"{c.fatias_atrasadas} atrasadas (mais de {args.dias} dias)")
+        for r in conn.execute("SELECT * FROM execucoes ORDER BY id DESC LIMIT 5"):
+            print(f"execução {r['id']}: {r['iniciada_em']}  {r['paginas']} páginas, {r['itens']} preços, "
+                  f"{r['bloqueios']} bloqueios, {r['erros']} erros"
+                  + (f"  ({r['observacao']})" if r["observacao"] else ""))
+        if c.fatias_atrasadas:
             raise SystemExit(1)
     elif args.cmd == "status":
         for r in conn.execute("SELECT * FROM coletas ORDER BY id DESC LIMIT 5"):

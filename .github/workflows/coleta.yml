@@ -15,8 +15,6 @@ on:
     - cron: "11 17 * * *"   # 14:11
     - cron: "37 22 * * *"   # 19:37
     - cron: "23 2 * * *"    # 23:23 (última chance do dia)
-  push:                # TEMPORÁRIO (teste antes do merge): remover
-    branches: [coleta-automatica]
   workflow_dispatch:
     inputs:
       forcar:
@@ -68,13 +66,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          if git ls-remote --exit-code --heads "$URL" dados >/dev/null 2>&1; then
+          # --exit-code: 0 = existe, 2 = não existe, outro = erro (rede etc.).
+          # Só cria um banco novo se a branch comprovadamente não existir.
+          set +e
+          git ls-remote --exit-code --heads "$URL" dados >/dev/null
+          codigo=$?
+          set -e
+          if [ "$codigo" = 0 ]; then
             git clone --quiet --depth 1 --branch dados "$URL" dados
-          else
+            cp dados/precos.db "$RUNNER_TEMP/precos_antes.db"
+          elif [ "$codigo" = 2 ]; then
             echo "branch dados ainda não existe; será criada"
             mkdir dados
             git -C dados init --quiet -b dados
             git -C dados remote add origin "$URL"
+          else
+            echo "não consegui consultar a branch dados (código $codigo)" >&2
+            exit 1
           fi
 
       - name: Coleta
@@ -93,8 +101,11 @@ jobs:
       - name: Salva o banco na branch dados
         if: always() && inputs.teste_asin == ''
         run: |
+          [ -f dados/precos.db ] || exit 0
+          # Recusa banco corrompido ou com menos dados que o baixado.
+          ANTES=""; [ -f "$RUNNER_TEMP/precos_antes.db" ] && ANTES="$RUNNER_TEMP/precos_antes.db"
+          python scripts/verificar_banco.py dados/precos.db $ANTES --tabela coletas --tabela precos --tabela livros
           cd dados
-          [ -f precos.db ] || exit 0
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add precos.db
