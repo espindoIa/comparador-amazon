@@ -238,6 +238,7 @@ def _coletar(conn, asins, listas_desejos, detalhar, sessao, pasta_html, pausa, d
     conn.commit()
     tentados = sucesso = 0
     avisos: list[str] = []
+    lista_falhou = False
     requisicoes = 0
 
     # 1. Listas de desejos
@@ -250,10 +251,12 @@ def _coletar(conn, asins, listas_desejos, detalhar, sessao, pasta_html, pausa, d
         except ListaIndisponivel as e:
             avisos.append(f"lista {url}: {e}")
             print(f"aviso: lista de desejos {url}: {e}")
+            lista_falhou = True
             continue
         finally:
             requisicoes += 1
         if aviso:
+            lista_falhou = True
             avisos.append(f"lista {url}: {aviso}")
             print(f"aviso: {aviso}")
         print(f"lista de desejos: {len(itens)} itens")
@@ -307,8 +310,9 @@ def _coletar(conn, asins, listas_desejos, detalhar, sessao, pasta_html, pausa, d
 
     conn.execute(
         "UPDATE coletas SET finalizada_em = ?, tentados = ?, sucesso = ?, falhas = ?, "
-        "observacao = ? WHERE id = ?",
-        (db.agora(), tentados, sucesso, tentados - sucesso, "; ".join(avisos) or None, coleta_id),
+        "observacao = ?, completa = ? WHERE id = ?",
+        (db.agora(), tentados, sucesso, tentados - sucesso, "; ".join(avisos) or None,
+         int(not lista_falhou and sucesso > 0), coleta_id),
     )
     conn.commit()
     return coleta_id

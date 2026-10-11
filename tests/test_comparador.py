@@ -5,7 +5,9 @@ Fixtures REAIS da Amazon (out/2026): `ofertas_8501116432.html` (lista de ofertas
 As demais páginas de lista são sintéticas, com a mesma estrutura.
 """
 
+import contextlib
 import gzip
+import io
 import json
 import tempfile
 import unittest
@@ -15,6 +17,10 @@ import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from datetime import date, datetime, timedelta, timezone
+from unittest import mock
+
+from comparador import __main__ as cli
 from comparador import cliente_http, coletor, db
 from comparador.lista_desejos import ListaIndisponivel, extrair_id, parse_pagina
 from comparador.parser import parece_bloqueio, parse_ofertas, parse_preco
@@ -315,6 +321,80 @@ class TestColetor(unittest.TestCase):
         csv.write_text("nome,inicio,fim\nBlack Friday,2026-11-27,2026-11-30\n", encoding="utf-8")
         db.importar_eventos(self.conn, csv)
         self.assertEqual([r[0] for r in self.conn.execute("SELECT fim FROM eventos")], ["2026-11-30"])
+
+    def test_coleta_completa_so_com_lista_inteira(self):
+        lista = pagina_lista([item_lista("8501116432", "34.99")])
+        c, _ = self.rodar([], {"wishlist/ls/": Resposta(lista)}, listas=[LISTA], detalhar="nenhum")
+        self.assertEqual(c["completa"], 1)
+        c, _ = self.rodar([], {"wishlist/ls/": Resposta(PAGINA_CACHORROS, 503)}, listas=[LISTA])
+        self.assertEqual(c["completa"], 0)
+        p1 = pagina_lista([item_lista("8501116432", "34.99")], proxima="/hz/wishlist/slv/items?paginationToken=t2")
+        c, _ = self.rodar([], {"wishlist/ls/": Resposta(p1), "paginationToken=t2": Resposta(PAGINA_CACHORROS, 503)},
+                          listas=[LISTA], detalhar="nenhum")
+        self.assertIn("incompleta", c["observacao"])
+        self.assertEqual(c["completa"], 0)
+
+    def test_migra_coletas_sem_coluna_completa(self):
+        antigo = db.conectar(Path(self.tmp.name) / "antigo2.db")
+        self.addCleanup(antigo.close)
+        antigo.executescript("CREATE TABLE coletas (id INTEGER PRIMARY KEY, iniciada_em TEXT NOT NULL);"
+                             "INSERT INTO coletas VALUES (1, '2026-01-01T12:00:00+00:00');")
+        db.criar_schema(antigo)
+        self.assertEqual(antigo.execute("SELECT completa FROM coletas").fetchone()[0], 0)
+
+    def coleta_em(self, iso, completa=1):
+        self.conn.execute("INSERT INTO coletas (iniciada_em, completa) VALUES (?, ?)", (iso, completa))
+
+    def test_dia_e_contado_em_brasilia(self):
+        # 01:30 UTC de 11/10 ainda é 22:30 de 10/10 em Brasília.
+        self.assertEqual(db.dia_brasil("2026-10-11T01:30:00+00:00"), date(2026, 10, 10))
+        self.assertEqual(db.dia_brasil("2026-10-11T03:00:00+00:00"), date(2026, 10, 11))
+
+    def test_lacunas(self):
+        self.assertEqual(db.lacunas(self.conn, date(2026, 10, 20)), [])  # sem coletas não há referência
+        self.coleta_em("2026-10-10T12:00:00+00:00")
+        self.coleta_em("2026-10-13T12:00:00+00:00")
+        self.coleta_em("2026-10-14T12:00:00+00:00", completa=0)  # parcial não cobre o dia
+        self.coleta_em("2026-10-16T12:00:00+00:00")
+        self.assertEqual(db.lacunas(self.conn, date(2026, 10, 17)),
+                         [date(2026, 10, 11), date(2026, 10, 12), date(2026, 10, 14), date(2026, 10, 15)])  # 17 (hoje) ainda não conta
+
+    def executar_cli(self, *argv):
+        saida = io.StringIO()
+        with mock.patch("sys.argv", ["comparador", "--db", str(Path(self.tmp.name) / "cli.db"), *argv]), \
+                contextlib.redirect_stdout(saida):
+            cli.main()
+        return saida.getvalue()
+
+    def test_cli_uma_por_dia_pula_quando_ja_coletou(self):
+        conn = db.conectar(Path(self.tmp.name) / "cli.db")
+        self.addCleanup(conn.close)
+        db.criar_schema(conn)
+        conn.execute("INSERT INTO coletas (iniciada_em, completa) VALUES (?, 1)", (db.agora(),))
+        conn.commit()
+        with mock.patch.object(coletor, "coletar", side_effect=AssertionError("não deveria coletar")):
+            self.assertIn("nada a fazer", self.executar_cli("coletar", "--uma-por-dia", "--desejos", LISTA))
+
+    def test_cli_coleta_incompleta_sai_com_erro(self):
+        def falha(conn, *a, **kw):
+            return conn.execute("INSERT INTO coletas (iniciada_em, completa) VALUES (?, 0)", (db.agora(),)).lastrowid
+        with mock.patch.object(coletor, "coletar", side_effect=falha), self.assertRaises(SystemExit) as e:
+            self.executar_cli("coletar", "--desejos", LISTA)
+        self.assertIn("incompleta", str(e.exception))
+
+    def test_cli_lacunas_alerta_so_dias_passados(self):
+        conn = db.conectar(Path(self.tmp.name) / "cli.db")
+        self.addCleanup(conn.close)
+        db.criar_schema(conn)
+        hoje = datetime.now(timezone.utc)
+        for dias in (4, 1):  # ontem coletou, anteontem e 2 dias atrás não
+            conn.execute("INSERT INTO coletas (iniciada_em, completa) VALUES (?, 1)",
+                         ((hoje - timedelta(days=dias)).isoformat(timespec="seconds"),))
+        conn.commit()
+        with self.assertRaises(SystemExit) as e:
+            self.executar_cli("lacunas", "--ultimos", "5")
+        self.assertEqual(e.exception.code, 1)
+        self.assertIn("2 dia(s) sem coleta", self.executar_cli("lacunas"))
 
 
 class _Servidor(BaseHTTPRequestHandler):
