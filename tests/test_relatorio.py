@@ -66,12 +66,24 @@ class TestRelatorio(unittest.TestCase):
 
     def test_pagina_sem_conclusoes_e_com_numeros(self):
         h = relatorio.pagina("Livro", "B1", relatorio.serie(banco(), "B1"), [BF], aviso="SIMULADO")
-        self.assertIn("<svg", h)
+        self.assertIn("graf-box", h)
+        self.assertIn("data-per", h)
         self.assertIn("Preço mais comum", h)
         self.assertIn("Mais barato", h)
         self.assertIn("SIMULADO", h)
         for palavra in ("NÃO é desconto", "desconto real", "Desconto real", "inflado"):
             self.assertNotIn(palavra, h)
+
+    def test_dados_do_grafico_e_controles(self):
+        h = relatorio.pagina("L", "B1", relatorio.serie(banco(), "B1"), [BF])
+        for chave in ("data-per", 'data-z="1"', 'data-pan', 'data-op="faixa"', 'data-op="capa"', 'data-ev="0"'):
+            self.assertIn(chave, h)
+        d = relatorio._dados_js(relatorio.serie(banco(), "B1"), [BF, Evento("Antigo", date(2020, 1, 1), date(2020, 1, 1))])
+        self.assertEqual(len(d["ev"]), 1)                          # evento distante não entra
+        self.assertEqual(d["ev"][0][3], 4500)
+        self.assertEqual(d["def"][0], d["full"][0])                # menos de 120 dias: abre mostrando tudo
+        longo = relatorio._dados_js([mk(5000, "2026-01-01", "2026-12-31")], [])
+        self.assertEqual(longo["def"][1] - longo["def"][0], 89)    # histórico longo: abre nos últimos 90 dias
 
     def test_pagina_com_lacuna_e_um_so_dia(self):
         relatorio.pagina("L", "X", [mk(5000, "2026-01-01", "2026-01-05"), mk(5200, "2026-03-01", "2026-03-02")], [])

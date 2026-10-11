@@ -231,104 +231,102 @@ def _bloco_evento(ev: Evento, f: Fatos | None) -> str:
             f"</details></section>")
 
 
-def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=380) -> tuple[str, list]:
-    ml, mr, mt, mb = 72, 20, 22, 40
-    dias = por_dia(trechos)
-    mov = janela_movel(dias)
-    d0, d1 = min(dias), max(dias)
-    for e in eventos:  # só estende o eixo até eventos próximos do período observado
-        if d0 - timedelta(days=30) <= e.fim <= d1 + timedelta(days=120):
-            d0, d1 = min(d0, e.inicio), max(d1, e.fim)
-    d1 = max(d1, d0 + timedelta(days=6))
-    precos = [t.preco for t in trechos]
-    valores = precos + [m for _, _, m, _ in mov]
-    lo, hi = min(valores), max(valores)
-    folga = max((hi - lo) * 0.12, 50)
-    lo, hi = max(0, lo - folga), hi + folga
-    X = lambda d: ml + (d - d0).days / (d1 - d0).days * (largura - ml - mr)
-    Y = lambda v: mt + (1 - (v - lo) / (hi - lo)) * (altura - mt - mb)
-    base = altura - mb
-    p = [f'<svg id="graf" viewBox="0 0 {largura} {altura}" role="img" aria-label="Histórico de preço">'
-         f'<defs><pattern id="lac" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
-         f'<line x1="0" y1="0" x2="0" y2="6" class="lacl"/></pattern></defs>']
-    for i in range(5):
-        v = lo + (hi - lo) * i / 4
-        p.append(f'<line x1="{ml}" x2="{largura - mr}" y1="{Y(v):.1f}" y2="{Y(v):.1f}" class="g"/>'
-                 f'<text x="{ml - 8}" y="{Y(v) + 4:.1f}" text-anchor="end">{html.escape(_brl(int(v)))}</text>')
-    for i in range(5):
-        d = d0 + (d1 - d0) * i // 4
-        a = "start" if i == 0 else "end" if i == 4 else "middle"
-        p.append(f'<text x="{X(d):.1f}" y="{altura - 14}" text-anchor="{a}">{d:%d/%m/%y}</text>')
-    for a, b in zip(trechos, trechos[1:]):  # lacunas de coleta
-        if (b.desde - a.ate).days > BURACO:
-            p.append(f'<rect x="{X(a.ate):.1f}" y="{mt}" width="{X(b.desde) - X(a.ate):.1f}" height="{base - mt}" '
-                     f'fill="url(#lac)"><title>Sem coleta de {_data(a.ate)} a {_data(b.desde)}</title></rect>')
-    for e in eventos:
-        if e.fim < d0 or e.inicio > d1:
-            continue
-        x0 = X(e.inicio) - 3
-        w = max(X(e.fim) - X(e.inicio), 0) + 6
-        right = x0 > largura * 0.6
-        p.append(f'<rect x="{x0:.1f}" y="{mt}" width="{w:.1f}" height="{base - mt}" class="ev"/>'
-                 f'<text x="{x0 - 4 if right else x0 + w + 4:.1f}" y="{mt + 12}" class="evt" '
-                 f'text-anchor="{"end" if right else "start"}">{html.escape(e.nome)}</text>')
-    mp = ""
-    for i, (d, _, m, _) in enumerate(mov):
-        mp += f"{'M' if i == 0 else 'L'}{X(d):.1f},{Y(m):.1f}"
-    p.append(f'<path d="{mp}" class="med"/>')
-    path = ""
-    for i, t in enumerate(trechos):
-        x0, x1, y = X(t.desde), X(t.ate), Y(t.preco)
-        ligado = i and (t.desde - trechos[i - 1].ate).days <= BURACO
-        path += f"{'L' if ligado else 'M'}{x0:.1f},{y:.1f}L{max(x1, x0 + 1):.1f},{y:.1f}"
-    p.append(f'<path d="{path}" class="preco"/>')
-    for t in trechos:
-        p.append(f'<circle cx="{X(t.desde):.1f}" cy="{Y(t.preco):.1f}" r="3" class="pt"/>')
-    for e in eventos:
-        dur = {d: v for d, v in dias.items() if e.inicio <= d <= e.fim}
-        if dur:
-            d = min(dur, key=dur.get)
-            p.append(f'<circle cx="{X(d):.1f}" cy="{Y(dur[d]):.1f}" r="5.5" class="pe"/>'
-                     f'<text x="{X(d) + (-9 if X(d) > largura * 0.6 else 9):.1f}" y="{Y(dur[d]) + 4:.1f}" class="pet" '
-                     f'text-anchor="{"end" if X(d) > largura * 0.6 else "start"}">{html.escape(_brl(dur[d]))}</text>')
-    p.append(f'<line id="cur" x1="0" x2="0" y1="{mt}" y2="{base}" class="cur" visibility="hidden"/></svg>')
-    medd = {d: (a, m, b) for d, a, m, b in mov}
-    dados = [[d.isoformat(), dias[d], *medd[d]] for d in sorted(dias)]
-    geo = {"d0": d0.toordinal(), "d1": d1.toordinal(), "ml": ml, "mr": mr, "w": largura}
-    return "".join(p), [dados, geo]
-
-
-JS = """
-(function(){var D=%s,G=D[1];D=D[0];var s=document.getElementById('graf'),c=document.getElementById('cur'),
-t=document.getElementById('tip');if(!s)return;
-function brl(v){return 'R$ '+(v/100).toFixed(2).replace('.',',').replace(/\\B(?=(\\d{3})+,)/g,'.')}
-function mover(e){var r=s.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*G.w;
-var o=(x-G.ml)/(G.w-G.ml-G.mr)*(G.d1-G.d0)+G.d0,b=null,bd=1e9;
-D.forEach(function(r){var n=Date.parse(r[0])/864e5+719163,k=Math.abs(n-o);if(k<bd){bd=k;b=r}});
-if(!b)return;var n=Date.parse(b[0])/864e5+719163,px=G.ml+(n-G.d0)/(G.d1-G.d0)*(G.w-G.ml-G.mr);
-c.setAttribute('x1',px);c.setAttribute('x2',px);c.setAttribute('visibility','visible');
-var p=b[0].split('-');t.textContent=p[2]+'/'+p[1]+'/'+p[0]+': '+brl(b[1])+' (preço mais comum: '+brl(b[3])+')'}
-s.addEventListener('pointermove',mover);s.addEventListener('pointerleave',function(){c.setAttribute('visibility','hidden');
-t.textContent='Toque ou passe o mouse no gráfico para ver o preço de cada dia.'})})();
+JS = r"""
+(function(){
+var D=__DADOS__,W=860,H=380,ML=72,MR=20,MT=22,MB=40,BASE=H-MB,BURACO=__BURACO__;
+var box=document.getElementById('graf-box'),tip=document.getElementById('tip'),ctl=document.getElementById('ctl');
+var DICA='Toque ou passe o mouse no gráfico para ver o preço de cada dia.';
+var opt={med:1,faixa:0,capa:0,ev:1,lac:1,pts:0};
+try{var sv=JSON.parse(localStorage.getItem('opt_graf')||'null');if(sv)for(var k in opt)if(k in sv)opt[k]=sv[k]?1:0}catch(e){}
+var F0=D.full[0],F1=D.full[1],v={a:D.def[0],b:D.def[1]};
+function pad(n){return n<10?'0'+n:''+n}
+function brl(c){return 'R$ '+(c/100).toFixed(2).replace('.',',').replace(/\B(?=(\d{3})+,)/g,'.')}
+function dt(o){var d=new Date((o-719163)*864e5);return pad(d.getUTCDate())+'/'+pad(d.getUTCMonth()+1)+'/'+String(d.getUTCFullYear()).slice(2)}
+function dl(o){var d=new Date((o-719163)*864e5);return pad(d.getUTCDate())+'/'+pad(d.getUTCMonth()+1)+'/'+d.getUTCFullYear()}
+function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function clamp(a,b){var sp=Math.max(6,Math.min(b-a,F1-F0));a=Math.max(F0,Math.min(a,F1-sp));v.a=a;v.b=a+sp}
+function X(o){return ML+(o-v.a)/(v.b-v.a)*(W-ML-MR)}
+function draw(){
+ ML=window.innerWidth<=600?104:72;
+ var vals=[],i,r,t,e,out=[];
+ D.dias.forEach(function(r){if(r[0]>=v.a&&r[0]<=v.b){vals.push(r[1]);if(opt.med)vals.push(r[3]);if(opt.faixa)vals.push(r[2],r[4])}});
+ if(!vals.length)D.dias.forEach(function(r){vals.push(r[1])});
+ if(opt.capa&&D.capa)vals.push(D.capa);
+ var lo=Math.min.apply(null,vals),hi=Math.max.apply(null,vals),f=Math.max((hi-lo)*.12,50);lo=Math.max(0,lo-f);hi+=f;
+ function Y(c){return MT+(1-(c-lo)/(hi-lo))*(BASE-MT)}
+ out.push('<svg id="graf" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Histórico de preço"><defs>'+
+  '<clipPath id="rec"><rect x="'+ML+'" y="'+MT+'" width="'+(W-ML-MR)+'" height="'+(BASE-MT)+'"/></clipPath>'+
+  '<pattern id="lac" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" class="lacl"/></pattern></defs>');
+ for(i=0;i<5;i++){var c=lo+(hi-lo)*i/4;out.push('<line x1="'+ML+'" x2="'+(W-MR)+'" y1="'+Y(c).toFixed(1)+'" y2="'+Y(c).toFixed(1)+'" class="g"/><text x="'+(ML-8)+'" y="'+(Y(c)+4).toFixed(1)+'" text-anchor="end">'+brl(Math.round(c))+'</text>')}
+ for(i=0;i<5;i++){var o=Math.round(v.a+(v.b-v.a)*i/4);out.push('<text x="'+X(o).toFixed(1)+'" y="'+(H-14)+'" text-anchor="'+(i==0?'start':i==4?'end':'middle')+'">'+dt(o)+'</text>')}
+ out.push('<g clip-path="url(#rec)">');
+ if(opt.lac)for(i=1;i<D.tr.length;i++){var a=D.tr[i-1],b=D.tr[i];if(b[0]-a[1]>BURACO)out.push('<rect x="'+X(a[1]).toFixed(1)+'" y="'+MT+'" width="'+(X(b[0])-X(a[1])).toFixed(1)+'" height="'+(BASE-MT)+'" fill="url(#lac)"><title>Sem coleta de '+dt(a[1])+' a '+dt(b[0])+'</title></rect>')}
+ if(opt.ev)D.ev.forEach(function(e){var x0=X(e[1])-3,w=Math.max(X(e[2])-X(e[1]),0)+6;
+  out.push('<rect x="'+x0.toFixed(1)+'" y="'+MT+'" width="'+w.toFixed(1)+'" height="'+(BASE-MT)+'" class="ev"/>');
+  var dir=x0>W*.6;out.push('<text x="'+(dir?x0-4:x0+w+4).toFixed(1)+'" y="'+(MT+12)+'" class="evt" text-anchor="'+(dir?'end':'start')+'">'+esc(e[0])+'</text>')});
+ if(opt.faixa&&D.dias.length>1){var top='',bot='';D.dias.forEach(function(r,j){top+=(j?'L':'M')+X(r[0]).toFixed(1)+','+Y(r[4]).toFixed(1)});
+  for(i=D.dias.length-1;i>=0;i--)bot+='L'+X(D.dias[i][0]).toFixed(1)+','+Y(D.dias[i][2]).toFixed(1);
+  out.push('<path d="'+top+bot+'Z" class="faixa"/>')}
+ if(opt.med){var m='';D.dias.forEach(function(r,j){m+=(j?'L':'M')+X(r[0]).toFixed(1)+','+Y(r[3]).toFixed(1)});out.push('<path d="'+m+'" class="med"/>')}
+ if(opt.capa&&D.capa)out.push('<line x1="'+ML+'" x2="'+(W-MR)+'" y1="'+Y(D.capa).toFixed(1)+'" y2="'+Y(D.capa).toFixed(1)+'" class="capa"/>');
+ var pa='';D.tr.forEach(function(t,j){var x0=X(t[0]),x1=Math.max(X(t[1]),x0+1),y=Y(t[2]).toFixed(1),lig=j&&t[0]-D.tr[j-1][1]<=BURACO;
+  pa+=(lig?'L':'M')+x0.toFixed(1)+','+y+'L'+x1.toFixed(1)+','+y});
+ out.push('<path d="'+pa+'" class="preco"/>');
+ if(opt.pts)D.dias.forEach(function(r){out.push('<circle cx="'+X(r[0]).toFixed(1)+'" cy="'+Y(r[1]).toFixed(1)+'" r="2" class="pt"/>')});
+ else D.tr.forEach(function(t){out.push('<circle cx="'+X(t[0]).toFixed(1)+'" cy="'+Y(t[2]).toFixed(1)+'" r="3" class="pt"/>')});
+ if(opt.ev)D.ev.forEach(function(e){if(e[3]==null)return;var x=X(e[4]),dir=x>W*.6;
+  out.push('<circle cx="'+x.toFixed(1)+'" cy="'+Y(e[3]).toFixed(1)+'" r="5.5" class="pe"/><text x="'+(x+(dir?-9:9)).toFixed(1)+'" y="'+(Y(e[3])+4).toFixed(1)+'" class="pet" text-anchor="'+(dir?'end':'start')+'">'+brl(e[3])+'</text>')});
+ out.push('</g>');
+ if(opt.capa&&D.capa)out.push('<text x="'+(W-MR)+'" y="'+(Y(D.capa)-4).toFixed(1)+'" text-anchor="end">capa '+brl(D.capa)+'</text>');
+ out.push('<line id="cur" x1="0" x2="0" y1="'+MT+'" y2="'+BASE+'" class="cur" visibility="hidden"/></svg>');
+ box.innerHTML=out.join('');
+ var s=document.getElementById('graf');s.addEventListener('pointermove',hover);
+ s.addEventListener('pointerleave',function(){document.getElementById('cur').setAttribute('visibility','hidden');tip.textContent=DICA});
+ painel();
+}
+function hover(e){var s=document.getElementById('graf'),r=s.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*W,
+ o=(x-ML)/(W-ML-MR)*(v.b-v.a)+v.a,b=null,bd=1e9;
+ D.dias.forEach(function(q){if(q[0]<v.a||q[0]>v.b)return;var k=Math.abs(q[0]-o);if(k<bd){bd=k;b=q}});
+ if(!b)return;var c=document.getElementById('cur'),px=X(b[0]);c.setAttribute('x1',px);c.setAttribute('x2',px);c.setAttribute('visibility','visible');
+ var t=dl(b[0])+': '+brl(b[1]);
+ if(opt.med)t+=' · preço mais comum '+brl(b[3]);if(opt.faixa)t+=' · faixa usual '+brl(b[2])+' a '+brl(b[4]);if(opt.capa&&D.capa)t+=' · capa '+brl(D.capa);
+ tip.textContent=t}
+function painel(){
+ ctl.querySelectorAll('[data-op]').forEach(function(b){b.setAttribute('aria-pressed',opt[b.dataset.op]?'true':'false')});
+ var sp=v.b-v.a;ctl.querySelectorAll('[data-per]').forEach(function(b){var n=+b.dataset.per,al=n==0?(v.a==F0&&v.b==F1):(sp==n-1&&v.b==F1);b.setAttribute('aria-pressed',al?'true':'false')});
+ var zm=ctl.querySelector('[data-z="1"]'),zo=ctl.querySelector('[data-z="-1"]');if(zm)zm.disabled=sp<=6;if(zo)zo.disabled=sp>=F1-F0}
+ctl.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;var sp=v.b-v.a,c=(v.a+v.b)/2;
+ if(b.dataset.op){opt[b.dataset.op]=opt[b.dataset.op]?0:1;try{localStorage.setItem('opt_graf',JSON.stringify(opt))}catch(x){}}
+ else if(b.dataset.per!==undefined){var n=+b.dataset.per;if(n==0){v.a=F0;v.b=F1}else clamp(F1-n+1,F1)}
+ else if(b.dataset.z){var f=b.dataset.z=='1'?.5:2;clamp(c-sp*f/2,c+sp*f/2)}
+ else if(b.dataset.pan){var d=Math.round(sp/3)*(+b.dataset.pan);clamp(v.a+d,v.b+d)}
+ else if(b.dataset.ev!==undefined){var ev=D.ev[+b.dataset.ev];clamp(ev[1]-45,ev[2]+7)}
+ draw()});
+tip.textContent=DICA;draw();
+})();
 """
 
 CSS = """
-:root{--fg:#1d2327;--bg:#fff;--mu:#667;--pr:#0b6bcb;--ca:#999;--me:#d9730d;--fx:#d9730d1f;--ev:#7a5cff22;--evl:#6b4de6;--gr:#0001;--cd:#f4f6f8}
-@media(prefers-color-scheme:dark){:root{--fg:#e8e8e8;--bg:#16191c;--mu:#9aa;--pr:#5aa9ff;--ca:#777;--me:#ffa94d;--fx:#ffa94d26;--ev:#9d86ff33;--evl:#b7a6ff;--gr:#fff2;--cd:#20252a}}
+:root{--fg:#1d2327;--bg:#fff;--mu:#667;--pr:#0b6bcb;--ca:#999;--me:#d9730d;--fx:#d9730d26;--ev:#7a5cff22;--evl:#6b4de6;--gr:#0001;--cd:#f4f6f8;--bd:#c9d1d9}
+@media(prefers-color-scheme:dark){:root{--fg:#e8e8e8;--bg:#16191c;--mu:#9aa;--pr:#5aa9ff;--ca:#777;--me:#ffa94d;--fx:#ffa94d2e;--ev:#9d86ff33;--evl:#b7a6ff;--gr:#fff2;--cd:#20252a;--bd:#3a434b}}
 body{font:15px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg);max-width:900px;margin:0 auto;padding:16px}
 h1{font-size:1.4em;margin:.2em 0}h2{font-size:1.1em;margin:1.4em 0 .4em}h3{font-size:1em;margin:1.2em 0 .4em}
-svg{width:100%;height:auto;font-size:11px;fill:var(--mu);touch-action:pan-y}.g{stroke:var(--gr)}
+svg{width:100%;height:auto;font-size:11px;fill:var(--mu);touch-action:pan-y;display:block}.g{stroke:var(--gr)}
 .preco{fill:none;stroke:var(--pr);stroke-width:2}.pt{fill:var(--pr)}
 .pe{fill:var(--bg);stroke:var(--pr);stroke-width:2.5}.pet{fill:var(--fg);font-size:12px;font-weight:600}
-.med{fill:none;stroke:var(--me);stroke-width:2;stroke-dasharray:2 3}
+.faixa{fill:var(--fx);stroke:none}.med{fill:none;stroke:var(--me);stroke-width:2;stroke-dasharray:2 3}
 .capa{stroke:var(--ca);stroke-width:1.2;stroke-dasharray:5 4}
 .ev{fill:var(--ev)}.evt{fill:var(--evl);font-size:11px;font-weight:600}.cur{stroke:var(--mu);stroke-width:1}
 .lacl{stroke:var(--ca);stroke-width:1;opacity:.5}
 @media(max-width:600px){svg{font-size:21px}.pet,.evt{font-size:22px}}
 #tip{min-height:1.5em;color:var(--fg);font-size:13px;margin:.3em 0}
-.leg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--mu);margin:.3em 0 .6em}
-.leg i{display:inline-block;width:22px;height:0;border-top:2px solid;vertical-align:middle;margin-right:5px}
-.leg .b{height:10px;border:0;background:var(--fx);border-top:0}
+#ctl{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+#ctl .l{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+#ctl .t{font-size:12px;color:var(--mu);min-width:62px}
+#ctl button{font:inherit;font-size:13px;color:var(--fg);background:var(--bg);border:1px solid var(--bd);border-radius:999px;padding:3px 12px;cursor:pointer;min-height:32px}
+#ctl button[aria-pressed=true]{background:var(--pr);border-color:var(--pr);color:#fff}
+#ctl button:disabled{opacity:.4;cursor:default}
+#ctl button:focus-visible{outline:2px solid var(--pr);outline-offset:2px}
 .cs{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
 .c{background:var(--cd);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column}
 .c span{font-size:12px;color:var(--mu)}.c b{font-size:1.05em}.c small{color:var(--mu);font-size:11px}
@@ -337,14 +335,59 @@ ul{margin:.3em 0;padding-left:1.2em}li{margin:.25em 0}.gr{font-size:1.05em;margi
 details{margin:.4em 0;color:var(--mu);font-size:14px}summary{cursor:pointer}
 """
 
+OPCOES = [("med", "Preço mais comum", "mediana dos últimos 90 dias"),
+          ("faixa", "Faixa usual", "onde ficou a metade central dos dias, nos últimos 90 dias"),
+          ("capa", "Preço de capa", "preço de capa informado pela Amazon"),
+          ("ev", "Promoções", "Black Friday e outras datas"),
+          ("lac", "Dias sem coleta", "períodos em que não há preço registrado"),
+          ("pts", "Cada coleta", "um ponto por dia com preço registrado")]
+
+
+def _controles(eventos: list[Evento], dados: dict) -> str:
+    chips = "".join(f'<button type="button" data-ev="{i}">{html.escape(nome)}</button>'
+                    for i, (nome, *_r) in enumerate(dados["ev"]) if dados["ev"][i][3] is not None)
+    per = "".join(f'<button type="button" data-per="{n}">{t}</button>'
+                  for n, t in ((30, "30 dias"), (90, "90 dias"), (0, "Tudo")))
+    ops = "".join(f'<button type="button" data-op="{k}" title="{html.escape(d)}" aria-pressed="false">{html.escape(t)}</button>'
+                  for k, t, d in OPCOES)
+    return ('<div id="ctl">'
+            f'<div class="l"><span class="t">Período</span>{per}{chips}</div>'
+            '<div class="l"><span class="t">Zoom</span>'
+            '<button type="button" data-z="1" aria-label="Aproximar">＋ Aproximar</button>'
+            '<button type="button" data-z="-1" aria-label="Afastar">－ Afastar</button>'
+            '<button type="button" data-pan="-1" aria-label="Voltar no tempo">◀</button>'
+            '<button type="button" data-pan="1" aria-label="Avançar no tempo">▶</button></div>'
+            f'<div class="l"><span class="t">Mostrar</span>{ops}</div></div>')
+
+
+def _dados_js(trechos: list[Trecho], eventos: list[Evento]) -> dict:
+    dias = por_dia(trechos)
+    mov = janela_movel(dias)
+    d0, d1 = min(dias), max(dias)
+    evs = []
+    for e in sorted(eventos, key=lambda e: e.inicio):
+        if d0 - timedelta(days=30) <= e.fim <= d1 + timedelta(days=120):  # só eventos próximos do período
+            evs.append(e)
+            d0, d1 = min(d0, e.inicio), max(d1, e.fim)
+    d1 = max(d1, d0 + timedelta(days=6))
+    ev = []
+    for e in evs:
+        dur = {d: v for d, v in dias.items() if e.inicio <= d <= e.fim}
+        dm = min(dur, key=dur.get) if dur else None
+        ev.append([e.nome, e.inicio.toordinal(), e.fim.toordinal(),
+                   dur[dm] if dm else None, dm.toordinal() if dm else None])
+    ini = d0.toordinal() if (d1 - d0).days <= 120 else d1.toordinal() - 89
+    return {"dias": [[d.toordinal(), dias[d], q1, m, q3] for d, q1, m, q3 in mov],
+            "tr": [[t.desde.toordinal(), t.ate.toordinal(), t.preco] for t in trechos],
+            "ev": ev, "capa": next((t.capa for t in reversed(trechos) if t.capa), None),
+            "full": [d0.toordinal(), d1.toordinal()], "def": [ini, d1.toordinal()]}
+
 
 def pagina(titulo: str, asin: str, trechos: list[Trecho], eventos: list[Evento], aviso: str = "") -> str:
-    svg, dados = _svg(trechos, eventos)
+    dados = _dados_js(trechos, eventos)
     atual = fatos(trechos, trechos[-1].ate)
     blocos = "".join(_bloco_evento(e, fatos_evento(trechos, e)) for e in eventos)
-    legenda = ('<div class="leg"><span><i style="border-color:var(--pr)"></i>preço</span>'
-               '<span><i style="border-color:var(--me);border-top-style:dotted"></i>preço mais comum (últimos 90 dias)</span>'
-               '<span style="color:var(--evl)">▮ evento</span></div>')
+    js = JS.replace("__DADOS__", json.dumps(dados).replace("</", "<\\/")).replace("__BURACO__", str(BURACO))
     return (f'<!doctype html><html lang="pt-BR"><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<title>{html.escape(titulo)}</title><style>{CSS}</style><body>"
@@ -352,6 +395,8 @@ def pagina(titulo: str, asin: str, trechos: list[Trecho], eventos: list[Evento],
             f"<h1>{html.escape(titulo)}</h1><small>ASIN {html.escape(asin)} · preços de "
             f"{_data(trechos[0].desde)} a {_data(trechos[-1].ate)}</small>"
             f'<div class="cs" style="margin:12px 0">{_cartoes_atuais(atual)}</div>{_aviso_dados(atual)}'
-            f'{legenda}{svg}<div id="tip">Toque ou passe o mouse no gráfico para ver o preço de cada dia.</div>'
+            f'<div id="graf-box"><noscript>O gráfico precisa de JavaScript; '
+            f"os números abaixo funcionam sem ele.</noscript></div>"
+            f'<div id="tip"></div>{_controles(eventos, dados)}'
             f"{f'<h2>Black Friday e outras promoções</h2>{blocos}' if blocos else ''}"
-            f"<script>{JS % json.dumps(dados)}</script></body></html>")
+            f"<script>{js}</script></body></html>")

@@ -238,10 +238,18 @@ Gera `data/grafico-<ASIN>.html` (abra no navegador). A página **não tira concl
 dados para quem compra decidir. Sem `--db`, usa `data/precos.db` (lista de desejos) se existir,
 senão `data/catalogo.db`. Se o termo casar com vários livros, lista os ASINs para repetir com o exato.
 
-**Gráfico:** só o preço (degraus), o preço mais comum dos últimos 90 dias (a mediana, pontilhada) e
-a faixa do evento com o menor preço dele marcado. Passando o mouse (ou o dedo) aparece o preço de
-cada dia. Períodos sem coleta ficam em branco hachurado, nunca preenchidos como se tivessem sido
-observados. A página funciona no celular.
+**Gráfico (ajustável):** abre só com o preço (degraus), o preço mais comum dos últimos 90 dias
+(pontilhada) e as promoções. Abaixo dele há botões:
+
+- **Período:** 30 dias, 90 dias, Tudo, e um atalho por promoção (mostra os 45 dias antes e 7 depois).
+- **Zoom:** aproximar, afastar e andar para trás/frente no tempo. A escala de preço se ajusta ao trecho visível.
+- **Mostrar** (liga e desliga; a escolha fica guardada no navegador): preço mais comum, faixa usual
+  (onde ficou a metade central dos dias), preço de capa, promoções, dias sem coleta (hachurado) e
+  um ponto para cada dia coletado.
+
+Passando o mouse (ou o dedo) aparece o preço de cada dia. Períodos sem coleta nunca são preenchidos
+como se tivessem sido observados. Funciona no celular. O gráfico é desenhado no navegador (precisa de
+JavaScript); os números da página funcionam sem ele.
 
 **Números, em linguagem comum:** no topo, quatro cartões: preço de hoje, preço mais comum (mediana
 de 90 dias), o mais barato e o mais caro, com as datas. Para cada evento: o preço no evento e quanto
