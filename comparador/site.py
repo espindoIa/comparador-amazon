@@ -5,7 +5,8 @@ que pode ser servida por qualquer hospedagem estática (GitHub Pages). Não há 
 lista de desejos rodam no navegador (a lista fica guardada só no navegador de quem a cria).
 
 Dados gerados em `dados/`:
-- `indice.json`  uma linha por livro, para a busca: [asin, título, formato, preço atual, preço de capa, último dia visto]
+- `indice.json`  uma linha por livro visível, para a busca (some o que não foi visto depois do filtro
+                 "vendido pela Amazon"; o histórico dele continua nos `h/`): [asin, título, formato, preço atual, preço de capa, último dia visto]
 - `h/XX.json`    histórico de ~1/256 dos livros (XX = hash de 1 byte do ASIN, em hexadecimal), carregado sob demanda
 - `meta.json`    data da última coleta, totais e aviso (bancos simulados)
 - `eventos.json` promoções (de eventos.csv)
@@ -50,16 +51,33 @@ def juntar_trechos(trechos: list[list]) -> list[list]:
     return out
 
 
+def corte_amazon(conn: sqlite3.Connection) -> int | None:
+    """Dia (ordinal) a partir do qual só vale o que foi visto: é o início do filtro "vendido pela Amazon",
+    mas só depois que uma varredura completa com o filtro terminou (antes, o catálogo ainda está sendo
+    refeito e esconder o que falta esvaziaria a busca). None = não esconder nada."""
+    try:
+        desde = conn.execute("SELECT valor FROM config WHERE chave = 'so_amazon_desde'").fetchone()
+        if not desde:
+            return None
+        ok = conn.execute("SELECT 1 FROM dias WHERE completo_em >= ? LIMIT 1", (desde[0],)).fetchone()
+    except sqlite3.OperationalError:       # banco sem essas tabelas (anterior ao filtro)
+        return None
+    return dia_brasil(desde[0]).toordinal() if ok else None
+
+
 def ler_banco(caminho: Path, livros: dict[str, dict]) -> str:
     """Soma os livros de um banco em `livros`. Devolve o aviso do banco (vazio se não houver)."""
     conn = sqlite3.connect(f"file:{caminho}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
+        corte = corte_amazon(conn)
         for r in conn.execute("SELECT asin, titulo, formato, ultimo_visto FROM catalogo"):
-            l = livros.setdefault(r["asin"], {"t": None, "f": None, "u": 0, "h": []})
+            l = livros.setdefault(r["asin"], {"t": None, "f": None, "u": 0, "h": [], "v": False})
             l["t"] = l["t"] or r["titulo"]
             l["f"] = l["f"] or r["formato"]
-            l["u"] = max(l["u"], dia_brasil(r["ultimo_visto"]).toordinal())
+            u = dia_brasil(r["ultimo_visto"]).toordinal()
+            l["u"] = max(l["u"], u)
+            l["v"] = l["v"] or corte is None or u >= corte     # visível na busca
         for r in conn.execute("SELECT asin, desde, ate, preco_centavos, preco_capa_centavos FROM historico"):
             if r["asin"] in livros:
                 livros[r["asin"]]["h"].append([dia_brasil(r["desde"]).toordinal(), dia_brasil(r["ate"]).toordinal(),
@@ -88,7 +106,8 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None) -> d
         l = livros[asin]
         ultimo = l["h"][-1]
         capa = next((t[3] for t in reversed(l["h"]) if t[3]), None)
-        indice.append([asin, l["t"] or asin, l["f"], ultimo[2], capa, l["u"]])
+        if l["v"]:
+            indice.append([asin, l["t"] or asin, l["f"], ultimo[2], capa, l["u"]])
         fragmentos.setdefault(fragmento(asin), {})[asin] = {"t": l["t"], "f": l["f"], "h": l["h"]}
     (saida / "dados" / "indice.json").write_text(_json({"v": 1, "itens": indice}), encoding="utf-8")
     for chave, conteudo in fragmentos.items():

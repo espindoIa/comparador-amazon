@@ -66,3 +66,10 @@ CREATE TABLE IF NOT EXISTS dias (
     completo_em TEXT NOT NULL,
     PRIMARY KEY (no, dia)
 );
+
+-- Configurações e marcos da varredura (chave/valor).
+-- `so_amazon_desde`: instante em que a varredura passou a ler só livros vendidos pela Amazon.
+CREATE TABLE IF NOT EXISTS config (
+    chave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL
+);

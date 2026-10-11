@@ -59,7 +59,16 @@ para ao completar **1.000 livros com preço de compra** (ou ao chegar à página
 catálogo", isto é, sem preço de compra na busca (indisponíveis, ou e-books só do Kindle Unlimited,
 que aparecem como "R$ 0,00"), não entram na base e não contam nos 1.000; a leitura segue um pouco
 mais fundo para compensar. Se um deles voltar a aparecer com preço em outro dia, entra na base nesse
-dia; o que já estava na base nunca é apagado. São 30 consultas (29 gêneros mais o ranking geral),
+dia; o que já estava na base nunca é apagado. **Só livros vendidos pela Amazon:** toda consulta usa o filtro "Vendido por Amazon.com.br" da própria
+busca (`p_6`, em `VENDEDOR_AMAZON`, `comparador/busca.py`). Limite medido: o filtro vale para o livro
+(o card), não para cada formato. Um card passa se alguma oferta dele é da Amazon, então um formato do
+mesmo card pode estar à venda só por terceiros. Testes com a busca real: o filtro tira ~15% dos
+cards de um gênero e funciona junto com o filtro de preço. O vendedor "Amazon Servicos de Varejo do
+Brasil Ltda" (um 2º filtro, quase só e-books) não entra, porque a busca não aceita os dois juntos.
+O site esconde da busca o que não foi visto desde que o filtro começou (livros de outros vendedores
+que entraram antes), assim que a primeira varredura completa com o filtro termina; o histórico deles
+continua guardado, e quem estiver na sua lista aparece com "sem coleta recente".
+São 30 consultas (29 gêneros mais o ranking geral),
 ~2.000 páginas, ~1h40 por dia; como um livro pode estar em mais de um gênero, o número de livros
 distintos fica abaixo de 30 mil. Os gêneros (inclusive HQs e mangás, que não são mais varridos
 à parte) estão em `GENEROS`, em `comparador/varredura.py`.
@@ -155,6 +164,9 @@ Um site estático (sem servidor, grátis no GitHub Pages) com:
 
 - **Busca por título, autor ou ASIN/ISBN-10,** ignorando acentos e a ordem das palavras. Cada formato
   (capa comum, capa dura, Kindle...) aparece como um resultado, com o preço mais recente.
+- **Filtrar e ordenar** (na busca, mesmo sem digitar nada): ordenar por mais relevantes, menor preço,
+  maior preço, maior desconto sobre o preço de capa ou título; filtrar por formato, faixa de preço,
+  "só com desconto sobre a capa" e "só na minha lista". Os filtros se combinam entre si e com o texto.
 - **Página de cada livro** com o histórico de preço, os números e os botões de zoom e de dados extras
   (veja "Histórico de preço por livro").
 - **Minha lista:** o botão "Adicionar" em qualquer livro o põe na lista. Ela mostra o preço de hoje, a

@@ -227,6 +227,10 @@ def varrer(
     else:
         grupo = no
         semear(conn, no)
+    # A varredura só lê livros vendidos pela Amazon (filtro da busca). O marco serve ao site, que
+    # esconde o que não foi visto desde então (vendedores de fora que entraram antes do filtro).
+    conn.execute("INSERT OR IGNORE INTO config (chave, valor) VALUES ('so_amazon_desde', ?)", (db.agora(),))
+    conn.commit()
     desde = inicio_do_dia()
     if _fechar_dia_se_completo(conn, grupo, desde):
         return None

@@ -74,12 +74,14 @@ class TestParseBusca(unittest.TestCase):
 
     def test_url_mais_vendidos(self):
         self.assertEqual(url_busca("6740748011", 0, 1, 2, "vendidos"),
-                         "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A6740748011"
+                         "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A6740748011%2Cp_6%3AA1ZZFT5FULY4LN"
                          "&s=exact-aware-popularity-rank&page=2")
+        self.assertEqual(url_busca("6740748011", 0, 1, 2, "vendidos", so_amazon=False),
+                         "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A6740748011&s=exact-aware-popularity-rank&page=2")
 
     def test_url_da_fatia(self):
         self.assertEqual(url_busca("7842710011", 2000, 2499, 3),
-                         "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A7842710011%2Cp_36%3A2000-2499"
+                         "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A7842710011%2Cp_36%3A2000-2499%2Cp_6%3AA1ZZFT5FULY4LN"
                          "&s=price-asc-rank&page=3")
 
 
@@ -239,7 +241,7 @@ class TestVarredura(unittest.TestCase):
         self.para_ontem("passada_iniciada_em")
         amazon.chamadas.clear()
         self.varrer(amazon)
-        self.assertIn("p_36%3A2000-2499&s=price-asc-rank&page=1", " ".join(amazon.chamadas))
+        self.assertIn("p_36%3A2000-2499%2Cp_6%3AA1ZZFT5FULY4LN&s=price-asc-rank&page=1", " ".join(amazon.chamadas))
 
     def test_lacunas_e_bloqueio_desde_o_primeiro_dia(self):
         cachorros = Resposta("<html><head><title>Amazon.com.br Algo deu errado</title></head></html>", 503)
@@ -265,7 +267,9 @@ class TestMaisVendidos(unittest.TestCase):
         eid = varredura.varrer(self.conn, amazon, vendidos=["1", "2"], minutos=10_000, dormir=lambda s: None)
         vistos = {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
         self.assertEqual(vistos, {a for a, _ in g1[:1008]} | {a for a, _ in g2})   # 63 páginas de 16 = 1.008
-        self.assertEqual(len([u for u in amazon.chamadas if "n%3A1&" in u]), 63)  # para ao completar 1.000 livros
+        self.assertEqual(len([u for u in amazon.chamadas if "n%3A1%2Cp_6" in u]), 63)  # para ao completar 1.000 livros
+        self.assertTrue(all("p_6%3AA1ZZFT5FULY4LN" in u for u in amazon.chamadas))    # só vendidos pela Amazon
+        self.assertIsNotNone(self.conn.execute("SELECT valor FROM config WHERE chave = 'so_amazon_desde'").fetchone())
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias").fetchone()[0], 2)  # sem divisão
         self.assertTrue(varredura.cobertura(self.conn, varredura.GRUPO_VENDIDOS).dia_completo)
         e = self.conn.execute("SELECT observacao FROM execucoes WHERE id = ?", (eid,)).fetchone()[0]
