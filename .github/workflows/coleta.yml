@@ -36,6 +36,7 @@ concurrency:
 
 env:
   DB: dados/precos.db
+  PYTHONUNBUFFERED: "1"   # log em tempo real (não se perde se o job for cortado)
 
 jobs:
   coletar:

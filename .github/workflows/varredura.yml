@@ -27,6 +27,7 @@ concurrency:
 
 env:
   GH_TOKEN: ${{ github.token }}
+  PYTHONUNBUFFERED: "1"   # log em tempo real (não se perde se o job for cortado)
   DB: data/catalogo.db
 
 jobs:
