@@ -45,35 +45,18 @@ def ler_eventos(caminho: str | Path) -> list[Evento]:
 def buscar(conn: sqlite3.Connection, termo: str) -> list[tuple[str, str]]:
     """(asin, titulo) cujo ASIN é igual ao termo ou cujo título contém o termo."""
     termo = termo.strip()
-    if conn.execute("SELECT name FROM sqlite_master WHERE name = 'catalogo'").fetchone():
-        q = "SELECT asin, COALESCE(titulo, '') || COALESCE(' [' || formato || ']', '') FROM catalogo"
-    else:
-        q = "SELECT asin, COALESCE(titulo, '') FROM livros"
-    linhas = conn.execute(q + " WHERE asin = ? OR titulo LIKE ? ORDER BY 2 LIMIT 50",
-                          (termo.upper(), f"%{termo}%")).fetchall()
+    linhas = conn.execute(
+        "SELECT asin, COALESCE(titulo, '') || COALESCE(' [' || formato || ']', '') FROM catalogo "
+        "WHERE asin = ? OR titulo LIKE ? ORDER BY 2 LIMIT 50", (termo.upper(), f"%{termo}%")).fetchall()
     return [(r[0], r[1]) for r in linhas]
 
 
 def serie(conn: sqlite3.Connection, asin: str) -> list[Trecho]:
-    """Trechos de preço constante, em ordem. Funciona com o banco do catálogo ou o da lista."""
-    if conn.execute("SELECT name FROM sqlite_master WHERE name = 'historico'").fetchone():
-        linhas = conn.execute(
-            "SELECT preco_centavos, preco_capa_centavos, desde, ate FROM historico "
-            "WHERE asin = ? ORDER BY desde", (asin,)).fetchall()
-        return [Trecho(dia_brasil(r[2]), dia_brasil(r[3]), r[0], r[1]) for r in linhas]
+    """Trechos de preço constante, em ordem, a partir da tabela `historico` do catálogo."""
     linhas = conn.execute(
-        "SELECT preco_centavos, preco_capa_centavos, coletado_em FROM precos "
-        "WHERE asin = ? AND status = 'ok' AND preco_centavos IS NOT NULL ORDER BY coletado_em",
-        (asin,)).fetchall()
-    out: list[Trecho] = []
-    for preco, capa, quando in linhas:
-        d = dia_brasil(quando)
-        if out and out[-1].preco == preco and (d - out[-1].ate).days <= 10:
-            out[-1].ate = d
-            out[-1].capa = out[-1].capa or capa
-        else:
-            out.append(Trecho(d, d, preco, capa))
-    return out
+        "SELECT preco_centavos, preco_capa_centavos, desde, ate FROM historico "
+        "WHERE asin = ? ORDER BY desde", (asin,)).fetchall()
+    return [Trecho(dia_brasil(r[2]), dia_brasil(r[3]), r[0], r[1]) for r in linhas]
 
 
 def aviso(conn: sqlite3.Connection) -> str:

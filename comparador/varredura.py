@@ -30,7 +30,7 @@ from pathlib import Path
 
 from . import db
 from .busca import ItemBusca, LayoutDesconhecido, parse_busca, url_busca
-from .coletor import PAUSA_APOS_BLOQUEIO, _baixar, _guardar_html
+from .rede import PAUSA_APOS_BLOQUEIO, baixar, guardar_html
 
 SCHEMA = Path(__file__).with_name("schema_catalogo.sql")
 
@@ -246,13 +246,13 @@ def varrer(
         url = url_busca(f.no, f.preco_min, f.preco_max, pag, f.ordem)
         rotulo = (f"[{GENEROS.get(f.no, f.no)} p{pag}]" if f.ordem == "vendidos"
                   else f"[fatia {f.id} R$ {f.preco_min / 100:.2f}–{f.preco_max / 100:.2f} p{pag}]")
-        _, html, erro = _baixar(sessao, url)
+        _, html, erro = baixar(sessao, url)
         pagina = erro_txt = None
         if erro is None:
             try:
                 pagina = parse_busca(html)
             except LayoutDesconhecido as e:
-                arq = _guardar_html(pasta_html, f"busca-{f.id}-{pag}", html)
+                arq = guardar_html(pasta_html, f"busca-{f.id}-{pag}", html)
                 erro_txt = f"layout desconhecido em {url}: {e}" + (f" (HTML em {arq})" if arq else "")
                 pagina = None
         if erro is not None or pagina is None:
