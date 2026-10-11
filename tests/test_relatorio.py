@@ -3,7 +3,13 @@ import unittest
 from datetime import date
 
 from comparador import relatorio, varredura
-from comparador.relatorio import Evento
+from comparador.relatorio import Evento, Trecho
+
+BF = Evento("BF", date(2026, 11, 27), date(2026, 11, 27))
+
+
+def mk(p, a, b, capa=8000):
+    return Trecho(date.fromisoformat(a), date.fromisoformat(b), p, capa)
 
 
 def banco():
@@ -22,50 +28,53 @@ class TestRelatorio(unittest.TestCase):
     def test_serie_e_busca(self):
         c = banco()
         self.assertEqual(relatorio.buscar(c, "teste")[0][0], "B1")
-        t = relatorio.serie(c, "B1")
-        self.assertEqual([x.preco for x in t], [5000, 6000, 4500, 6000])
+        self.assertEqual([x.preco for x in relatorio.serie(c, "B1")], [5000, 6000, 4500, 6000])
 
-    def test_veredito_desconto_real_e_falso(self):
-        t = relatorio.serie(banco(), "B1")
-        ev = Evento("BF", date(2026, 11, 27), date(2026, 11, 27))
-        v = relatorio.veredito(t, ev)
-        self.assertEqual((v.preco_evento, v.normal), (4500, 6000))  # 60 dias antes: 5000 (20d) e 6000 (37d)
-        self.assertIn("menor preço", v.texto)
-        falso = relatorio.veredito([x for x in t if x.preco != 4500] , ev)
-        self.assertIn("sem observação", falso.texto)
+    def test_fatos_do_evento(self):
+        f = relatorio.fatos_evento(relatorio.serie(banco(), "B1"), BF)
+        self.assertEqual(f.preco, 4500)
+        self.assertEqual(f.ate, date(2026, 11, 26))
+        self.assertEqual((f.minimo, f.maximo), (5000, 6000))
+        self.assertEqual(f.dia_minimo, date(2026, 10, 20))     # empate no mínimo: vale o dia mais recente
+        self.assertEqual(f.mediana, 5000)                      # 50 dias a 5000 contra 37 a 6000
+        self.assertEqual(f.pico_recente, 6000)
+        self.assertIsNone(f.ultima_vez_igual_ou_menor)         # nunca esteve a R$ 45 antes
+        self.assertEqual(f.dias_observados, 87)
 
-    def test_nao_e_desconto(self):
-        t = relatorio.serie(banco(), "B1")
-        v = relatorio.veredito(t, Evento("X", date(2026, 11, 28), date(2026, 12, 1)))
-        self.assertIn("NÃO é desconto", v.texto)
+    def test_sem_coleta_no_evento(self):
+        self.assertIsNone(relatorio.fatos_evento([mk(5000, "2026-09-01", "2026-11-20")], BF))
+        self.assertIn("sem coleta", relatorio.resumo_evento(BF, None))
 
-    def test_preco_inflado_antes_da_promocao(self):
-        ev = Evento("BF", date(2026, 11, 27), date(2026, 11, 27))
-        mk = lambda p, a, b: relatorio.Trecho(date.fromisoformat(a), date.fromisoformat(b), p, 8000)
-        inflado = [mk(5000, "2026-09-28", "2026-11-05"), mk(6500, "2026-11-06", "2026-11-26"), mk(5100, "2026-11-27", "2026-11-27")]
-        self.assertEqual(relatorio.veredito(inflado, ev).categoria, "inflado")
-        ja_baixo = [mk(6000, "2026-09-28", "2026-11-10"), mk(5000, "2026-11-11", "2026-11-26"), mk(5000, "2026-11-27", "2026-11-27")]
-        self.assertEqual(relatorio.veredito(ja_baixo, ev).categoria, "antes_do_evento")
-        pequeno = [mk(5000, "2026-09-28", "2026-11-26"), mk(4900, "2026-11-27", "2026-11-27")]
-        self.assertEqual(relatorio.veredito(pequeno, ev).categoria, "pequeno")
+    def test_ultima_vez_igual_ou_menor(self):
+        t = [mk(4000, "2026-09-01", "2026-09-10"), mk(6000, "2026-09-11", "2026-11-26"), mk(4500, "2026-11-27", "2026-11-27")]
+        self.assertEqual(relatorio.fatos_evento(t, BF).ultima_vez_igual_ou_menor, date(2026, 9, 10))
 
-    def test_mediana_movel_90_dias(self):
-        mk = lambda p, a, b: relatorio.Trecho(date.fromisoformat(a), date.fromisoformat(b), p, None)
-        # 100 dias a 5000 e depois 10 dias a 9000: os últimos 90 dias ainda têm mediana 5000
+    def test_janela_de_90_dias(self):
         tr = [mk(5000, "2026-01-01", "2026-04-10"), mk(9000, "2026-04-11", "2026-04-20")]
-        m = relatorio.mediana_movel(tr)
-        self.assertEqual(m[0], (date(2026, 1, 1), 5000))
-        self.assertEqual(m[-1], (date(2026, 4, 20), 5000))
-        # janela de 10 dias: o preço novo domina
-        self.assertEqual(relatorio.mediana_movel(tr, 10)[-1][1], 9000)
-        # dias antigos saem da janela
-        self.assertEqual(relatorio.mediana_movel([mk(100, "2026-01-01", "2026-03-01"), mk(300, "2026-03-02", "2026-06-30")])[-1][1], 300)
+        m = relatorio.janela_movel(relatorio.por_dia(tr))
+        self.assertEqual(m[0], (date(2026, 1, 1), 5000, 5000, 5000))
+        self.assertEqual(m[-1][2], 5000)                        # 10 dias a 9000 não mudam a mediana
+        self.assertEqual(relatorio.janela_movel(relatorio.por_dia(tr), 10)[-1][2], 9000)
+        velho = [mk(100, "2026-01-01", "2026-03-01"), mk(300, "2026-03-02", "2026-06-30")]
+        self.assertEqual(relatorio.janela_movel(relatorio.por_dia(velho))[-1][2], 300)  # dias antigos saem
 
-    def test_pagina_html(self):
-        h = relatorio.pagina("Livro", "B1", relatorio.serie(banco(), "B1"),
-                             [Evento("BF", date(2026, 11, 27), date(2026, 11, 27))])
+    def test_quartis(self):
+        tr = [mk(1000, "2026-01-01", "2026-01-10"), mk(2000, "2026-01-11", "2026-01-20")]
+        _, q1, med, q3 = relatorio.janela_movel(relatorio.por_dia(tr))[-1]
+        self.assertTrue(q1 <= med <= q3)
+        self.assertEqual((q1, q3), (1000, 2000))
+
+    def test_pagina_sem_conclusoes_e_com_numeros(self):
+        h = relatorio.pagina("Livro", "B1", relatorio.serie(banco(), "B1"), [BF], aviso="SIMULADO")
         self.assertIn("<svg", h)
-        self.assertIn("BF", h)
+        self.assertIn("Mediana", h)
+        self.assertIn("SIMULADO", h)
+        for palavra in ("NÃO é desconto", "desconto real", "Desconto real", "inflado"):
+            self.assertNotIn(palavra, h)
+
+    def test_pagina_com_lacuna_e_um_so_dia(self):
+        relatorio.pagina("L", "X", [mk(5000, "2026-01-01", "2026-01-05"), mk(5200, "2026-03-01", "2026-03-02")], [])
+        relatorio.pagina("L", "X", [mk(5000, "2026-01-01", "2026-01-01", None)], [])
 
 
 if __name__ == "__main__":

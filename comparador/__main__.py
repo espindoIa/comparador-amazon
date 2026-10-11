@@ -55,7 +55,7 @@ def main() -> None:
     k.add_argument("--exigir-ontem", action="store_true",
                    help="sai com código 1 se ontem não teve varredura completa (para alertas)")
 
-    g = sub.add_parser("grafico", help="gráfico HTML do histórico de preço de um livro e veredito das promoções")
+    g = sub.add_parser("grafico", help="gráfico HTML do histórico de preço de um livro (números e gráfico, sem conclusões)")
     g.add_argument("livro", help="ASIN ou parte do título")
     g.add_argument("--eventos", default="eventos.csv")
     g.add_argument("--saida", help="arquivo HTML (padrão: data/grafico-<asin>.html)")
@@ -159,7 +159,7 @@ def main() -> None:
         eventos = relatorio.ler_eventos(args.eventos)
         saida.write_text(relatorio.pagina(titulo or asin, asin, trechos, eventos, relatorio.aviso(conn)), encoding="utf-8")
         for e in eventos:
-            print(relatorio.veredito(trechos, e).texto)
+            print(relatorio.resumo_evento(e, relatorio.fatos_evento(trechos, e)))
         print(f"gráfico em {saida}")
     elif args.cmd == "status":
         for r in conn.execute("SELECT * FROM coletas ORDER BY id DESC LIMIT 5"):

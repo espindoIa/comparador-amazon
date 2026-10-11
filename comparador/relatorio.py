@@ -1,10 +1,11 @@
-"""Gráfico de preço de um livro (HTML com SVG embutido) e veredito de promoção."""
+"""Página com o histórico de preço de um livro: gráfico e números, sem conclusões."""
 
 from __future__ import annotations
 
 import csv
 import html
 import sqlite3
+import json
 import statistics
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -12,10 +13,9 @@ from pathlib import Path
 
 from .db import dia_brasil
 
-JANELA_BASE = 60  # dias antes do evento usados como "preço normal"
-JANELA_PICO = 21  # dias antes do evento em que um aumento artificial é procurado
-LIMIAR_DESCONTO = 0.05  # abaixo disso a diferença é oscilação normal, não promoção
-LIMIAR_INFLADO = 0.10   # alta mínima sobre o normal para suspeitar de preço inflado
+JANELA = 90        # dias da mediana e da faixa usual
+JANELA_PICO = 21   # dias antes de um evento em que se procura o preço mais alto
+BURACO = 10        # dias sem coleta a partir dos quais o trecho é desenhado como lacuna
 
 
 @dataclass
@@ -31,17 +31,6 @@ class Evento:
     nome: str
     inicio: date
     fim: date
-
-
-@dataclass
-class Veredito:
-    evento: Evento
-    preco_evento: int | None
-    normal: int | None          # mediana dos preços observados na janela anterior
-    minimo_antes: int | None
-    capa: int | None
-    texto: str
-    categoria: str = "sem_dado"  # sem_dado | real | pequeno | nao_desconto | inflado | antes_do_evento
 
 
 def ler_eventos(caminho: str | Path) -> list[Evento]:
@@ -87,33 +76,6 @@ def serie(conn: sqlite3.Connection, asin: str) -> list[Trecho]:
     return out
 
 
-JANELA_MEDIANA = 90  # dias da mediana desenhada no gráfico
-
-
-def mediana_movel(trechos: list[Trecho], janela: int = JANELA_MEDIANA) -> list[tuple[date, int]]:
-    """Para cada dia observado, a mediana dos preços dos últimos `janela` dias (inclusive o dia).
-
-    Cada dia entra uma vez, com o preço do trecho em que cai; dias sem observação não entram.
-    Devolve só os pontos em que o valor muda, mais o último dia.
-    """
-    por_dia: dict[date, int] = {}
-    for t in trechos:
-        d = t.desde
-        while d <= t.ate:
-            por_dia[d] = t.preco
-            d += timedelta(days=1)
-    dias = sorted(por_dia)
-    out: list[tuple[date, int]] = []
-    for d in dias:
-        w = [por_dia[x] for x in dias if d - timedelta(days=janela - 1) <= x <= d]
-        m = int(statistics.median(w))
-        if not out or out[-1][1] != m:
-            out.append((d, m))
-    if out and out[-1][0] != dias[-1]:
-        out.append((dias[-1], out[-1][1]))
-    return out
-
-
 def aviso(conn: sqlite3.Connection) -> str:
     """Texto da tabela `aviso`, que os bancos simulados trazem; vazio nos bancos reais."""
     if not conn.execute("SELECT name FROM sqlite_master WHERE name = 'aviso'").fetchone():
@@ -126,139 +88,267 @@ def _brl(c: int | None) -> str:
     return "–" if c is None else f"R$ {c / 100:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def veredito(trechos: list[Trecho], ev: Evento) -> Veredito:
-    antes = [t for t in trechos if t.ate < ev.inicio and t.ate >= ev.inicio - timedelta(days=JANELA_BASE)]
-    durante = [t for t in trechos if t.desde <= ev.fim and t.ate >= ev.inicio]
-    capa = next((t.capa for t in reversed(trechos) if t.capa), None)
+def por_dia(trechos: list[Trecho]) -> dict[date, int]:
+    """Preço de cada dia observado (cada dia entra uma vez; dias sem coleta não entram)."""
+    out: dict[date, int] = {}
+    for t in trechos:
+        d = t.desde
+        while d <= t.ate:
+            out[d] = t.preco
+            d += timedelta(days=1)
+    return out
+
+
+def _quartis(w: list[int]) -> tuple[int, int, int]:
+    if len(w) < 2:
+        return w[0], w[0], w[0]
+    q = statistics.quantiles(w, n=4, method="inclusive")
+    return int(q[0]), int(statistics.median(w)), int(q[2])
+
+
+def janela_movel(dias: dict[date, int], janela: int = JANELA) -> list[tuple[date, int, int, int]]:
+    """Para cada dia observado: (dia, 1º quartil, mediana, 3º quartil) dos últimos `janela` dias."""
+    ordem = sorted(dias)
+    return [(d, *_quartis([dias[x] for x in ordem if d - timedelta(days=janela - 1) <= x <= d])) for d in ordem]
+
+
+@dataclass
+class Fatos:
+    """Números de uma janela de até 90 dias terminada num dia (inclusive), sem julgamento."""
+    ate: date
+    preco: int | None            # preço no próprio dia ou, para um evento, o menor durante ele
+    mediana: int | None
+    q1: int | None
+    q3: int | None
+    minimo: int | None
+    dia_minimo: date | None
+    maximo: int | None
+    dia_maximo: date | None
+    dias_observados: int
+    dias_janela: int
+    pico_recente: int | None     # preço mais alto nos 21 dias anteriores
+    ultima_vez_igual_ou_menor: date | None  # antes de `ate`; None = nunca no período observado
+    capa: int | None
+
+
+def fatos(trechos: list[Trecho], ate: date, preco: int | None = None, janela: int = JANELA) -> Fatos:
+    """Resume os `janela` dias até `ate` (exclusive se `preco` vier de um evento, ver `fatos_evento`)."""
+    dias = por_dia(trechos)
+    ini = ate - timedelta(days=janela - 1)
+    w = {d: p for d, p in dias.items() if ini <= d <= ate}
+    capa = next((t.capa for t in reversed(trechos) if t.capa and t.desde <= ate), None)
+    if preco is None:
+        preco = dias.get(ate)
+    if not w:
+        return Fatos(ate, preco, None, None, None, None, None, None, None, 0, janela, None, None, capa)
+    q1, med, q3 = _quartis(list(w.values()))
+    dmin = min(w, key=lambda d: (w[d], -d.toordinal()))
+    dmax = max(w, key=lambda d: (w[d], d.toordinal()))
+    recente = [p for d, p in w.items() if d >= ate - timedelta(days=JANELA_PICO)]
+    igual = [d for d, p in dias.items() if d < ate and preco is not None and p <= preco]
+    return Fatos(ate, preco, med, q1, q3, w[dmin], dmin, w[dmax], dmax, len(w), janela,
+                 max(recente) if recente else None, max(igual) if igual else None, capa)
+
+
+def fatos_evento(trechos: list[Trecho], ev: Evento) -> Fatos | None:
+    """Menor preço durante o evento e a janela de 90 dias que o antecede. None sem coleta no evento."""
+    dias = por_dia(trechos)
+    durante = {d: p for d, p in dias.items() if ev.inicio <= d <= ev.fim}
     if not durante:
-        return Veredito(ev, None, None, None, capa, "sem observação durante o evento", "sem_dado")
-    preco = min(t.preco for t in durante)
-    if not antes:
-        return Veredito(ev, preco, None, None, capa,
-                        f"{_brl(preco)} no evento; sem {JANELA_BASE} dias de histórico antes para comparar", "sem_dado")
-    # mediana ponderada por dias de cada trecho (um preço que durou 50 dias pesa mais que um de 1 dia)
-    dias: list[int] = []
-    for t in antes:
-        ini = max(t.desde, ev.inicio - timedelta(days=JANELA_BASE))  # só conta a parte dentro da janela
-        dias += [t.preco] * ((t.ate - ini).days + 1)
-    normal = int(statistics.median(dias))
-    minimo = min(t.preco for t in antes)
-    desc = (normal - preco) / normal
-    pico = max((t.preco for t in trechos
-                if t.ate >= ev.inicio - timedelta(days=JANELA_PICO) and t.desde < ev.inicio), default=normal)
-    subiu = pico / normal - 1
-    inflado = subiu >= LIMIAR_INFLADO
-    extra = f"; {(capa - preco) / capa * 100:.0f}% abaixo da capa" if capa and capa > preco else ""
-    if desc < LIMIAR_DESCONTO:
-        if inflado:
-            cat = "inflado"
-            juiz = (f"NÃO é desconto: o preço subiu {subiu * 100:.0f}% nas semanas antes ({_brl(pico)}) "
-                    "e só voltou ao normal")
-        elif preco >= normal:
-            cat, juiz = "nao_desconto", "NÃO é desconto: o preço normal era igual ou menor"
-        else:
-            cat = "pequeno"
-            juiz = f"NÃO é desconto relevante: só {desc * 100:.0f}% abaixo do normal (oscilação comum)"
-    elif (antes[-1].preco * (1 - LIMIAR_DESCONTO) <= preco) and not inflado:
-        cat = "antes_do_evento"
-        juiz = (f"o preço já era {_brl(antes[-1].preco)} logo antes do evento: a queda "
-                f"({desc * 100:.0f}% abaixo do normal) não é da promoção")
-    else:
-        cat = "real"
-        juiz = (f"{desc * 100:.0f}% abaixo do normal e é o menor preço da janela" if preco <= minimo
-                else f"{desc * 100:.0f}% abaixo do normal, mas já esteve mais barato ({_brl(minimo)})")
-        if inflado:
-            cat = "inflado"
-            juiz += f"; atenção: antes disso o preço havia subido {subiu * 100:.0f}%"
-    return Veredito(ev, preco, normal, minimo, capa,
-                    f"{_brl(preco)} no evento vs normal {_brl(normal)}: {juiz}{extra}", cat)
+        return None
+    return fatos(trechos, ev.inicio - timedelta(days=1), preco=min(durante.values()))
 
 
-def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=360) -> str:
-    ml, mr, mt, mb = 70, 20, 20, 40
-    d0 = min(t.desde for t in trechos)
-    d1 = max(t.ate for t in trechos)
-    for e in eventos:  # mostra eventos próximos do período observado
+def _pct(a: int, b: int) -> str:
+    return f"{(a - b) / b * 100:+.0f}%".replace("+0%", "0%")
+
+
+def _data(d: date | None) -> str:
+    return d.strftime("%d/%m/%Y") if d else "–"
+
+
+def _cartao(rotulo: str, valor: str, nota: str = "") -> str:
+    return (f'<div class="c"><span>{html.escape(rotulo)}</span><b>{html.escape(valor)}</b>'
+            f'{f"<small>{html.escape(nota)}</small>" if nota else ""}</div>')
+
+
+def _cartoes_atuais(f: Fatos, trechos: list[Trecho]) -> str:
+    c = [_cartao("Preço atual", _brl(f.preco), f"em {_data(f.ate)}")]
+    if f.mediana is not None:
+        c.append(_cartao(f"Mediana {f.dias_janela} dias", _brl(f.mediana),
+                         f"preço atual {_pct(f.preco, f.mediana)}" if f.preco else ""))
+        c.append(_cartao("Faixa usual", f"{_brl(f.q1)} a {_brl(f.q3)}", "metade dos dias ficou aqui"))
+        c.append(_cartao("Mínimo", _brl(f.minimo), _data(f.dia_minimo)))
+        c.append(_cartao("Máximo", _brl(f.maximo), _data(f.dia_maximo)))
+    c.append(_cartao("Preço de capa", _brl(f.capa), "informado pela Amazon" if f.capa else ""))
+    c.append(_cartao("Dias com coleta", f"{f.dias_observados} de {f.dias_janela}", "na janela de 90 dias"))
+    return "".join(c)
+
+
+def resumo_evento(ev: Evento, f: Fatos | None) -> str:
+    """Uma linha com os números do evento, para o terminal."""
+    if f is None:
+        return f"{ev.nome}: sem coleta durante o evento"
+    if f.mediana is None:
+        return f"{ev.nome}: {_brl(f.preco)} (sem coleta nos {f.dias_janela} dias anteriores)"
+    return (f"{ev.nome}: {_brl(f.preco)}; mediana dos {f.dias_janela} dias antes {_brl(f.mediana)} "
+            f"({_pct(f.preco, f.mediana)}); faixa usual {_brl(f.q1)} a {_brl(f.q3)}; "
+            f"mínimo {_brl(f.minimo)}, máximo {_brl(f.maximo)}; {f.dias_observados} dias com coleta")
+
+
+def _bloco_evento(ev: Evento, f: Fatos | None) -> str:
+    cab = f"<h3>{html.escape(ev.nome)} <small>{_data(ev.inicio)}"
+    cab += f" a {_data(ev.fim)}</small></h3>" if ev.fim != ev.inicio else "</small></h3>"
+    if f is None:
+        return f'<section class="ev-b">{cab}<p class="mu">Sem coleta de preço durante o evento.</p></section>'
+    c = [_cartao("Preço no evento", _brl(f.preco), f"menor preço do período")]
+    if f.mediana is not None:
+        c += [_cartao(f"Mediana dos {f.dias_janela} dias antes", _brl(f.mediana), f"no evento {_pct(f.preco, f.mediana)}"),
+              _cartao("Faixa usual antes", f"{_brl(f.q1)} a {_brl(f.q3)}"),
+              _cartao("Mínimo antes", _brl(f.minimo), _data(f.dia_minimo)),
+              _cartao("Máximo antes", _brl(f.maximo), _data(f.dia_maximo)),
+              _cartao(f"Pico nos {JANELA_PICO} dias antes", _brl(f.pico_recente),
+                      f"evento {_pct(f.preco, f.pico_recente)} sobre o pico" if f.pico_recente else ""),
+              _cartao("Última vez igual ou menor", _data(f.ultima_vez_igual_ou_menor)
+                      if f.ultima_vez_igual_ou_menor else "nunca", "antes do evento, no período coletado")]
+    if f.capa:
+        c.append(_cartao("Preço de capa", _brl(f.capa), f"evento {_pct(f.preco, f.capa)}"))
+    c.append(_cartao("Dias com coleta antes", f"{f.dias_observados} de {f.dias_janela}"))
+    return f'<section class="ev-b">{cab}<div class="cs">{"".join(c)}</div></section>'
+
+
+def _svg(trechos: list[Trecho], eventos: list[Evento], largura=860, altura=380) -> tuple[str, list]:
+    ml, mr, mt, mb = 72, 20, 22, 40
+    dias = por_dia(trechos)
+    mov = janela_movel(dias)
+    d0, d1 = min(dias), max(dias)
+    for e in eventos:  # só estende o eixo até eventos próximos do período observado
         if d0 - timedelta(days=30) <= e.fim <= d1 + timedelta(days=120):
             d0, d1 = min(d0, e.inicio), max(d1, e.fim)
     d1 = max(d1, d0 + timedelta(days=6))
-    med = mediana_movel(trechos)
-    valores = [t.preco for t in trechos] + [t.capa for t in trechos if t.capa] + [m for _, m in med]
+    precos = [t.preco for t in trechos]
+    valores = precos + [q for _, a, _, b in mov for q in (a, b)]
+    capa = next((t.capa for t in reversed(trechos) if t.capa), None)
+    if capa and capa <= max(precos) * 1.5:  # capa muito acima achataria a curva; fica só nos números
+        valores.append(capa)
     lo, hi = min(valores), max(valores)
-    folga = max((hi - lo) * 0.1, 50)
+    folga = max((hi - lo) * 0.12, 50)
     lo, hi = max(0, lo - folga), hi + folga
     X = lambda d: ml + (d - d0).days / (d1 - d0).days * (largura - ml - mr)
     Y = lambda v: mt + (1 - (v - lo) / (hi - lo)) * (altura - mt - mb)
-    p: list[str] = [f'<svg viewBox="0 0 {largura} {altura}" role="img" aria-label="Histórico de preço">']
+    base = altura - mb
+    p = [f'<svg id="graf" viewBox="0 0 {largura} {altura}" role="img" aria-label="Histórico de preço">'
+         f'<defs><pattern id="lac" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+         f'<line x1="0" y1="0" x2="0" y2="6" class="lacl"/></pattern></defs>']
     for i in range(5):
         v = lo + (hi - lo) * i / 4
         p.append(f'<line x1="{ml}" x2="{largura - mr}" y1="{Y(v):.1f}" y2="{Y(v):.1f}" class="g"/>'
                  f'<text x="{ml - 8}" y="{Y(v) + 4:.1f}" text-anchor="end">{html.escape(_brl(int(v)))}</text>')
+    for i in range(5):
+        d = d0 + (d1 - d0) * i // 4
+        a = "start" if i == 0 else "end" if i == 4 else "middle"
+        p.append(f'<text x="{X(d):.1f}" y="{altura - 14}" text-anchor="{a}">{d:%d/%m/%y}</text>')
+    for a, b in zip(trechos, trechos[1:]):  # lacunas de coleta
+        if (b.desde - a.ate).days > BURACO:
+            p.append(f'<rect x="{X(a.ate):.1f}" y="{mt}" width="{X(b.desde) - X(a.ate):.1f}" height="{base - mt}" '
+                     f'fill="url(#lac)"><title>Sem coleta de {_data(a.ate)} a {_data(b.desde)}</title></rect>')
     for e in eventos:
         if e.fim < d0 or e.inicio > d1:
             continue
-        x0, x1 = X(e.inicio), max(X(e.fim), X(e.inicio) + 3)
-        p.append(f'<rect x="{x0:.1f}" y="{mt}" width="{x1 - x0:.1f}" height="{altura - mt - mb}" class="ev"/>'
-                 f'<text x="{x0 - 3 if x0 > largura * 0.6 else x0 + 3:.1f}" y="{mt + 12}" class="evt" '
-                 f'text-anchor="{"end" if x0 > largura * 0.6 else "start"}">{html.escape(e.nome)}</text>')
-    n = 5
-    for i in range(n):
-        d = d0 + (d1 - d0) * i // (n - 1)
-        ancora = "start" if i == 0 else "end" if i == n - 1 else "middle"
-        p.append(f'<text x="{X(d):.1f}" y="{altura - 14}" text-anchor="{ancora}">{d.strftime("%d/%m/%y")}</text>')
-    capas = [t for t in trechos if t.capa]
-    if capas:
-        pts = " ".join(f"{X(t.desde):.1f},{Y(t.capa):.1f} {X(t.ate):.1f},{Y(t.capa):.1f}" for t in capas)
-        p.append(f'<polyline points="{pts}" class="capa"/>')
+        x0 = X(e.inicio) - 3
+        w = max(X(e.fim) - X(e.inicio), 0) + 6
+        right = x0 > largura * 0.6
+        p.append(f'<rect x="{x0:.1f}" y="{mt}" width="{w:.1f}" height="{base - mt}" class="ev"/>'
+                 f'<text x="{x0 - 4 if right else x0 + w + 4:.1f}" y="{mt + 12}" class="evt" '
+                 f'text-anchor="{"end" if right else "start"}">{html.escape(e.nome)}</text>')
+    # faixa usual (1º a 3º quartil) e mediana móvel
+    if len(mov) > 1:
+        topo = "".join(f"{'M' if i == 0 else 'L'}{X(d):.1f},{Y(b):.1f}" for i, (d, _, _, b) in enumerate(mov))
+        fundo = "".join(f"L{X(d):.1f},{Y(a):.1f}" for d, a, _, _ in reversed(mov))
+        p.append(f'<path d="{topo}{fundo}Z" class="faixa"/>')
     mp = ""
-    for i, (d, m) in enumerate(med):
-        if i:
-            mp += f"L{X(d):.1f},{Y(med[i - 1][1]):.1f}"  # degrau
-        mp += f"{'M' if not i else 'L'}{X(d):.1f},{Y(m):.1f}"
-    p.append(f'<path d="{mp}" class="med"><title>Mediana dos últimos {JANELA_MEDIANA} dias</title></path>')
+    for i, (d, _, m, _) in enumerate(mov):
+        mp += f"{'M' if i == 0 else 'L'}{X(d):.1f},{Y(m):.1f}"
+    p.append(f'<path d="{mp}" class="med"/>')
+    if capa and capa <= max(precos) * 1.5:
+        p.append(f'<line x1="{ml}" x2="{largura - mr}" y1="{Y(capa):.1f}" y2="{Y(capa):.1f}" class="capa"/>'
+                 f'<text x="{largura - mr}" y="{Y(capa) - 4:.1f}" text-anchor="end">capa {html.escape(_brl(capa))}</text>')
     path = ""
     for i, t in enumerate(trechos):
         x0, x1, y = X(t.desde), X(t.ate), Y(t.preco)
-        if i and (t.desde - trechos[i - 1].ate).days <= 10:
-            path += f"L{x0:.1f},{y:.1f}"  # degrau: o preço mudou entre duas visitas
-        else:
-            path += f"M{x0:.1f},{y:.1f}"
-        path += f"L{max(x1, x0 + 1):.1f},{y:.1f}"
+        ligado = i and (t.desde - trechos[i - 1].ate).days <= BURACO
+        path += f"{'L' if ligado else 'M'}{x0:.1f},{y:.1f}L{max(x1, x0 + 1):.1f},{y:.1f}"
     p.append(f'<path d="{path}" class="preco"/>')
     for t in trechos:
-        p.append(f'<circle cx="{X(t.desde):.1f}" cy="{Y(t.preco):.1f}" r="3" class="pt">'
-                 f'<title>{t.desde:%d/%m/%Y}: {html.escape(_brl(t.preco))}</title></circle>')
-    p.append("</svg>")
-    return "".join(p)
+        p.append(f'<circle cx="{X(t.desde):.1f}" cy="{Y(t.preco):.1f}" r="3" class="pt"/>')
+    for e in eventos:
+        dur = {d: v for d, v in dias.items() if e.inicio <= d <= e.fim}
+        if dur:
+            d = min(dur, key=dur.get)
+            p.append(f'<circle cx="{X(d):.1f}" cy="{Y(dur[d]):.1f}" r="5.5" class="pe"/>'
+                     f'<text x="{X(d) + (-9 if X(d) > largura * 0.6 else 9):.1f}" y="{Y(dur[d]) + 4:.1f}" class="pet" '
+                     f'text-anchor="{"end" if X(d) > largura * 0.6 else "start"}">{html.escape(_brl(dur[d]))}</text>')
+    p.append(f'<line id="cur" x1="0" x2="0" y1="{mt}" y2="{base}" class="cur" visibility="hidden"/></svg>')
+    medd = {d: (a, m, b) for d, a, m, b in mov}
+    dados = [[d.isoformat(), dias[d], *medd[d]] for d in sorted(dias)]
+    geo = {"d0": d0.toordinal(), "d1": d1.toordinal(), "ml": ml, "mr": mr, "w": largura}
+    return "".join(p), [dados, geo]
 
+
+JS = """
+(function(){var D=%s,G=D[1];D=D[0];var s=document.getElementById('graf'),c=document.getElementById('cur'),
+t=document.getElementById('tip');if(!s)return;
+function brl(v){return 'R$ '+(v/100).toFixed(2).replace('.',',').replace(/\\B(?=(\\d{3})+,)/g,'.')}
+function mover(e){var r=s.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*G.w;
+var o=(x-G.ml)/(G.w-G.ml-G.mr)*(G.d1-G.d0)+G.d0,b=null,bd=1e9;
+D.forEach(function(r){var n=Date.parse(r[0])/864e5+719163,k=Math.abs(n-o);if(k<bd){bd=k;b=r}});
+if(!b)return;var n=Date.parse(b[0])/864e5+719163,px=G.ml+(n-G.d0)/(G.d1-G.d0)*(G.w-G.ml-G.mr);
+c.setAttribute('x1',px);c.setAttribute('x2',px);c.setAttribute('visibility','visible');
+var p=b[0].split('-');t.textContent=p[2]+'/'+p[1]+'/'+p[0]+' · preço '+brl(b[1])+' · mediana 90 dias '+brl(b[3])+
+' · faixa usual '+brl(b[2])+' a '+brl(b[4])}
+s.addEventListener('pointermove',mover);s.addEventListener('pointerleave',function(){c.setAttribute('visibility','hidden');
+t.textContent='Passe o mouse (ou o dedo) sobre o gráfico para ver cada dia.'})})();
+"""
 
 CSS = """
-:root{--fg:#1d2327;--bg:#fff;--mu:#667;--pr:#0b6bcb;--ca:#999;--me:#d9730d;--ev:#f5a62333;--gr:#0001}
-@media(prefers-color-scheme:dark){:root{--fg:#e8e8e8;--bg:#16191c;--mu:#9aa;--pr:#5aa9ff;--ca:#777;--me:#ffa94d;--ev:#f5a62344;--gr:#fff2}}
+:root{--fg:#1d2327;--bg:#fff;--mu:#667;--pr:#0b6bcb;--ca:#999;--me:#d9730d;--fx:#d9730d1f;--ev:#7a5cff22;--evl:#6b4de6;--gr:#0001;--cd:#f4f6f8}
+@media(prefers-color-scheme:dark){:root{--fg:#e8e8e8;--bg:#16191c;--mu:#9aa;--pr:#5aa9ff;--ca:#777;--me:#ffa94d;--fx:#ffa94d26;--ev:#9d86ff33;--evl:#b7a6ff;--gr:#fff2;--cd:#20252a}}
 body{font:15px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg);max-width:900px;margin:0 auto;padding:16px}
-svg{width:100%;height:auto;font-size:11px;fill:var(--mu)}.g{stroke:var(--gr)}
+h1{font-size:1.4em;margin:.2em 0}h2{font-size:1.1em;margin:1.4em 0 .4em}h3{font-size:1em;margin:1.2em 0 .4em}
+svg{width:100%;height:auto;font-size:11px;fill:var(--mu);touch-action:pan-y}.g{stroke:var(--gr)}
 .preco{fill:none;stroke:var(--pr);stroke-width:2}.pt{fill:var(--pr)}
-.med{fill:none;stroke:var(--me);stroke-width:2;stroke-dasharray:2 3}
-.capa{fill:none;stroke:var(--ca);stroke-width:1.5;stroke-dasharray:5 4}
-.ev{fill:var(--ev)}.evt{fill:var(--fg);font-size:11px}
-li{margin:.3em 0}small{color:var(--mu)}
+.pe{fill:var(--bg);stroke:var(--pr);stroke-width:2.5}.pet{fill:var(--fg);font-size:12px;font-weight:600}
+.faixa{fill:var(--fx);stroke:none}.med{fill:none;stroke:var(--me);stroke-width:2;stroke-dasharray:2 3}
+.capa{stroke:var(--ca);stroke-width:1.2;stroke-dasharray:5 4}
+.ev{fill:var(--ev)}.evt{fill:var(--evl);font-size:11px;font-weight:600}.cur{stroke:var(--mu);stroke-width:1}
+.lacl{stroke:var(--ca);stroke-width:1;opacity:.5}
+#tip{min-height:1.5em;color:var(--fg);font-size:13px;margin:.3em 0}
+.leg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--mu);margin:.3em 0 .6em}
+.leg i{display:inline-block;width:22px;height:0;border-top:2px solid;vertical-align:middle;margin-right:5px}
+.leg .b{height:10px;border:0;background:var(--fx);border-top:0}
+.cs{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:8px}
+.c{background:var(--cd);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column}
+.c span{font-size:12px;color:var(--mu)}.c b{font-size:1.05em}.c small{color:var(--mu);font-size:11px}
+.mu,small{color:var(--mu)}
 """
 
 
 def pagina(titulo: str, asin: str, trechos: list[Trecho], eventos: list[Evento], aviso: str = "") -> str:
-    ultimo = trechos[-1]
-    precos = [t.preco for t in trechos]
-    resumo = (f"Atual {_brl(ultimo.preco)} · mínimo {_brl(min(precos))} · máximo {_brl(max(precos))}"
-              f" · mediana {JANELA_MEDIANA} dias {_brl(mediana_movel(trechos)[-1][1])}"
-              f" · capa {_brl(next((t.capa for t in reversed(trechos) if t.capa), None))}"
-              f" · observado de {trechos[0].desde:%d/%m/%Y} a {ultimo.ate:%d/%m/%Y}")
-    vs = "".join(f"<li><b>{html.escape(v.evento.nome)}</b> ({v.evento.inicio:%d/%m/%Y}): {html.escape(v.texto)}</li>"
-                 for v in (veredito(trechos, e) for e in eventos))
+    svg, dados = _svg(trechos, eventos)
+    atual = fatos(trechos, trechos[-1].ate)
+    blocos = "".join(_bloco_evento(e, fatos_evento(trechos, e)) for e in eventos)
+    legenda = ('<div class="leg"><span><i style="border-color:var(--pr)"></i>preço</span>'
+               f'<span><i style="border-color:var(--me);border-top-style:dotted"></i>mediana dos últimos {JANELA} dias</span>'
+               '<span><i class="b"></i>faixa usual (1º a 3º quartil)</span>'
+               '<span><i style="border-color:var(--ca);border-top-style:dashed"></i>preço de capa</span>'
+               '<span style="color:var(--evl)">▮ evento</span><span>▨ sem coleta</span></div>')
     return (f'<!doctype html><html lang="pt-BR"><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<title>{html.escape(titulo)}</title><style>{CSS}</style><body>"
             f'{f"<p><b>{html.escape(aviso)}</b></p>" if aviso else ""}'
-            f"<h1>{html.escape(titulo)}</h1><small>ASIN {html.escape(asin)} · linha contínua: preço; "
-            f"tracejada cinza: preço de capa; pontilhada laranja: mediana dos últimos 90 dias; faixa: promoção</small>{_svg(trechos, eventos)}"
-            f"<p>{html.escape(resumo)}</p><h2>Promoções</h2><ul>{vs or '<li>nenhum evento em eventos.csv</li>'}</ul>"
-            f"</body></html>")
+            f"<h1>{html.escape(titulo)}</h1><small>ASIN {html.escape(asin)} · coletado de "
+            f"{_data(trechos[0].desde)} a {_data(trechos[-1].ate)}</small>"
+            f'<div class="cs" style="margin:12px 0">{_cartoes_atuais(atual, trechos)}</div>'
+            f'{legenda}{svg}<div id="tip">Passe o mouse (ou o dedo) sobre o gráfico para ver cada dia.</div>'
+            f"{f'<h2>Eventos</h2>{blocos}' if blocos else ''}"
+            f"<script>{JS % json.dumps(dados)}</script></body></html>")

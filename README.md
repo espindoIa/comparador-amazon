@@ -228,21 +228,28 @@ Os valores ficam em **centavos** e as datas em UTC. Para gráficos, use só `sta
   mínimo de requisições, com pausas, e para quando é bloqueado.
 - `data/` (banco e HTML) não vai para o git.
 
-## Gráfico de preço por livro e veredito das promoções
+## Histórico de preço por livro (gráfico e números)
 
 ```bash
 python -m comparador --db data/catalogo-vendidos.db grafico "título ou ASIN"
 ```
 
-Gera `data/grafico-<ASIN>.html` (abra no navegador): linha contínua = preço, pontilhada laranja = mediana dos últimos 90 dias, tracejada = preço de
-capa, faixa = Black Friday / Dia do Consumidor (datas em `eventos.csv`). Se o termo casar com
-vários livros, lista os ASINs para você repetir com o exato. Sem `--db`, usa `data/precos.db`
-(lista de desejos) se existir, senão `data/catalogo.db`.
+Gera `data/grafico-<ASIN>.html` (abra no navegador). A página **não tira conclusões**: mostra os
+dados para quem compra decidir. Sem `--db`, usa `data/precos.db` (lista de desejos) se existir,
+senão `data/catalogo.db`. Se o termo casar com vários livros, lista os ASINs para repetir com o exato.
 
-Para cada evento, imprime o veredito: o menor preço durante o evento contra a **mediana dos 60 dias
-anteriores** (cada preço pesa pelos dias em que durou) e contra o preço de capa. Diz se o preço
-"normal" já era igual ou menor (não é desconto) e se já houve preço mais baixo na janela. Precisa
-de pelo menos algumas semanas de histórico antes do evento; sem isso, avisa que não dá para comparar.
+**Gráfico:** preço (degraus), mediana dos últimos 90 dias (pontilhada), faixa usual (do 1º ao 3º
+quartil dos últimos 90 dias, onde ficou a metade central dos dias), preço de capa (tracejado, só se
+couber na escala), faixas dos eventos de `eventos.csv` com o menor preço de cada um marcado, e
+lacunas de coleta hachuradas (nada é desenhado como se tivesse sido observado). Passando o mouse
+(ou o dedo) aparece, para cada dia, o preço, a mediana e a faixa usual.
+
+**Números:** preço atual, mediana, faixa usual, mínimo e máximo (com as datas), preço de capa e
+quantos dos 90 dias têm coleta. Para cada evento: o menor preço durante ele ao lado da mediana, da
+faixa, do mínimo e do máximo dos 90 dias *anteriores*, do pico nas 3 semanas antes, da última vez
+em que o preço foi igual ou menor e do preço de capa, sempre com a variação percentual em
+relação a cada um e quantos dias de coleta sustentam a conta.
+
 Os bancos do catálogo estão em *Releases → catalogo* (descompacte o `.db.gz`).
 
 ### Simulação para testar antes da Black Friday
@@ -253,11 +260,7 @@ python -m comparador --db data/simulado.db grafico "título ou ASIN"
 ```
 
 Parte dos livros e preços **reais** de um banco do catálogo e inventa, num banco novo (o original
-não é tocado), preços diários de 28/09 a 30/11/2026 com oscilação de até ±12%. Cada livro recebe um
-cenário sorteado (`real`: queda de 15 a 40% na Black Friday; `falso`: preço sobe 15 a 35% nas 3
-semanas antes e "cai" de volta; `nenhum`: sem promoção), gravado em `simulacao.cenario` para conferir
-o veredito. O banco simulado leva um aviso nos gráficos e **não deve ser misturado ao real**.
-
-O veredito classifica cada evento em `real`, `pequeno` (abaixo de 5%, oscilação comum), `nao_desconto`,
-`inflado` (o preço subiu 10% ou mais nas 3 semanas antes) e `antes_do_evento` (o preço já era esse
-antes da promoção).
+não é tocado), preços diários de 28/09 a 30/11/2026 com oscilação de até ±12%. Cada livro recebe
+um cenário sorteado (`real`: queda de 15 a 40% na Black Friday; `falso`: preço sobe 15 a 35% nas 3
+semanas antes e volta; `nenhum`: sem promoção), gravado em `simulacao.cenario`. O banco simulado
+leva um aviso nos gráficos e **não deve ser misturado ao real**.

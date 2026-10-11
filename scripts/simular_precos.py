@@ -1,4 +1,4 @@
-"""Simula o histórico de preços até a Black Friday, para testar o gráfico e o veredito.
+"""Simula o histórico de preços até a Black Friday, para testar o gráfico e os números dos eventos.
 
 Usa os livros e preços REAIS de um banco do catálogo como ponto de partida e gera, num banco
 NOVO (nunca altera o original), preços diários dentro de uma variação plausível. Os dados são
@@ -6,7 +6,7 @@ inventados: o banco leva a tabela `simulacao` e não deve ser misturado ao banco
 
     python scripts/simular_precos.py ORIGEM.db SAIDA.db [--livros 2000] [--semente 1]
 
-Cenários da Black Friday (o sorteio é gravado em `simulacao.cenario` para conferir o veredito):
+Cenários da Black Friday (o sorteio é gravado em `simulacao.cenario` para conferência):
   real      desconto verdadeiro: preço normal, depois queda de 15 a 40% só no dia
   falso     "desconto" de fachada: o preço sobe 15 a 35% nas 3 semanas antes e "cai" de volta
   nenhum    sem promoção; só a oscilação normal
