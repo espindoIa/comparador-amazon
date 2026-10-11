@@ -5,7 +5,10 @@
 -- páginas de busca; fatias grandes demais são divididas automaticamente.
 CREATE TABLE IF NOT EXISTS fatias (
     id                  INTEGER PRIMARY KEY,
+    grupo               TEXT,                       -- o que uma execução lê: o nó (varredura por
+                                                    -- preço) ou "vendidos" (mais vendidos)
     no                  TEXT NOT NULL,              -- nó da categoria na Amazon
+    ordem               TEXT NOT NULL DEFAULT 'preco', -- 'preco' ou 'vendidos'
     preco_min           INTEGER NOT NULL,
     preco_max           INTEGER NOT NULL,
     ativa               INTEGER NOT NULL DEFAULT 1, -- 0 = foi dividida
@@ -54,7 +57,7 @@ CREATE TABLE IF NOT EXISTS execucoes (
     observacao    TEXT
 );
 
--- Dias (horário de Brasília) em que TODAS as fatias da categoria foram lidas.
+-- Dias (horário de Brasília) em que TODAS as fatias do grupo foram lidas (`no` = grupo).
 -- Dia ausente aqui = lacuna (ver `python -m comparador catalogo`).
 CREATE TABLE IF NOT EXISTS dias (
     no          TEXT NOT NULL,

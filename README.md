@@ -102,6 +102,27 @@ python -m comparador status
 O dia é contado no horário de Brasília. Para forçar uma coleta extra no mesmo dia, use
 *Run workflow* com "forcar" marcado.
 
+## Os ~20 mil livros mais vendidos, todo dia
+
+```bash
+python -m comparador --db data/vendidos.db varrer --vendidos
+python -m comparador --db data/vendidos.db catalogo --vendidos
+```
+
+Lê, todo dia, os mais vendidos de cada um dos 29 gêneros de Livros (Literatura, Romance,
+Autoajuda, HQs e mangás, Infantil...) e do ranking geral de Livros, com o preço de cada
+formato (capa comum, capa dura, Kindle, audiolivro) e o preço de capa quando há desconto.
+No workflow `varredura.yml` é a linha `vendidos` da matrix, num servidor próprio; o
+banco vai para a release `catalogo` como `catalogo-vendidos-<data>.db.gz`.
+
+Por que por gênero (medido em out/2026): na ordem "Mais vendidos", a Amazon só mostra
+**75 páginas (1.200 livros) por consulta**, embora a paginação anuncie 400, e as páginas de
+busca não mostram a posição de vendas de cada livro. Não existe, então, como ler um
+ranking geral de 20 mil. Somando os 1.200 primeiros de cada gênero chega-se a até ~35 mil
+posições (30 consultas x 75 páginas = ~2.250 páginas, ~1h50 por dia); como um livro pode
+estar em mais de um gênero, o número de livros distintos fica abaixo disso. Os gêneros
+estão em `GENEROS`, em `comparador/varredura.py`.
+
 ## Varredura diária de categorias inteiras (HQs, mangás e graphic novels)
 
 Para acompanhar uma categoria inteira, e não só a sua lista, o comando `varrer` lê

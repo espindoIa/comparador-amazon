@@ -65,6 +65,11 @@ class TestParseBusca(unittest.TestCase):
         html = pagina_busca([("AAAAAAAAAA", 1000)], ultima=1, total=1, patrocinado=True)
         self.assertEqual(parse_busca(html).cards, 0)
 
+    def test_url_mais_vendidos(self):
+        self.assertEqual(url_busca("6740748011", 0, 1, 2, "vendidos"),
+                         "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A6740748011"
+                         "&s=exact-aware-popularity-rank&page=2")
+
     def test_url_da_fatia(self):
         self.assertEqual(url_busca("7842710011", 2000, 2499, 3),
                          "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A7842710011%2Cp_36%3A2000-2499"
@@ -109,6 +114,8 @@ class AmazonFalsa:
         if self.falhas:
             return self.falhas.pop(0)
         q = parse_qs(urlparse(url).query)
+        if q["s"][0] == "exact-aware-popularity-rank":
+            return self.mais_vendidos(q)
         lo, hi = map(int, re.search(r"p_36:(\d+)-(\d+)", unquote(q["rh"][0])).groups())
         pag = int(q["page"][0])
         itens = sorted(((p, a) for a, p in self.precos.items() if lo <= p <= hi))
@@ -118,6 +125,21 @@ class AmazonFalsa:
         if pag == 400:
             fatia = fatia[:6]
         return Resposta(pagina_busca([(a, p) for p, a in fatia], ultima=ultima, total=len(itens), primeiro=ini + 1))
+
+
+class AmazonFalsaVendidos(AmazonFalsa):
+    """Ordem "mais vendidos": por nó, na ordem dada; só 75 páginas, mas anuncia 400."""
+
+    def __init__(self, por_no: dict[str, list[tuple[str, int]]], falhas=None):
+        super().__init__({}, falhas)
+        self.por_no = por_no
+
+    def mais_vendidos(self, q):
+        no = re.search(r"n:(\d+)", unquote(q["rh"][0])).group(1)
+        pag = int(q["page"][0])
+        ini = (pag - 1) * self.POR_PAGINA
+        itens = self.por_no.get(no, [])[ini:ini + self.POR_PAGINA] if pag <= 75 else []
+        return Resposta(pagina_busca(itens, ultima=400, total=90000, primeiro=ini + 1))
 
 
 class TestVarredura(unittest.TestCase):
@@ -216,6 +238,42 @@ class TestVarredura(unittest.TestCase):
         c = varredura.cobertura(self.conn, "1")
         self.assertEqual(c.lacunas, [db.hoje_brasil() - timedelta(days=1)])
         self.assertFalse(c.dia_completo)
+
+
+class TestMaisVendidos(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.conectar(":memory:")
+        self.addCleanup(self.conn.close)
+
+    def test_le_ate_75_paginas_por_genero_sem_dividir(self):
+        # Gênero 1: 1.300 livros (só os 1.200 primeiros aparecem); gênero 2: 50 livros,
+        # 10 deles também no gênero 1.
+        g1 = [(f"G1{i:08d}", 1000 + i) for i in range(1300)]
+        g2 = [(f"G2{i:08d}", 2000 + i) for i in range(40)] + g1[:10]
+        amazon = AmazonFalsaVendidos({"1": g1, "2": g2})
+        eid = varredura.varrer(self.conn, amazon, vendidos=["1", "2"], minutos=10_000, dormir=lambda s: None)
+        vistos = {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
+        self.assertEqual(vistos, {a for a, _ in g1[:1200]} | {a for a, _ in g2})
+        self.assertEqual(len([u for u in amazon.chamadas if "n%3A1&" in u]), 75)  # nem 76, nem 400
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias").fetchone()[0], 2)  # sem divisão
+        self.assertTrue(varredura.cobertura(self.conn, varredura.GRUPO_VENDIDOS).dia_completo)
+        e = self.conn.execute("SELECT observacao FROM execucoes WHERE id = ?", (eid,)).fetchone()[0]
+        self.assertIn("dia completo", e)
+        # Gênero novo na lista: entra sem refazer os outros no mesmo dia.
+        amazon.por_no["3"] = [("G300000001", 999)]
+        varredura.varrer(self.conn, amazon, vendidos=["1", "2", "3"], minutos=10_000, dormir=lambda s: None)
+        self.assertIn("G300000001", {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")})
+
+    def test_migra_banco_da_varredura_antiga(self):
+        self.conn.executescript(
+            "CREATE TABLE fatias (id INTEGER PRIMARY KEY, no TEXT NOT NULL, preco_min INTEGER NOT NULL, "
+            "preco_max INTEGER NOT NULL, ativa INTEGER NOT NULL DEFAULT 1, paginas INTEGER, total INTEGER, "
+            "proxima_pagina INTEGER NOT NULL DEFAULT 1, passada_iniciada_em TEXT, ultima_passada TEXT, "
+            "criada_em TEXT NOT NULL, UNIQUE (no, preco_min, preco_max));"
+            "INSERT INTO fatias (no, preco_min, preco_max, criada_em) VALUES ('7842710011', 0, 999, 'x');")
+        varredura.criar_schema(self.conn)
+        r = self.conn.execute("SELECT grupo, ordem FROM fatias").fetchone()
+        self.assertEqual(tuple(r), ("7842710011", "preco"))
 
 
 class TestHistorico(unittest.TestCase):
