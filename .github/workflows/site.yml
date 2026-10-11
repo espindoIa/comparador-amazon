@@ -39,6 +39,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      # O comando importa o módulo da varredura, que usa estas duas bibliotecas (sem o Playwright).
+      - run: pip install requests beautifulsoup4
+
       - name: Baixa os bancos mais recentes (release catalogo)
         run: |
           mkdir -p "$RUNNER_TEMP/bancos"
