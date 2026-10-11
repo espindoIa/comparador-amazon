@@ -96,3 +96,14 @@ jobs:
         run: |
           [ -f "$DB" ] || exit 0
           python -m comparador --db "$DB" catalogo --dias 8 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Opcional: check separado no healthchecks.io (período 1 dia, tolerância 1 dia).
+      - name: Avisa o healthchecks.io
+        if: always()
+        env:
+          HC_URL: ${{ secrets.HEALTHCHECK_URL_VARREDURA }}
+          RESULTADO: ${{ job.status }}
+        run: |
+          [ -n "$HC_URL" ] || exit 0
+          [ "$RESULTADO" = "success" ] || HC_URL="${HC_URL%/}/fail"
+          curl -fsS -m 10 --retry 3 -o /dev/null "$HC_URL"
