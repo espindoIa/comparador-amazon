@@ -21,6 +21,10 @@ on:
         description: "Coletar mesmo que o dia já tenha coleta completa"
         type: boolean
         default: false
+      teste_asin:
+        description: "Diagnóstico: coleta só este ASIN num banco descartável (não toca nos dados)"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -47,7 +51,17 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      - name: Diagnóstico (ASIN avulso, banco descartável)
+        if: inputs.teste_asin != ''
+        env:
+          ASIN: ${{ inputs.teste_asin }}
+        run: |
+          echo "$ASIN" > "$RUNNER_TEMP/livros.txt"
+          python -m comparador --db "$RUNNER_TEMP/teste.db" coletar --lista "$RUNNER_TEMP/livros.txt" \
+            --desejos-arquivo /dev/null --sem-html --detalhar todos
+
       - name: Baixa o banco (branch dados)
+        if: inputs.teste_asin == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -62,6 +76,7 @@ jobs:
           fi
 
       - name: Coleta
+        if: inputs.teste_asin == ''
         env:
           LISTA_DESEJOS: ${{ secrets.LISTA_DESEJOS }}
           FORCAR: ${{ inputs.forcar }}
@@ -74,7 +89,7 @@ jobs:
 
       # Roda mesmo se a coleta falhou: guarda o que foi coletado até ali.
       - name: Salva o banco na branch dados
-        if: always()
+        if: always() && inputs.teste_asin == ''
         run: |
           cd dados
           [ -f precos.db ] || exit 0
@@ -92,7 +107,7 @@ jobs:
           exit 1
 
       - name: Resumo
-        if: always()
+        if: always() && inputs.teste_asin == ''
         run: |
           {
             echo '```'
@@ -104,7 +119,7 @@ jobs:
       # Opcional: https://healthchecks.io avisa por e-mail se NENHUM aviso chegar em 1 dia
       # (cobre o caso em que o próprio GitHub deixa de rodar o agendamento).
       - name: Avisa o healthchecks.io
-        if: always()
+        if: always() && inputs.teste_asin == ''
         env:
           HC_URL: ${{ secrets.HEALTHCHECK_URL }}
           RESULTADO: ${{ job.status }}
