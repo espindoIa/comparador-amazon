@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from comparador import db, varredura
 from comparador.busca import ItemBusca, LayoutDesconhecido, parse_busca, url_busca
+from comparador.ritmo import PPM_RECUO, Ritmo
 
 FIXTURES = Path(__file__).with_name("fixtures")
 ler = lambda nome: (FIXTURES / nome).read_text(encoding="utf-8")  # noqa: E731
@@ -367,6 +368,199 @@ class TestMaisVendidos(unittest.TestCase):
         varredura.registrar(self.conn, ItemBusca("A000000001", "Capa comum", "X", 500), "1", "2026-10-03T12:00:00+00:00")
         r = self.conn.execute("SELECT autor, imagem, obra, primeiro_visto FROM catalogo").fetchone()
         self.assertEqual(tuple(r), ("Fulano", "abc", "A000000001", "a"))   # leitura sem detalhes não apaga
+
+
+CACHORROS = Resposta("<html><head><title>Amazon.com.br Algo deu errado</title></head></html>", 503)
+
+
+class AmazonRealista(AmazonFalsaVendidos):
+    """Como a real: anuncia a última página de verdade (até 75) e pode devolver páginas ralas.
+
+    `ralas[(nó, página)]` é uma fila de quantos resultados a página traz em cada leitura (a primeira
+    leitura toma o primeiro número, e assim por diante); sem fila, a página vem normal.
+    Com `lote=True` tem `get_lote` como o cliente do navegador e guarda os lotes em `lotes`.
+    """
+
+    def __init__(self, por_no, ralas=None, falhas=None, lote=False):
+        super().__init__(por_no, falhas)
+        self.ralas = {k: list(v) for k, v in (ralas or {}).items()}
+        self.lotes: list[list[str]] = []
+        if lote:
+            self.get_lote = self._get_lote
+
+    def _get_lote(self, urls, atrasos, timeout=30):
+        self.lotes.append(list(urls))
+        assert len(urls) == len(atrasos) and atrasos[0] == 0 and atrasos == sorted(atrasos)
+        return [self.get(u) for u in urls]
+
+    def mais_vendidos(self, q):
+        rh = unquote(q["rh"][0])
+        no = re.search(r"n:(\d+)", rh).group(1)
+        faixa = re.search(r"p_36:(\d+)-(\d+)", rh)
+        lo, hi = map(int, faixa.groups()) if faixa else (0, 10**12)
+        lista = [(a, p) for a, p in self.por_no.get(no, []) if p is not None and lo <= p <= hi]
+        pag = int(q["page"][0])
+        ini = (pag - 1) * self.POR_PAGINA
+        itens = lista[ini:ini + self.POR_PAGINA] if pag <= 75 else []
+        fila = self.ralas.get((no, pag))
+        if fila and (lo, hi) == (0, 3999):
+            itens = itens[:fila.pop(0)]
+        return Resposta(pagina_busca(itens, ultima=min(75, -(-len(lista) // self.POR_PAGINA)) or None,
+                                     total=len(lista), primeiro=ini + 1))
+
+
+class TestRitmoNaVarredura(unittest.TestCase):
+    """Lotes (várias fatias ao mesmo tempo), recuo no primeiro sinal e páginas "magras"."""
+
+    def setUp(self):
+        self.conn = db.conectar(":memory:")
+        self.addCleanup(self.conn.close)
+        self.pausas = []
+
+    def varrer(self, amazon, nos=("1",), **kw):
+        kw.setdefault("minutos", 10_000)
+        eid = varredura.varrer(self.conn, amazon, vendidos=list(nos), dormir=self.pausas.append, **kw)
+        return self.conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
+
+    def vistos(self):
+        return {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
+
+    def novo_dia(self):
+        self.conn.execute("UPDATE fatias SET ultima_passada = '2000-01-01T00:00:00+00:00'")
+        self.conn.execute("DELETE FROM dias")
+        self.conn.commit()
+
+    def livros(self, n, prefixo="G", preco0=1000):
+        return [(f"{prefixo}{i:09d}", preco0 + i) for i in range(n)]
+
+    def test_le_varias_fatias_por_lote_sem_repetir_pagina_nem_misturar_a_ordem(self):
+        por_no = {no: self.livros(160, prefixo=chr(64 + int(no))) for no in "123"}   # ASIN = 10 caracteres
+        amazon = AmazonRealista(por_no, lote=True)
+        e = self.varrer(amazon, nos="123", ritmo=Ritmo(100, teto=100))
+        self.assertEqual(self.vistos(), {a for l in por_no.values() for a, _ in l})
+        self.assertGreater(max(len(l) for l in amazon.lotes), 1)
+        self.assertLessEqual(max(len(l) for l in amazon.lotes), 3)
+        for lote in amazon.lotes:           # no máximo uma página por fatia em cada lote
+            fatias = [re.sub(r"&page=\d+", "", u) for u in lote]
+            self.assertEqual(len(fatias), len(set(fatias)))
+        por_fatia = {}
+        for u in amazon.chamadas:
+            por_fatia.setdefault(re.sub(r"&page=\d+", "", u), []).append(int(re.search(r"page=(\d+)", u).group(1)))
+        for u, paginas in por_fatia.items():
+            if "p_36%3A0-3999" in u:
+                self.assertEqual(paginas, list(range(1, 11)), u)     # 10 páginas em ordem, cada uma uma vez
+        self.assertEqual((e["bloqueios"], e["erros"], e["curtas"]), (0, 0, 0))
+        self.assertIsNotNone(e["ppm"])
+
+    def test_sem_get_lote_le_uma_de_cada_vez_nos_mesmos_instantes(self):
+        por_no = {no: self.livros(48, prefixo=chr(64 + int(no))) for no in "12"}
+        amazon = AmazonRealista(por_no, lote=False)
+        self.varrer(amazon, nos="12", ritmo=Ritmo(100, teto=100))
+        self.assertEqual(self.vistos(), {a for l in por_no.values() for a, _ in l})
+        self.assertTrue(any(0 < p < 5 for p in self.pausas))        # escalonou com dormir()
+
+    def test_pagina_magra_e_relida_depois_de_pausa_e_o_ritmo_recua(self):
+        g = self.livros(80)                                          # 5 páginas
+        amazon = AmazonRealista({"1": g}, ralas={("1", 3): [2]})
+        ritmo = Ritmo(40, teto=40)
+        e = self.varrer(amazon, ritmo=ritmo)
+        self.assertEqual(self.vistos(), {a for a, _ in g})           # nada se perdeu
+        self.assertEqual((e["curtas"], e["bloqueios"], e["erros"]), (1, 0, 0))
+        self.assertEqual(len([u for u in amazon.chamadas if "p_36%3A0-3999" in u and u.endswith("page=3")]), 2)
+        self.assertEqual((ritmo.falhas, ritmo.ppm, ritmo.teto), (1, 20.0, 40))   # leve e isolada: metade, e o teto fica
+        self.assertTrue(any(p >= varredura.PAUSA_APOS_BLOQUEIO for p in self.pausas))      # pausa longa antes de reler
+        self.assertEqual(e["observacao"], "dia completo")
+
+    def test_pagina_curta_que_se_repete_e_aceita_e_avisada(self):
+        g = self.livros(80)
+        amazon = AmazonRealista({"1": g}, ralas={("1", 3): [2, 2]})
+        e = self.varrer(amazon)
+        self.assertEqual(e["curtas"], 1)                             # só a primeira leitura conta como falha
+        self.assertIn("confirmado em duas leituras", e["observacao"])
+        self.assertEqual(len(self.vistos()), 80 - 14)                # a página 3 só trouxe 2 dos 16
+        self.assertTrue(varredura.cobertura(self.conn, varredura.GRUPO_VENDIDOS).dia_completo)
+
+    def test_pagina_1_vazia_numa_fatia_que_tinha_muitas_paginas_e_suspeita(self):
+        g = self.livros(160)
+        amazon = AmazonRealista({"1": g})
+        self.varrer(amazon)
+        self.novo_dia()
+        amazon.ralas[("1", 1)] = [0]
+        e = self.varrer(amazon)
+        self.assertEqual(e["curtas"], 1)
+        self.assertEqual(self.conn.execute(
+            "SELECT livros_ant FROM fatias WHERE preco_min = 0 AND ordem = 'vendidos'").fetchone()[0], 160)
+        self.assertEqual(len(self.vistos()), 160)
+
+    def test_fatia_realmente_vazia_nao_e_suspeita(self):
+        e = self.varrer(AmazonRealista({"1": []}))
+        self.assertEqual((e["curtas"], e["erros"], e["bloqueios"]), (0, 0, 0))
+
+    def test_parar_na_falha_para_na_primeira_e_diz_em_que_ritmo(self):
+        amazon = AmazonRealista({"1": self.livros(80)}, falhas=[CACHORROS])
+        e = self.varrer(amazon, ritmo=Ritmo(50, teto=50), parar_na_falha=True)
+        # 50 páginas/min = 2 ao mesmo tempo: uma foi bloqueada e a outra passou, e não houve um segundo lote
+        self.assertEqual((e["bloqueios"], e["paginas"], len(amazon.chamadas)), (1, 1, 2))
+        self.assertIn("parada na primeira falha, programada a 50 páginas/min", e["observacao"])
+
+    def test_falha_em_lote_conta_uma_vez_e_derruba_para_uma_pista(self):
+        amazon = AmazonRealista({n: self.livros(160, prefixo=chr(64 + int(n))) for n in "123"},
+                                falhas=[CACHORROS] * 10, lote=True)
+        ritmo = Ritmo(100, teto=100)
+        e = self.varrer(amazon, nos="123", ritmo=ritmo)
+        self.assertEqual([len(l) for l in amazon.lotes[:1]], [3])
+        self.assertEqual(e["bloqueios"], 5)                          # lote de 3, depois 1 e 1: 3 lotes com falha
+        self.assertIn("interrompida após 3 falhas seguidas", e["observacao"])
+        self.assertEqual((ritmo.falhas, ritmo.ppm, ritmo.pistas), (3, PPM_RECUO, 1))
+        self.assertLess(ritmo.teto, 100)                             # bloqueio é grave: o teto desce
+
+    def test_queda_de_livros_entre_passadas_e_avisada(self):
+        amazon = AmazonRealista({"1": self.livros(300)})
+        self.varrer(amazon)
+        self.novo_dia()
+        amazon.por_no["1"] = self.livros(200)
+        e = self.varrer(amazon)
+        self.assertIn("leu 200 livros; na passada anterior, 300", e["observacao"])
+        self.novo_dia()
+        e = self.varrer(amazon)                                      # igual à anterior: sem aviso
+        self.assertNotIn("passada anterior", e["observacao"] or "")
+
+    def test_faixas_de_preco_configuraveis(self):
+        faixas = varredura.faixas_de_precos([0, 20, 50])
+        self.assertEqual(faixas, [(0, 1999), (2000, 4999), (5000, varredura.SEM_TETO)])
+        g = [(f"G{i:09d}", 500 + 700 * i) for i in range(10)]          # R$ 5, 12, 19, 26, 33, 40, 47, 54, 61, 68
+        amazon = AmazonRealista({"1": g})
+        self.varrer(amazon, faixas=faixas)
+        ativas = [tuple(r) for r in self.conn.execute(
+            "SELECT preco_min, preco_max FROM fatias WHERE ativa = 1 ORDER BY preco_min")]
+        self.assertEqual(ativas, faixas)
+        self.assertEqual(self.vistos(), {a for a, _ in g})
+        self.varrer(amazon, faixas=[(0, 3999), (4000, varredura.SEM_TETO)])                    # outras faixas: troca as ativas
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias WHERE ativa = 1").fetchone()[0], 2)
+
+    def test_faixas_invalidas(self):
+        for ruim in ([], [10, 20], [0, 20, 20], [0, 30, 20]):
+            with self.assertRaises(ValueError, msg=ruim):
+                varredura.faixas_de_precos(ruim)
+
+    def test_nos_vendidos(self):
+        todos = varredura.nos_vendidos()
+        self.assertEqual((todos[0], len(todos)), (varredura.NO_LIVROS, 1 + len(varredura.GENEROS)))
+        self.assertEqual(varredura.nos_vendidos(" 7841720011, 7844001011 "), ["7841720011", "7844001011"])
+        with self.assertRaises(ValueError):
+            varredura.nos_vendidos("7841720011,000")
+
+    def test_migra_banco_sem_as_colunas_de_medicao(self):
+        self.conn.executescript(
+            "CREATE TABLE execucoes (id INTEGER PRIMARY KEY, iniciada_em TEXT NOT NULL, finalizada_em TEXT, "
+            "paginas INTEGER NOT NULL DEFAULT 0, itens INTEGER NOT NULL DEFAULT 0, bloqueios INTEGER NOT NULL DEFAULT 0, "
+            "erros INTEGER NOT NULL DEFAULT 0, observacao TEXT);"
+            "INSERT INTO execucoes (iniciada_em) VALUES ('x');")
+        varredura.criar_schema(self.conn)
+        varredura.criar_schema(self.conn)
+        r = self.conn.execute("SELECT curtas, ppm FROM execucoes").fetchone()
+        self.assertEqual(tuple(r), (0, None))
+        self.assertIn("livros_ant", {c[1] for c in self.conn.execute("PRAGMA table_info(fatias)")})
 
 
 class TestHistorico(unittest.TestCase):

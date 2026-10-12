@@ -37,9 +37,10 @@ HEADERS = {
 
 @dataclass
 class Resposta:
-    status_code: int
+    status_code: int      # 0 = a requisição nem chegou (rede, tempo esgotado)
     text: str
     url: str
+    ms: float = 0.0       # tempo da requisição (só o navegador mede)
 
 
 class ClienteCurl:
@@ -93,10 +94,30 @@ def sessao_requests() -> requests.Session:
     return s
 
 
-_FETCH_JS = """async u => {
-    const r = await fetch(u, {credentials: 'include'});
-    return [r.status, await r.text(), r.url];
+# Cada requisição tem tempo máximo (AbortSignal.timeout): sem isso, uma conexão pendurada travaria a
+# varredura inteira. Erro de rede vira status 0, em vez de derrubar o lote todo.
+_FETCH_JS = """async ([u, ms]) => {
+    const t0 = performance.now();
+    try {
+        const r = await fetch(u, {credentials: 'include', signal: AbortSignal.timeout(ms)});
+        return [r.status, await r.text(), r.url, performance.now() - t0];
+    } catch (e) {
+        return [0, String(e), u, performance.now() - t0];
+    }
 }"""
+
+# Várias páginas ao mesmo tempo: a i-ésima só começa depois de `atraso` segundos, o que espalha as
+# requisições do lote no tempo (o ritmo que a Amazon enxerga é o programado, sem rajadas).
+_LOTE_JS = """async ([urls, atrasos, ms]) => Promise.all(urls.map(async (u, i) => {
+    if (atrasos[i] > 0) await new Promise(ok => setTimeout(ok, atrasos[i] * 1000));
+    const t0 = performance.now();
+    try {
+        const r = await fetch(u, {credentials: 'include', signal: AbortSignal.timeout(ms)});
+        return [r.status, await r.text(), r.url, performance.now() - t0];
+    } catch (e) {
+        return [0, String(e), u, performance.now() - t0];
+    }
+}))"""
 
 
 class ClienteNavegador:
@@ -152,12 +173,30 @@ class ClienteNavegador:
                 self._aberta = True
                 return Resposta(resp.status if resp else 0, self._pagina.content(), self._pagina.url)
             self._pagina.set_default_timeout(timeout * 1000)
-            status, texto, url_final = self._pagina.evaluate(_FETCH_JS, url)
-            return Resposta(int(status), texto, url_final or url)
+            status, texto, url_final, ms = self._pagina.evaluate(_FETCH_JS, [url, timeout * 1000])
+            return Resposta(int(status), texto, url_final or url, ms)
         except Exception as e:
             if "Timeout" in type(e).__name__:
                 raise requests.Timeout(str(e)) from e
             raise requests.ConnectionError(f"navegador: {e}") from e
+
+    def get_lote(self, urls: list[str], atrasos: list[float], timeout: float = 30) -> list[Resposta]:
+        """Várias páginas em andamento ao mesmo tempo, a i-ésima começando `atrasos[i]` s depois."""
+        if not self._aberta:
+            # A primeira é navegação de verdade (cria a sessão); as outras vêm depois dela.
+            primeira = self.get(urls[0], timeout)
+            if len(urls) == 1:
+                return [primeira]
+            base = atrasos[1]
+            return [primeira, *self.get_lote(urls[1:], [a - base for a in atrasos[1:]], timeout)]
+        try:
+            self._pagina.set_default_timeout((timeout + max(atrasos, default=0)) * 1000)
+            brutas = self._pagina.evaluate(_LOTE_JS, [urls, atrasos, timeout * 1000])
+        except Exception as e:
+            if "Timeout" in type(e).__name__:
+                raise requests.Timeout(str(e)) from e
+            raise requests.ConnectionError(f"navegador: {e}") from e
+        return [Resposta(int(st), txt, u or url, ms) for (st, txt, u, ms), url in zip(brutas, urls)]
 
     def fechar(self) -> None:
         _fechar_playwright(self._navegador, self._pw)

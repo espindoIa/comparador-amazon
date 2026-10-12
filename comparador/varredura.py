@@ -21,16 +21,17 @@ bloqueios, então um servidor por dia basta.
 
 from __future__ import annotations
 
-import random
+import re
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import db
 from .busca import SEM_TETO, ItemBusca, LayoutDesconhecido, parse_busca, url_busca
-from .rede import PAUSA_APOS_BLOQUEIO, baixar, guardar_html
+from .rede import PAUSA_APOS_BLOQUEIO, baixar_lote, guardar_html
+from .ritmo import Ritmo
 
 COLUNAS_DETALHE = ("autor", "imagem", "publicado", "idioma", "obra")
 SCHEMA = Path(__file__).with_name("schema_catalogo.sql")
@@ -74,10 +75,18 @@ FAIXAS_INICIAIS = [0, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 6000, 8000
                    10000, 15000, 20000, 50000]
 BURACO = timedelta(days=10)   # sem observação por mais que isso: novo intervalo no histórico
 LIMITE_FALHAS_SEGUIDAS = 3
-# Medido em out/2026: 1,5–3 s → 18 páginas/min e 0,3–1 s → 36 páginas/min, ambos sem
-# bloqueio. 1–3 s fica no meio, com folga. Depois de um bloqueio, fica 3x mais lento.
-PAUSA_VARREDURA = (1.0, 3.0)
-FATOR_LENTO = 3.0
+# Ritmo: ver ritmo.py. Medido em out/2026, com pausa de 1–3 s (~21 páginas/min), 0 bloqueios em ~11 mil
+# páginas.
+# "Sem erro" não é só "sem HTTP 503": sob limitação a Amazon pode devolver 200 com resultado ralo, e a
+# varredura daria a fatia por lida. Por isso uma página do meio da fatia com menos de CARDS_MIN_PAGINA
+# resultados (as normais têm ~16) conta como falha, é relida depois de uma pausa e só é aceita se vier
+# com o mesmo número de novo (aí é assim mesmo). O mesmo vale para a página 1 que vem vazia numa fatia
+# que tinha PAGINAS_MIN_VAZIA páginas ou mais na passada anterior.
+CARDS_MIN_PAGINA = 8
+PAGINAS_MIN_VAZIA = 5
+# No fim de uma fatia, avisa se leu menos de QUEDA_LIVROS da quantidade de livros da passada anterior.
+QUEDA_LIVROS = 0.8
+LIVROS_MIN_AVISO = 50
 
 
 @dataclass
@@ -90,11 +99,12 @@ class Fatia:
     preco_max: int
     proxima_pagina: int
     ultima_passada: str | None
+    paginas: int | None = None    # páginas da fatia: contadas na página 1 desta passada (ou, antes dela, na anterior)
 
     @classmethod
     def de(cls, r) -> "Fatia":
         return cls(r["id"], r["grupo"], r["no"], r["ordem"], r["preco_min"], r["preco_max"],
-                   r["proxima_pagina"], r["ultima_passada"])
+                   r["proxima_pagina"], r["ultima_passada"], r["paginas"])
 
 
 def criar_schema(conn: sqlite3.Connection) -> None:
@@ -108,6 +118,10 @@ def criar_schema(conn: sqlite3.Connection) -> None:
     if "livros" not in {r[1] for r in conn.execute("PRAGMA table_info(fatias)")}:  # banco anterior a esta coluna
         conn.execute("ALTER TABLE fatias ADD COLUMN livros INTEGER NOT NULL DEFAULT 0")
         conn.commit()
+    for tabela, coluna, tipo in (("fatias", "livros_ant", "INTEGER"), ("execucoes", "curtas", "INTEGER NOT NULL DEFAULT 0"),
+                                 ("execucoes", "ppm", "REAL")):    # bancos anteriores à medição do ritmo
+        if coluna not in {r[1] for r in conn.execute(f"PRAGMA table_info({tabela})")}:
+            conn.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
     existentes = {r[1] for r in conn.execute("PRAGMA table_info(catalogo)")}
     for coluna in COLUNAS_DETALHE:                      # banco anterior aos detalhes do livro
         if coluna not in existentes:
@@ -128,19 +142,41 @@ def semear(conn: sqlite3.Connection, no: str) -> None:
     conn.commit()
 
 
-def semear_vendidos(conn: sqlite3.Connection, nos) -> None:
-    """Uma fatia "mais vendidos" por categoria e faixa de FAIXAS_VENDIDOS; acrescenta as que
-    faltarem e desativa as de faixas que não estão mais na lista (o histórico fica)."""
+def faixas_de_precos(bordas_em_reais) -> list[tuple[int, int]]:
+    """[0, 20, 30, 40] -> [(0, 1999), (2000, 2999), (3000, 3999), (4000, SEM_TETO)] (centavos, inclusive)."""
+    b = [round(float(x) * 100) for x in bordas_em_reais]
+    if not b or b[0] != 0 or any(y <= x for x, y in zip(b, b[1:])):
+        raise ValueError("as bordas das faixas começam em 0 e crescem: 0,20,30,40")
+    return [(x, y - 1) for x, y in zip(b, b[1:])] + [(b[-1], SEM_TETO)]
+
+
+def nos_vendidos(generos: str | None = None) -> list[str]:
+    """Nós lidos na varredura dos mais vendidos: o ranking geral e todos os gêneros, ou só os de `generos`
+    (códigos separados por vírgula)."""
+    todos = [NO_LIVROS, *GENEROS]
+    if not generos:
+        return todos
+    pedidos = [g.strip() for g in generos.split(",") if g.strip()]
+    desconhecidos = [g for g in pedidos if g not in todos]
+    if desconhecidos:
+        raise ValueError(f"gênero desconhecido: {', '.join(desconhecidos)}")
+    return pedidos
+
+
+def semear_vendidos(conn: sqlite3.Connection, nos, faixas=None) -> None:
+    """Uma fatia "mais vendidos" por categoria e faixa de `faixas` (padrão FAIXAS_VENDIDOS); acrescenta
+    as que faltarem e desativa as de faixas que não estão mais na lista (o histórico fica)."""
+    faixas = list(faixas or FAIXAS_VENDIDOS)
     agora = db.agora()
     conn.executemany(
         "INSERT OR IGNORE INTO fatias (grupo, no, ordem, preco_min, preco_max, criada_em) "
         "VALUES (?, ?, 'vendidos', ?, ?, ?)",
-        [(GRUPO_VENDIDOS, no, a, b, agora) for no in nos for a, b in FAIXAS_VENDIDOS],
+        [(GRUPO_VENDIDOS, no, a, b, agora) for no in nos for a, b in faixas],
     )
-    atual = "(" + " OR ".join(["(preco_min = ? AND preco_max = ?)"] * len(FAIXAS_VENDIDOS)) + ")"
-    faixas = [v for f in FAIXAS_VENDIDOS for v in f]
+    atual = "(" + " OR ".join(["(preco_min = ? AND preco_max = ?)"] * len(faixas)) + ")"
+    valores = [v for f in faixas for v in f]
     conn.execute(f"UPDATE fatias SET ativa = {atual} WHERE grupo = ? AND ordem = 'vendidos'",
-                 (*faixas, GRUPO_VENDIDOS))
+                 (*valores, GRUPO_VENDIDOS))
     conn.commit()
 
 
@@ -151,14 +187,18 @@ def inicio_do_dia(dia=None) -> str:
         timespec="seconds")
 
 
+def proximas_fatias(conn: sqlite3.Connection, grupo: str, desde: str, n: int = 1) -> list[Fatia]:
+    """Até `n` fatias distintas que ainda não foram lidas inteiras desde `desde` (passadas em andamento primeiro)."""
+    return [Fatia.de(r) for r in conn.execute(
+        "SELECT * FROM fatias WHERE grupo = ? AND ativa = 1 AND (ultima_passada IS NULL OR ultima_passada < ?) "
+        "ORDER BY proxima_pagina = 1, preco_min, id LIMIT ?",
+        (grupo, desde, n),
+    )]
+
+
 def proxima_fatia(conn: sqlite3.Connection, grupo: str, desde: str) -> Fatia | None:
     """Próxima fatia que ainda não foi lida inteira desde `desde` (passada em andamento primeiro)."""
-    r = conn.execute(
-        "SELECT * FROM fatias WHERE grupo = ? AND ativa = 1 AND (ultima_passada IS NULL OR ultima_passada < ?) "
-        "ORDER BY proxima_pagina = 1, preco_min, id LIMIT 1",
-        (grupo, desde),
-    ).fetchone()
-    return Fatia.de(r) if r else None
+    return next(iter(proximas_fatias(conn, grupo, desde, 1)), None)
 
 
 def _fechar_dia_se_completo(conn: sqlite3.Connection, grupo: str, desde: str) -> bool:
@@ -227,6 +267,22 @@ def registrar(conn: sqlite3.Connection, item: ItemBusca, no: str, quando: str) -
         )
 
 
+@dataclass
+class Placar:
+    """Contagens de uma execução. `curtas`: páginas que vieram com resultado ralo (ver CARDS_MIN_PAGINA)."""
+    paginas: int = 0
+    itens: int = 0
+    bloqueios: int = 0
+    erros: int = 0
+    curtas: int = 0
+    falhas_seguidas: int = 0     # lotes seguidos com alguma falha
+    avisos: list = field(default_factory=list)
+
+    @property
+    def tentativas(self) -> int:
+        return self.paginas + self.bloqueios + self.erros + self.curtas
+
+
 def varrer(
     conn: sqlite3.Connection,
     sessao,
@@ -235,7 +291,9 @@ def varrer(
     vendidos=None,
     minutos: float = 60,
     max_paginas: int | None = None,
-    pausa: tuple[float, float] = PAUSA_VARREDURA,
+    faixas=None,
+    ritmo: Ritmo | None = None,
+    parar_na_falha: bool = False,
     dormir=time.sleep,
     relogio=time.monotonic,
     pasta_html: Path | None = None,
@@ -245,12 +303,16 @@ def varrer(
     Por padrão, a categoria `no` inteira, fatiada por preço. Com `vendidos` (lista de nós),
     os mais vendidos de cada um desses nós (até LIVROS_POR_FAIXA por faixa de preço), sem contar os
     que não têm preço de compra.
+    `faixas`: faixas de preço dos mais vendidos (padrão FAIXAS_VENDIDOS), ver `faixas_de_precos`.
+    `ritmo` define páginas por minuto e quantas fatias são lidas ao mesmo tempo (uma página por fatia
+    de cada vez); ele recua sozinho a cada falha. Com `parar_na_falha`, a execução termina na primeira
+    falha (para medir o ritmo máximo sem insistir).
     Devolve o id da execução, ou None se o dia já estava completo (nada a fazer).
     """
     criar_schema(conn)
     if vendidos is not None:
         grupo = GRUPO_VENDIDOS
-        semear_vendidos(conn, vendidos)
+        semear_vendidos(conn, vendidos, faixas)
     else:
         grupo = no
         semear(conn, no)
@@ -267,24 +329,17 @@ def varrer(
                  "AND passada_iniciada_em < ?", (grupo, desde))
     exec_id = conn.execute("INSERT INTO execucoes (iniciada_em) VALUES (?)", (db.agora(),)).lastrowid
     conn.commit()
+    ritmo = ritmo or Ritmo()
     inicio = relogio()
-    paginas = itens = bloqueios = erros = falhas_seguidas = 0
-    fator = 1.0
-    avisos: list[str] = []
+    pl = Placar()
+    curtas_vistas: dict[tuple[int, int], int] = {}   # (fatia, página) -> resultados da página curta já vista
 
-    while relogio() - inicio < minutos * 60 and (max_paginas is None or paginas + bloqueios + erros < max_paginas):
-        f = proxima_fatia(conn, grupo, desde)
-        if f is None:
-            avisos.append("dia completo")
-            break
-        if paginas + bloqueios + erros:
-            dormir(random.uniform(*pausa) * fator + (PAUSA_APOS_BLOQUEIO if falhas_seguidas else 0))
-
+    def ler(f: Fatia, url: str, html: str | None, erro) -> str:
+        """Processa uma resposta. Devolve "ok", "leve" ou "grave" (bloqueio). Numa falha, a mesma página
+        será tentada de novo."""
         pag = f.proxima_pagina
-        url = url_busca(f.no, f.preco_min, f.preco_max, pag, f.ordem)
         rotulo = (f"[{GENEROS.get(f.no, f.no)} {_faixa(f)} p{pag}]" if f.ordem == "vendidos"
                   else f"[fatia {f.id} R$ {f.preco_min / 100:.2f}–{f.preco_max / 100:.2f} p{pag}]")
-        _, html, erro = baixar(sessao, url)
         pagina = erro_txt = None
         if erro is None:
             try:
@@ -292,24 +347,31 @@ def varrer(
             except LayoutDesconhecido as e:
                 arq = guardar_html(pasta_html, f"busca-{f.id}-{pag}", html)
                 erro_txt = f"layout desconhecido em {url}: {e}" + (f" (HTML em {arq})" if arq else "")
-                pagina = None
         if erro is not None or pagina is None:
-            falhas_seguidas += 1
             if erro is not None and erro.status == "bloqueado":
-                bloqueios += 1
-                fator = FATOR_LENTO  # daqui em diante, mais devagar
+                pl.bloqueios += 1
                 print(f"{rotulo} bloqueado; diminuindo o ritmo")
-            else:
-                erros += 1
-                print(f"{rotulo} {erro.detalhe if erro else erro_txt}")
-                if erro is None:
-                    avisos.append(erro_txt)
-            if falhas_seguidas >= LIMITE_FALHAS_SEGUIDAS:
-                avisos.append(f"interrompida após {falhas_seguidas} falhas seguidas")
-                break
-            continue  # tenta a mesma página de novo (o progresso não avançou)
-        falhas_seguidas = 0
-        paginas += 1
+                return "grave"
+            pl.erros += 1
+            print(f"{rotulo} {erro.detalhe if erro else erro_txt}")
+            if erro is None:
+                pl.avisos.append(erro_txt)
+            return "leve"
+
+        esperada = f.paginas or 0     # páginas da fatia (a passada anterior, se esta é a página 1)
+        curta = ((pag == 1 and pagina.cards == 0 and esperada >= PAGINAS_MIN_VAZIA)
+                 or (pag > 1 and pagina.cards < CARDS_MIN_PAGINA and pag < esperada))
+        if curta and curtas_vistas.get((f.id, pag)) != pagina.cards:
+            curtas_vistas[(f.id, pag)] = pagina.cards
+            pl.curtas += 1
+            arq = guardar_html(pasta_html, f"curta-{f.id}-{pag}", html)
+            titulo = re.search(r"<title[^>]*>([^<]*)", html)
+            print(f"{rotulo} veio com {pagina.cards} resultados (esperava ~16); relendo depois de uma pausa "
+                  f"[título: {titulo.group(1).strip()[:80] if titulo else '?'}; {len(html)} bytes"
+                  + (f"; HTML em {arq}" if arq else "") + "]")
+            return "leve"
+        if curta:
+            pl.avisos.append(f"{rotulo} tem só {pagina.cards} resultados, confirmado em duas leituras")
 
         limite = LIMITE_PAGINAS_VENDIDOS if f.ordem == "vendidos" else LIMITE_PAGINAS_AMAZON
         if pag == 1:
@@ -318,38 +380,85 @@ def varrer(
                 print(f"[fatia {f.id}] R$ {f.preco_min / 100:.2f}–{f.preco_max / 100:.2f}: "
                       f"{n_pag} páginas, dividindo")
                 dividir(conn, f)
-                continue
+                pl.paginas += 1
+                return "ok"
             if f.ordem == "preco" and n_pag > MAX_PAGINAS_FATIA:
-                avisos.append(f"fatia {f.id} (preço único) tem {n_pag} páginas; parte pode ficar de fora")
+                pl.avisos.append(f"fatia {f.id} (preço único) tem {n_pag} páginas; parte pode ficar de fora")
             conn.execute("UPDATE fatias SET paginas = ?, total = ?, passada_iniciada_em = ?, livros = 0 WHERE id = ?",
                          (n_pag, pagina.total, db.agora(), f.id))
+        pl.paginas += 1
 
         quando = db.agora()
         for item in pagina.itens:
             registrar(conn, item, f.no, quando)
-        itens += len(pagina.itens)
+        pl.itens += len(pagina.itens)
 
         ultima = min(pagina.ultima_pagina or pag, limite)
         conn.execute("UPDATE fatias SET livros = livros + ? WHERE id = ?", (pagina.livros, f.id))
-        lidos = conn.execute("SELECT livros FROM fatias WHERE id = ?", (f.id,)).fetchone()[0]
+        lidos, anteriores = conn.execute("SELECT livros, livros_ant FROM fatias WHERE id = ?", (f.id,)).fetchone()
         completou = f.ordem == "vendidos" and lidos >= LIVROS_POR_FAIXA
         fim = pagina.cards == 0 or pag >= ultima or completou
         if fim:
-            conn.execute("UPDATE fatias SET proxima_pagina = 1, ultima_passada = ? WHERE id = ?", (quando, f.id))
+            if (anteriores or 0) >= LIVROS_MIN_AVISO and not completou and lidos < QUEDA_LIVROS * anteriores:
+                pl.avisos.append(f"{rotulo[:-1]}] leu {lidos} livros; na passada anterior, {anteriores}")
+            conn.execute("UPDATE fatias SET proxima_pagina = 1, ultima_passada = ?, livros_ant = ? WHERE id = ?",
+                         (quando, lidos, f.id))
         else:
             conn.execute("UPDATE fatias SET proxima_pagina = ? WHERE id = ?", (pag + 1, f.id))
-        conn.execute("UPDATE execucoes SET paginas = ?, itens = ?, bloqueios = ?, erros = ? WHERE id = ?",
-                     (paginas, itens, bloqueios, erros, exec_id))
+        conn.execute("UPDATE execucoes SET paginas = ?, itens = ?, bloqueios = ?, erros = ?, curtas = ? WHERE id = ?",
+                     (pl.paginas, pl.itens, pl.bloqueios, pl.erros, pl.curtas, exec_id))
         conn.commit()
         print(f"{rotulo[:-1]}/{ultima}] {len(pagina.itens)} preços"
               + (f", {lidos} livros" if f.ordem == "vendidos" else "")
               + (" (fim)" if fim else ""))
+        return "ok"
+
+    marco = 0
+    while relogio() - inicio < minutos * 60:
+        pistas = ritmo.pistas
+        if max_paginas is not None:
+            if pl.tentativas >= max_paginas:
+                break
+            pistas = min(pistas, max_paginas - pl.tentativas)
+        lote = proximas_fatias(conn, grupo, desde, pistas)
+        if not lote:
+            pl.avisos.append("dia completo")
+            break
+        urls = [url_busca(f.no, f.preco_min, f.preco_max, f.proxima_pagina, f.ordem) for f in lote]
+        t0 = relogio()
+        respostas = baixar_lote(sessao, urls, ritmo.atrasos(len(lote)), dormir)
+        resultados = [ler(f, url, html, erro) for f, url, (_, html, erro) in zip(lote, urls, respostas)]
+        if all(r == "ok" for r in resultados):
+            pl.falhas_seguidas = 0
+            for _ in resultados:
+                ritmo.pagina_boa()
+        else:
+            pl.falhas_seguidas += 1
+            ppm_da_falha = ritmo.ppm
+            ritmo.falha(grave="grave" in resultados)
+            if parar_na_falha:
+                pl.avisos.append(f"parada na primeira falha, programada a {ppm_da_falha:.0f} páginas/min")
+                break
+            if pl.falhas_seguidas >= LIMITE_FALHAS_SEGUIDAS:
+                pl.avisos.append(f"interrompida após {pl.falhas_seguidas} falhas seguidas")
+                break
+        if pl.paginas // 100 > marco:
+            marco = pl.paginas // 100
+            minutos_corridos = max((relogio() - inicio) / 60, 1e-9)
+            print(f"ritmo: programado {ritmo.ppm:.0f} páginas/min ({ritmo.pistas} ao mesmo tempo); "
+                  f"medido {pl.paginas / minutos_corridos:.0f}; {pl.paginas} páginas, "
+                  f"{pl.bloqueios} bloqueios, {pl.erros} erros, {pl.curtas} curtas")
+        espera = ritmo.espera(len(lote), relogio() - t0) + (PAUSA_APOS_BLOQUEIO if pl.falhas_seguidas else 0)
+        if espera > 0:
+            dormir(espera)
 
     _fechar_dia_se_completo(conn, grupo, desde)
+    corridos = max((relogio() - inicio) / 60, 1e-9)
     conn.execute(
-        "UPDATE execucoes SET finalizada_em = ?, paginas = ?, itens = ?, bloqueios = ?, erros = ?, "
-        "observacao = ? WHERE id = ?",
-        (db.agora(), paginas, itens, bloqueios, erros, "; ".join(dict.fromkeys(avisos)) or None, exec_id),
+        "UPDATE execucoes SET finalizada_em = ?, paginas = ?, itens = ?, bloqueios = ?, erros = ?, curtas = ?, "
+        "ppm = ?, observacao = ? WHERE id = ?",
+        (db.agora(), pl.paginas, pl.itens, pl.bloqueios, pl.erros, pl.curtas, round(pl.paginas / corridos, 1),
+         "; ".join(dict.fromkeys(pl.avisos)) or None, exec_id),
     )
     conn.commit()
     return exec_id

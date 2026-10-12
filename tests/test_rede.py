@@ -8,6 +8,7 @@ import json
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -48,9 +49,11 @@ class TestBloqueio(unittest.TestCase):
 
 class _Servidor(BaseHTTPRequestHandler):
     recebidos: list = []
+    tempos: list = []      # (caminho, instante em que chegou)
 
     def do_GET(self):
         _Servidor.recebidos.append(dict(self.headers))
+        _Servidor.tempos.append((self.path, time.monotonic()))
         if self.path == "/redireciona":
             self.send_response(302)
             self.send_header("Location", "/hz/wishlist/ls/ABCDEFGH1234")
@@ -109,6 +112,54 @@ class TestClienteCurl(unittest.TestCase):
         self.assertEqual(erro.status, "erro_http")
 
 
+class _Falsa:
+    """Sessão sem get_lote: guarda os instantes em que cada URL foi pedida."""
+
+    def __init__(self, relogio):
+        self.relogio, self.pedidos = relogio, []
+
+    def get(self, url, timeout=30):
+        self.pedidos.append((url, self.relogio()))
+        return cliente_http.Resposta(503 if url.endswith("erro") else 200, "ok", url)
+
+
+class TestBaixarLote(unittest.TestCase):
+    def test_classificar(self):
+        R = cliente_http.Resposta
+        self.assertIsNone(rede.classificar(R(200, "<html>ok</html>", "u"))[2])
+        self.assertEqual(rede.classificar(R(503, "x", "u"))[2].status, "bloqueado")
+        self.assertEqual(rede.classificar(R(200, PAGINA_CACHORROS, "u"))[2].status, "bloqueado")
+        self.assertEqual(rede.classificar(R(404, "x", "u"))[2].status, "erro_http")
+        status, html, erro = rede.classificar(R(0, "TypeError: Failed to fetch", "u"))   # nem chegou
+        self.assertEqual((status, html, erro.status), (None, None, "erro_http"))
+        self.assertIn("Failed to fetch", erro.detalhe)
+
+    def test_sem_get_lote_respeita_os_atrasos_e_a_ordem(self):
+        agora = [0.0]
+        dormidas = []
+
+        def dormir(x):
+            dormidas.append(x)
+            agora[0] += x
+
+        sessao = _Falsa(lambda: agora[0])
+        saida = rede.baixar_lote(sessao, ["a", "b/erro", "c"], [0.0, 1.0, 2.5], dormir, relogio=lambda: agora[0])
+        self.assertEqual([u for u, _ in sessao.pedidos], ["a", "b/erro", "c"])
+        self.assertEqual([t for _, t in sessao.pedidos], [0.0, 1.0, 2.5])
+        self.assertEqual([e.status if e else None for _, _, e in saida], [None, "bloqueado", None])
+        self.assertEqual(dormidas, [1.0, 1.5])
+
+    def test_get_lote_que_falha_derruba_so_o_lote(self):
+        import requests
+
+        class Quebrada:
+            def get_lote(self, urls, atrasos, timeout=30):
+                raise requests.ConnectionError("navegador: caiu")
+
+        saida = rede.baixar_lote(Quebrada(), ["a", "b"], [0.0, 1.0])
+        self.assertEqual([e.status for _, _, e in saida], ["erro_http", "erro_http"])
+
+
 def _navegador_disponivel() -> bool:
     if not cliente_http._playwright_instalado():
         return False
@@ -153,6 +204,30 @@ class TestClienteNavegador(unittest.TestCase):
         self.cliente.get(self.base + "/pagina")
         _, _, erro = rede.baixar(self.cliente, "http://127.0.0.1:9/")
         self.assertEqual(erro.status, "erro_http")
+
+    def test_lote_escalonado_na_ordem_e_em_andamento_ao_mesmo_tempo(self):
+        self.cliente.get(self.base + "/pagina")
+        _Servidor.tempos.clear()
+        r = self.cliente.get_lote([f"{self.base}/l{i}" for i in range(4)], [0.0, 0.3, 0.6, 0.9])
+        self.assertEqual([(x.status_code, x.text) for x in r], [(200, "ação ok")] * 4)
+        self.assertTrue(all(x.ms > 0 for x in r))
+        chegadas = {c: t for c, t in _Servidor.tempos}
+        self.assertEqual(set(chegadas), {"/l0", "/l1", "/l2", "/l3"})
+        ordem = sorted(chegadas, key=chegadas.get)
+        self.assertEqual(ordem, ["/l0", "/l1", "/l2", "/l3"])
+        self.assertGreater(chegadas["/l3"] - chegadas["/l0"], 0.7)        # escalonadas, não em rajada
+        self.assertLess(chegadas["/l3"] - chegadas["/l0"], 3.0)
+
+    def test_lote_na_primeira_chamada_navega_primeiro(self):
+        r = self.cliente.get_lote([self.base + "/define-cookie", self.base + "/pagina2"], [0.0, 0.2])
+        self.assertEqual([x.status_code for x in r], [200, 200])
+        self.assertIn("session-id=123-456", _Servidor.recebidos[-1].get("Cookie", ""))   # a 2ª já usa a sessão da 1ª
+
+    def test_lote_erro_de_rede_vira_status_0_e_os_outros_seguem(self):
+        self.cliente.get(self.base + "/pagina")
+        saida = rede.baixar_lote(self.cliente, [self.base + "/ok", "http://127.0.0.1:9/", self.base + "/erro"],
+                                 [0.0, 0.1, 0.2])
+        self.assertEqual([e.status if e else None for _, _, e in saida], [None, "erro_http", "bloqueado"])
 
 
 if __name__ == "__main__":

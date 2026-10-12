@@ -74,9 +74,52 @@ O site esconde da busca o que não foi visto desde que o filtro começou (livros
 que entraram antes), assim que a primeira varredura completa com o filtro termina; o histórico deles
 continua guardado, e quem estiver na sua lista aparece com "sem coleta recente".
 São 90 consultas (29 gêneros mais o ranking geral, 3 faixas cada),
-até ~5.700 páginas, até ~4h40 por dia (dividido entre as execuções do dia); como um livro pode
+até ~5.700 páginas, cerca de 2 h por dia no ritmo atual (dividido entre as execuções do dia; eram ~4h40 a
+21 páginas/min); como um livro pode
 estar em mais de um gênero, o número de livros distintos fica bem abaixo de 90 mil. Os gêneros (inclusive HQs e mangás, que não são mais varridos
 à parte) estão em `GENEROS`, em `comparador/varredura.py`.
+
+### Ritmo da coleta
+
+O ritmo é programado (`comparador/ritmo.py`), com espaçamento uniforme entre as requisições (cada
+intervalo varia ±30%), e não uma pausa fixa depois de cada página:
+
+- começa em 21 páginas/min (o ritmo de antes: 0 bloqueios em ~11 mil páginas) e sobe 25% a cada 100
+  páginas boas, até o teto de 60 programadas (`--ritmo-max`);
+- acima de ~45 programadas são lidas 2 ou 3 fatias diferentes ao mesmo tempo (uma página por fatia de
+  cada vez), numa única sessão do navegador. O ritmo **real** fica ~20% abaixo do programado, porque cada
+  lote espera a requisição mais lenta: 60 programadas dão ~50 reais;
+- **bloqueio** (captcha, HTTP 500/503) ou **falha leve repetida** (outra em menos de 500 páginas boas):
+  o ritmo cai para o mínimo (8 programadas) e o teto passa a ser 70% do ritmo em que a falha aconteceu;
+- **falha leve isolada** (página curta, erro de rede, layout desconhecido): o ritmo cai pela metade e volta
+  a subir; o teto não muda. Falhas isoladas acontecem, e não devem corroer o ritmo do dia inteiro;
+- depois de qualquer falha, a mesma página é lida de novo depois de uma pausa de 90 s; 3 lotes seguidos com
+  falha encerram a execução (a próxima do dia continua de onde parou).
+
+"Sem erro" inclui o que não chega como erro. Uma página do meio da fatia com menos de 8 resultados
+(as normais têm ~16), ou a página 1 vazia numa fatia que tinha 5 páginas ou mais na passada anterior,
+conta como **falha ("página curta") mesmo com HTTP 200**, e só é aceita se vier igual numa segunda
+leitura. Ao fim de cada fatia, a execução avisa se leu menos de 80% dos livros da passada anterior.
+`execucoes` guarda as páginas curtas e as páginas por minuto reais de cada execução.
+
+Opções do `varrer`: `--ritmo` (início), `--ritmo-max` (teto), `--subir-a-cada`, `--parar-na-falha` (para
+medir, sem insistir), `--generos` (só estes nós) e `--faixas` (bordas das faixas de preço em reais, ex.:
+`0,20,30,40,50,60,80,120,200`).
+
+Medido em out/2026 em servidores do GitHub (cada teste num IP; ritmos **reais**, em páginas/min):
+
+| Teste | Ritmo real | Páginas | Bloqueios / erros / curtas |
+|---|---|---|---|
+| Controle, 21 programadas | 21 | 600 | 0 / 0 / 0 |
+| Rampa de 20 a 120 programadas | de 25 a ~80, estável por ~9 min | 1.500 | 0 / 0 / 0 |
+| 1 hora no teto (60 programadas), 7 gêneros | 54 no trecho do teto, 48 na média | 2.905 | 0 / 0 / 0 |
+| 1ª rampa, que parava na 1ª falha | 21 | 122 | 0 / 0 / 1 |
+
+A única falha foi a página 60 de uma fatia que veio com 0 resultados (HTTP 200); no controle e na rampa,
+a mesma fatia leu a página 60 normalmente. São **1 página curta em ~5.100 medidas**. O que foi medido
+vai até ~80 páginas/min reais por ~9 min e ~54 por ~40 min; o teto padrão fica abaixo disso. É uma
+amostra de um dia, com IPs de servidores do GitHub, e a Amazon pode mudar o comportamento: se aparecerem
+bloqueios, a resposta é baixar `--ritmo-max`, não contornar.
 
 ## Varredura de uma categoria inteira (disponível, mas não agendada)
 
@@ -127,7 +170,8 @@ abordagem; categorias do tamanho de HQs e mangás, sim.
 | Sem o parâmetro de ordenação, a Amazon devolve uma vitrine sem resultados | Toda URL tem `s=price-asc-rank`. Página sem resultados e sem a marca "Nenhum resultado" é tratada como mudança de layout (erro), não como fim |
 | O filtro de preço vale para qualquer formato do card: as fatias se sobrepõem | Observações repetidas não duplicam o histórico |
 | Execução interrompida (tempo, bloqueio, queda) | O progresso é salvo a cada página; a próxima execução continua da página seguinte |
-| Bloqueio | Repete a mesma página depois de uma pausa maior, fica 3x mais lento até o fim da execução e para depois de 3 falhas seguidas; a próxima execução do dia continua |
+| Bloqueio | Repete a mesma página depois de uma pausa de 90 s, recua para o ritmo mínimo e baixa o teto de ritmo, e para depois de 3 lotes seguidos com falha; a próxima execução do dia continua |
+| Página que vem com poucos resultados e HTTP 200 (a fatia pareceria acabar antes da hora) | Conta como falha ("página curta"), é lida de novo depois de uma pausa e só é aceita se vier igual; `execucoes` guarda quantas houve |
 | Histórico gigante (milhões de linhas por mês) | O histórico guarda intervalos ("R$ X de tal dia a tal dia"): só cresce quando o preço muda. Mais de 10 dias sem ver o item abre um intervalo novo, para o buraco ficar visível |
 | Banco publicado vazio ou corrompido por um erro | `scripts/verificar_banco.py` recusa banco corrompido ou com menos linhas que o anterior. Cada execução publica uma cópia nova com data e só depois apaga as antigas (mantém 14) |
 | Dia incompleto | 4 execuções por dia continuam de onde a anterior parou; se mesmo assim o dia ficar incompleto, a primeira execução do dia seguinte falha e o GitHub avisa por e-mail. `catalogo` lista os dias sem varredura completa |
@@ -159,8 +203,9 @@ Os valores ficam em **centavos** e as datas em UTC.
 
 ## Avisos
 
-- Ler as páginas da Amazon por script vai contra os termos de uso dela. A varredura usa pausas
-  entre as requisições e fica mais lenta ou para quando é bloqueada.
+- Ler as páginas da Amazon por script vai contra os termos de uso dela. A varredura espaça as
+  requisições, fica mais lenta ou para quando há bloqueio ou resultado ralo, e não tenta contornar
+  bloqueios (sem rodízio de IP ou proxy, disfarce de navegador ou captcha).
 - `data/` (banco e HTML) não vai para o git.
 
 ## O app: busca por título e lista de desejos

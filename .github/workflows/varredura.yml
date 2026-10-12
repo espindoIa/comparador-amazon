@@ -6,7 +6,9 @@
 # não entram; se voltarem a aparecer com preço em outro dia, entram na base nesse dia.
 # A categoria inteira de HQs e mangás NÃO é mais varrida à parte (os HQs mais vendidos
 # continuam entrando como um dos gêneros).
-# Medido em out/2026: ~20 páginas/min, sem bloqueios. São até ~5.700 páginas por dia (~4h40).
+# Ritmo programado (comparador/ritmo.py): começa em 21 páginas/min e sobe até 60 programadas (~50 reais)
+# enquanto não há falha; recua em bloqueio ou página curta. Medido em out/2026: 0 bloqueios e 1 página curta
+# em ~5.100 páginas. São até ~5.700 páginas por dia, ~2 h (eram ~4h40 a 21 páginas/min).
 #
 # Robustez:
 # - 4 horários por dia. Os dois primeiros normalmente completam o dia; os outros só continuam o

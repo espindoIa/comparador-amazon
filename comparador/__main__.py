@@ -6,7 +6,7 @@ import argparse
 from datetime import timedelta
 from pathlib import Path
 
-from . import db, rede, varredura
+from . import db, rede, ritmo, varredura
 
 
 def main() -> None:
@@ -23,6 +23,20 @@ def main() -> None:
     v.add_argument("--minutos", type=float, default=150, help="orçamento de tempo (padrão: %(default)s)")
     v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
     v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
+    v.add_argument("--ritmo", type=float, default=ritmo.PPM_BASE,
+                   help="páginas por minuto no começo (padrão: %(default)s, o ritmo medido sem bloqueios)")
+    v.add_argument("--ritmo-max", type=float, default=ritmo.PPM_TETO_PADRAO,
+                   help="teto de páginas por minuto programadas (o real fica ~20%% abaixo com 2 ou 3 requisições "
+                        "ao mesmo tempo): o ritmo sobe aos poucos até ele enquanto não há falha e recua nas falhas "
+                        "(padrão: %(default)s)")
+    v.add_argument("--faixas", help="com --vendidos: bordas das faixas de preço em reais, ex.: 0,20,30,40,50,60,80,120,200 "
+                                    "(padrão: " + ",".join(f"{a / 100:g}" for a, _ in varredura.FAIXAS_VENDIDOS) + ")")
+    v.add_argument("--generos", help="com --vendidos: só estes nós, separados por vírgula (padrão: o ranking geral e os 29 gêneros)")
+    v.add_argument("--subir-a-cada", type=int, default=ritmo.A_CADA,
+                   help="páginas boas seguidas para cada subida de 25%% do ritmo (padrão: %(default)s)")
+    v.add_argument("--parar-na-falha", action="store_true",
+                   help="termina na primeira falha (bloqueio, erro ou página curta), sem insistir; para medir "
+                        "até que ritmo a coleta passa limpa")
 
     k = sub.add_parser("catalogo", help="progresso de hoje e dias sem varredura completa")
     k.add_argument("--no", default=varredura.NO_HQ_MANGA)
@@ -69,11 +83,17 @@ def main() -> None:
         saida.write_text(relatorio.pagina(titulo or asin, asin, trechos, eventos, relatorio.aviso(conn)), encoding="utf-8")
         print(f"gráfico em {saida}")
     elif args.cmd == "varrer":
+        try:
+            vendidos = varredura.nos_vendidos(args.generos) if args.vendidos else None
+            faixas = varredura.faixas_de_precos(args.faixas.split(",")) if args.faixas else None
+        except ValueError as e:
+            raise SystemExit(f"opção inválida: {e}")
         sessao = rede.nova_sessao(args.cliente)
         try:
-            vendidos = [varredura.NO_LIVROS, *varredura.GENEROS] if args.vendidos else None
-            eid = varredura.varrer(conn, sessao, no=args.no, vendidos=vendidos, minutos=args.minutos,
-                                   max_paginas=args.max_paginas, pasta_html=Path("data/html"))
+            eid = varredura.varrer(conn, sessao, no=args.no, vendidos=vendidos, minutos=args.minutos, faixas=faixas,
+                                   max_paginas=args.max_paginas, pasta_html=Path("data/html"),
+                                   ritmo=ritmo.Ritmo(args.ritmo, args.ritmo_max, a_cada=args.subir_a_cada),
+                                   parar_na_falha=args.parar_na_falha)
         finally:
             if hasattr(sessao, "fechar"):
                 sessao.fechar()
@@ -81,8 +101,8 @@ def main() -> None:
             print(f"{db.hoje_brasil()}: varredura do dia já está completa; nada a fazer")
             return
         e = conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
-        print(f"execução {eid}: {e['paginas']} páginas, {e['itens']} preços, "
-              f"{e['bloqueios']} bloqueios, {e['erros']} erros")
+        print(f"execução {eid}: {e['paginas']} páginas, {e['itens']} preços, {e['bloqueios']} bloqueios, "
+              f"{e['erros']} erros, {e['curtas']} páginas curtas, {e['ppm']} páginas/min")
         if e["observacao"]:
             print(f"atenção: {e['observacao']}")
         if e["paginas"] == 0 and (e["bloqueios"] or e["erros"]):
@@ -94,7 +114,7 @@ def main() -> None:
         print("dias sem varredura completa: " + (", ".join(map(str, c.lacunas)) if c.lacunas else "nenhum"))
         for r in conn.execute("SELECT * FROM execucoes ORDER BY id DESC LIMIT 5"):
             print(f"execução {r['id']}: {r['iniciada_em']}  {r['paginas']} páginas, {r['itens']} preços, "
-                  f"{r['bloqueios']} bloqueios, {r['erros']} erros"
+                  f"{r['bloqueios']} bloqueios, {r['erros']} erros, {r['curtas']} curtas, {r['ppm'] or '?'} pág/min"
                   + (f"  ({r['observacao']})" if r["observacao"] else ""))
         ontem = db.hoje_brasil() - timedelta(days=1)
         if args.exigir_ontem and ontem in c.lacunas:
