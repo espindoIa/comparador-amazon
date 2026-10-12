@@ -3,7 +3,7 @@
  * Dados em dados/*.json, gerados por `python -m comparador site` (formato descrito em site.py). */
 (function () {
   'use strict';
-  var L = window.Livro, Lista = window.Lista, esc = L.esc, brl = L.brl;
+  var L = window.Livro, Lista = window.Lista, Busca = window.Busca, esc = L.esc, brl = L.brl;
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var app = $('#app'), q = $('#q');
   var CAPA = 'https://m.media-amazon.com/images/I/';
@@ -20,34 +20,90 @@
   function ic(n, c) { return '<svg class="i' + (c ? ' ' + c : '') + '" viewBox="0 0 24 24" aria-hidden="true">' + IC[n] + '</svg>'; }
 
   // ---------- dados ----------
-  function norm(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+  var norm = Busca.normalizar;
   function familia(f) { return /Kindle/.test(f || '') ? 'k' : /^(a|á)udiolivro|^audible/i.test(f || '') ? 'a' : 'f'; }
   function json(url) { return fetch(url).then(function (r) { if (!r.ok) throw new Error(url + ': ' + r.status); return r.json(); }); }
   var META = fetch('dados/meta.json', { cache: 'no-cache' }).then(function (r) { if (!r.ok) throw new Error('meta'); return r.json(); });
   var V = META.then(function (m) { return '?v=' + encodeURIComponent(m.gerado_em || ''); });
   var EVENTOS = V.then(function (v) { return json('dados/eventos.json' + v); }).catch(function () { return []; });
-  var meta = null, IDX = null, idx = null;
+  var meta = null, IDX = null, idx = null, DEST = null;
 
+  // Obras do índice (formato em site.py). Tabelas: fmt (formatos), gen ([nó, nome]), idi (idiomas).
+  function novoIdx(d) {
+    var x = { obras: [], porAsin: {}, hoje: d.hoje, fmt: d.fmt, fam: d.fmt.map(familia), gen: d.gen, idi: d.idi,
+      genPorNo: {}, temMC: false, temAv: false, partes: d.partes || 1, carregadas: 0, completo: false, falhou: false };
+    d.gen.forEach(function (g, i) { x.genPorNo[g[0]] = i; });
+    return x;
+  }
+  function lerObras(x, linhas, de, ate) {
+    for (var i = de || 0, fim = ate == null ? linhas.length : ate; i < fim; i++) {
+      var r = linhas[i], es = r[8];
+      var o = Busca.preparar({ t: r[0], autor: r[1], img: r[2], ano: r[3], idioma: r[4] ? x.idi[r[4] - 1] : '', gen: r[5], nota: r[6], av: r[7], eds: [] });
+      if (o.av) x.temAv = true;
+      for (var j = 0; j < es.length; j++) {
+        var e = es[j], ed = { asin: e[0], fmt: x.fmt[e[1]], fam: x.fam[e[1]], preco: e[2], capa: e[3], idade: e[4], mc: e[5], menor: e[6], o: o };
+        if (ed.mc) x.temMC = true;
+        o.eds.push(ed); x.porAsin[ed.asin] = ed;
+      }
+      x.obras.push(o);
+    }
+  }
+  // O índice vem em partes, das obras mais avaliadas para as menos: a busca começa com a primeira parte e é
+  // refeita a cada parte que chega. indice() espera só a primeira; indiceCompleto(), todas.
   function carregarIndice() {
-    IDX = V.then(function (v) { return json('dados/indice.json' + v); }).then(function (d) {
-      var x = { obras: [], porAsin: {}, hoje: d.hoje, baixa: d.baixa || [], temMC: false, idiomas: {} };
-      d.o.forEach(function (r) {
-        var lt = L.limpar(r[0]), o = { t: lt.t, autor: r[1], img: r[2], ano: r[3], idioma: r[4] || lt.idioma, eds: [] };
-        o.nt = norm(o.t); o.n = o.nt + ' ' + norm(o.autor);
-        r[5].forEach(function (e) {
-          var ed = { asin: e[0], fmt: d.fmt[e[1]], preco: e[2], capa: e[3], idade: e[4], mc: e[5], o: o };
-          ed.fam = familia(ed.fmt); if (ed.mc) x.temMC = true;
-          o.eds.push(ed); x.porAsin[ed.asin] = ed;
-        });
-        if (o.idioma) x.idiomas[o.idioma] = (x.idiomas[o.idioma] || 0) + 1;
-        x.obras.push(o);
+    IDX = V.then(function (v) {
+      return json('dados/indice-0.json' + v).then(function (d) {
+        var x = novoIdx(d);
+        lerObras(x, d.o); x.carregadas = 1; x.completo = x.partes <= 1; idx = x;
+        x.pronto = x.completo ? Promise.resolve(x) : proximaParte(x, v, 1, 0);
+        // com tudo carregado, monta (aos poucos) o vocabulário que corrige erros de digitação
+        x.pronto.then(function () { setTimeout(function () { Busca.vocabularioAosPoucos(x.obras); }, 500); });
+        return x;
       });
-      idx = x; return x;
     });
     IDX.catch(function () { IDX = null; });
     return IDX;
   }
+  // lê as obras em fatias, com pausas entre elas, para a página não travar enquanto a pessoa digita
+  function lerAosPoucos(x, linhas) {
+    return new Promise(function (ok) {
+      var i = 0;
+      (function fatia() {
+        var fim = Math.min(i + 3000, linhas.length);
+        lerObras(x, linhas, i, fim); i = fim;
+        if (i < linhas.length) setTimeout(fatia, 0); else ok();
+      })();
+    });
+  }
+  function proximaParte(x, v, n, tentativa) {
+    return json('dados/indice-' + n + '.json' + v).then(function (d) {
+      return lerAosPoucos(x, d.o).then(function () {
+        x.carregadas = n + 1; x.completo = x.carregadas >= x.partes;
+        chegouParte();
+        return x.completo ? x : proximaParte(x, v, n + 1, 0);
+      });
+    }, function () {
+      if (tentativa < 1) return new Promise(function (ok) { setTimeout(ok, 2000); }).then(function () { return proximaParte(x, v, n, 1); });
+      x.completo = true; x.falhou = true; chegouParte(); return x;     // segue com o que chegou, e avisa na busca
+    });
+  }
   function indice() { return IDX || carregarIndice(); }
+  function indiceCompleto() { return indice().then(function (x) { return x.pronto; }); }
+  var tParte = null;
+  function chegouParte() {
+    clearTimeout(tParte);
+    tParte = setTimeout(function () { if (rotaAtual && rotaAtual.v === 'busca' && $('#res')) busca(false, true); }, 30);
+  }
+  // o que a página inicial mostra, num arquivo pequeno (não espera o índice)
+  function destaques() {
+    if (!DEST) {
+      DEST = V.then(function (v) { return json('dados/destaques.json' + v); }).then(function (d) {
+        var x = novoIdx(d); lerObras(x, d.o); x.baixa = d.baixa; x.menor = d.menor; x.ngen = d.ngen; return x;
+      });
+      DEST.catch(function () { DEST = null; });
+    }
+    return DEST;
+  }
   var cacheH = {};
   function fragmento(asin) { var h = 0; for (var i = 0; i < asin.length; i++) h = (h * 31 + asin.charCodeAt(i)) % 256; return (h < 16 ? '0' : '') + h.toString(16); }
   function historico(asin) {
@@ -90,7 +146,7 @@
     eds = eds && eds.length ? eds : o.eds;
     var m = eds.reduce(function (a, b) { return b.preco < a.preco ? b : a; });
     var formatos = o.eds.length > 1 ? o.eds.map(function (e) { return '<span' + (e === m ? ' class="on"' : '') + '>' + esc(e.fmt) + ' ' + brl(e.preco) + '</span>'; }).join('') : '<span>' + esc(m.fmt) + '</span>';
-    var velho = m.idade > 1 ? ' <span class="pill wr">preço de ' + L.dmes(idx.hoje - m.idade) + '</span>' : '';
+    var velho = m.idade > 1 && idx ? ' <span class="pill wr">preço de ' + L.dmes(idx.hoje - m.idade) + '</span>' : '';
     return '<li><a class="row" href="./?livro=' + m.asin + '" data-r>' + capa(o) + '<div class="bd"><div class="tt">' + esc(o.t) + '</div>' +
       '<div class="sub">' + subtitulo(o) + '</div><div class="pr">' + (preco || ((eds.length > 1 ? '<span class="de">a partir de</span>' : '') + '<b>' + brl(m.preco) + '</b>' + pillComum(m.preco, m.mc) + velho)) +
       '</div><div class="eds">' + formatos + '</div></div>' + (o.eds.some(function (e) { return sv[e.asin]; }) ? SALVO : '') + '</a></li>';
@@ -126,7 +182,7 @@
     if (p.has('livro')) return { v: 'livro', asin: (p.get('livro') || '').toUpperCase() };
     if (p.has('lista') || location.hash === '#lista') return { v: 'lista', comp: p.get('lista') || '' };
     if (p.has('sobre')) return { v: 'sobre' };
-    if (['q', 'f', 'i', 'o', 'de', 'ate'].some(function (k) { return p.get(k); })) return { v: 'busca' };
+    if (['q', 'f', 'i', 'g', 'o', 'de', 'ate'].some(function (k) { return p.get(k); })) return { v: 'busca' };
     return { v: 'inicio' };
   }
   function ir(url, substituir) {
@@ -153,16 +209,14 @@
   var filtroBaixa = '', baixaTudo = false;
   function inicio() {
     titulo(''); var r = rotaAtual;
-    if (!idx) app.innerHTML = '<section class="boas sec"><div class="sk l" style="height:28px;width:60%"></div><div class="sk l" style="width:80%;margin-top:14px"></div></section>' + esqueleto(4);
-    Promise.all([indice(), META, EVENTOS]).then(function (rs) {
+    if (!DEST) app.innerHTML = '<section class="boas sec"><div class="sk l" style="height:28px;width:60%"></div><div class="sk l" style="width:80%;margin-top:14px"></div></section>' + esqueleto(4);
+    Promise.all([destaques(), META, EVENTOS]).then(function (rs) {
       if (!aindaEm(r)) return;
       var x = rs[0], m = rs[1], ev = rs[2], sv = salvos(), out = [];
       out.push('<section class="boas sec"><h1>Veja se o preço de um livro está bom antes de comprar</h1><p>Histórico de preço de ' + m.itens.toLocaleString('pt-BR') +
         ' livros mais vendidos da Amazon.com.br, atualizado todo dia. Busque um título para ver quanto ele custa agora e quanto já custou.</p>' +
         (m.aviso ? '<p class="aviso">' + esc(m.aviso) + '</p>' : '') + '</section>');
-      var meus = Lista.ler().slice().reverse().map(function (a) { return x.porAsin[a]; }).filter(Boolean).slice(0, 12);
-      if (meus.length) out.push('<section class="sec"><div class="sec-h"><h2>Sua lista</h2><a href="./?lista" data-r>Ver tudo</a></div><div class="fila">' +
-        meus.map(function (e) { return '<a href="./?livro=' + e.asin + '" data-r>' + capa(e.o, 'f') + '<span class="t">' + esc(e.o.t) + '</span><b>' + brl(e.preco) + '</b></a>'; }).join('') + '</div></section>');
+      if (Lista.ler().length) out.push('<section class="sec" id="sua-lista"></section>');
       var prox = ev.filter(function (e) { return e[1] >= x.hoje; }).sort(function (a, b) { return a[1] - b[1]; })[0];
       if (prox) {
         var d = new Date((prox[1] - 719163) * 864e5), faltam = prox[1] - x.hoje;
@@ -173,7 +227,15 @@
       app.innerHTML = out.join('');
       secaoBaixa(x, sv);
       rolar();
+      if ($('#sua-lista')) indiceCompleto().then(function (ix) { if (aindaEm(r)) suaLista(ix); });
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); });
+  }
+  function suaLista(x) {
+    var el = $('#sua-lista'); if (!el) return;
+    var meus = Lista.ler().slice().reverse().map(function (a) { return x.porAsin[a]; }).filter(Boolean).slice(0, 12);
+    if (!meus.length) { el.remove(); return; }
+    el.innerHTML = '<div class="sec-h"><h2>Sua lista</h2><a href="./?lista" data-r>Ver tudo</a></div><div class="fila">' +
+      meus.map(function (e) { return '<a href="./?livro=' + e.asin + '" data-r>' + capa(e.o, 'f') + '<span class="t">' + esc(e.o.t) + '</span><b>' + brl(e.preco) + '</b></a>'; }).join('') + '</div>';
   }
   function secaoBaixa(x, sv) {
     var el = $('#baixa'); if (!el) return;
@@ -192,62 +254,39 @@
   }
 
   // ---------- busca ----------
-  var S = { q: '', fam: {}, i: '', o: 'rel', de: null, ate: null }, mostrados = 30, verPreco = false, resultado = null;
+  var VAZIO = function () { return { q: '', fam: {}, i: '', g: '', o: 'rel', de: null, ate: null }; };
+  var S = VAZIO(), mostrados = 30, verPreco = false, resultado = null;
   function estadoDaUrl() {
     var p = new URLSearchParams(location.search), fam = {};
     (p.get('f') || '').split(',').forEach(function (f) { if (/^[fka]$/.test(f)) fam[f] = 1; });
     var n = function (k) { var v = parseFloat(p.get(k)); return isFinite(v) && v >= 0 ? Math.round(v * 100) : null; };
-    S = { q: p.get('q') || '', fam: fam, i: p.get('i') || '', o: p.get('o') || 'rel', de: n('de'), ate: n('ate') };
+    S = { q: p.get('q') || '', fam: fam, i: p.get('i') || '', g: /^\d+$/.test(p.get('g') || '') ? p.get('g') : '', o: p.get('o') || 'rel', de: n('de'), ate: n('ate') };
   }
   function urlBusca() {
     var p = new URLSearchParams();
     if (S.q.trim()) p.set('q', S.q.trim());
     var f = Object.keys(S.fam); if (f.length) p.set('f', f.join(','));
     if (S.i) p.set('i', S.i);
+    if (S.g) p.set('g', S.g);
     if (S.o !== 'rel') p.set('o', S.o);
     if (S.de != null) p.set('de', S.de / 100);
     if (S.ate != null) p.set('ate', S.ate / 100);
     var s = p.toString(); return s ? './?' + s : './';
   }
-  function nFiltros() { return Object.keys(S.fam).length + (S.i ? 1 : 0) + (S.de != null || S.ate != null ? 1 : 0); }
+  function nFiltros() { return Object.keys(S.fam).length + (S.i ? 1 : 0) + (S.g ? 1 : 0) + (S.de != null || S.ate != null ? 1 : 0); }
   function buscar(x) {
-    var tokens = norm(S.q).split(/\s+/).filter(Boolean), frase = tokens.join(' '), asin = L.asinDe(S.q);
-    var cont = { fam: {}, i: {} }, achados = [], temFam = Object.keys(S.fam).length;
-    if (asin && x.porAsin[asin]) { var e = x.porAsin[asin]; return { lista: [{ o: e.o, eds: [e], s: 0 }], cont: cont }; }
-    for (var i = 0; i < x.obras.length; i++) {
-      var o = x.obras[i], ok = true;
-      for (var j = 0; j < tokens.length; j++) if (o.n.indexOf(tokens[j]) < 0) { ok = false; break; }
-      if (!ok) continue;
-      var porPreco = o.eds.filter(function (e) { return (S.de == null || e.preco >= S.de) && (S.ate == null || e.preco <= S.ate); });
-      if (!porPreco.length) continue;
-      if (!S.i || o.idioma === S.i) porPreco.forEach(function (e, k) { if (porPreco.indexOf(porPreco.filter(function (z) { return z.fam === e.fam; })[0]) === k) cont.fam[e.fam] = (cont.fam[e.fam] || 0) + 1; });
-      var eds = temFam ? porPreco.filter(function (e) { return S.fam[e.fam]; }) : porPreco;
-      if (eds.length && o.idioma) cont.i[o.idioma] = (cont.i[o.idioma] || 0) + 1;
-      if (!eds.length || (S.i && o.idioma !== S.i)) continue;
-      var s = !tokens.length ? 0 : o.nt.indexOf(frase) === 0 ? 0 : (' ' + o.nt).indexOf(' ' + frase) >= 0 ? 1 : o.n.indexOf(frase) >= 0 ? 2 : 3;
-      achados.push({ o: o, eds: eds, s: s, p: Math.min.apply(null, eds.map(function (e) { return e.preco; })) });
-    }
-    var desc = function (r) { return Math.max.apply(null, r.eds.map(function (e) { return e.capa > e.preco ? (e.capa - e.preco) / e.capa : 0; })); };
-    var abaixo = function (r) { return Math.min.apply(null, r.eds.map(function (e) { return e.mc ? (e.preco - e.mc) / e.mc : 9; })); };
-    var tit = function (a, b) { return a.o.nt < b.o.nt ? -1 : a.o.nt > b.o.nt ? 1 : 0; };
-    var por = {
-      rel: function (a, b) { return a.s - b.s || a.o.nt.length - b.o.nt.length || tit(a, b); },
-      preco: function (a, b) { return a.p - b.p || tit(a, b); },
-      preco_desc: function (a, b) { return b.p - a.p || tit(a, b); },
-      desconto: function (a, b) { return desc(b) - desc(a) || tit(a, b); },
-      abaixo: function (a, b) { return abaixo(a) - abaixo(b) || tit(a, b); },
-      titulo: tit
-    };
-    return { lista: achados.sort(por[S.o] || por.rel), cont: cont };
+    var g = S.g && x.genPorNo[S.g] != null ? x.genPorNo[S.g] : S.g ? -2 : '';    // -2: gênero que não existe
+    return Busca.buscar(x.obras, { q: S.q, fam: S.fam, i: S.i, g: g, o: S.o, de: S.de, ate: S.ate }, { porAsin: x.porAsin, asinDe: L.asinDe, parcial: !x.completo });
   }
-  function busca(inteira) {
+  // inteira: a rota mudou (lê a URL e volta ao topo); parte: chegou mais uma parte do índice (refaz sem mexer no resto)
+  function busca(inteira, parte) {
     if (inteira) { estadoDaUrl(); if (document.activeElement !== q) q.value = S.q; $('#limpa').hidden = !q.value; mostrados = 30; }
     titulo(S.q ? 'Busca: ' + S.q : 'Busca');
     var r = rotaAtual;
     if (!idx) { app.innerHTML = esqueleto(6); indice().then(function () { if (aindaEm(r)) busca(false); }, function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); }); return; }
-    resultado = buscar(idx);
+    resultado = curta() ? { lista: [], cont: { fam: {}, i: {}, g: {} } } : buscar(idx);
     if (!$('#ferr')) app.innerHTML = '<div class="ferr" id="ferr"></div><div aria-live="polite" class="cont" id="cont-res"></div><div id="res" style="margin-top:10px"></div>';
-    ferramentas(); resultados(); rolar();
+    ferramentas(); resultados(); if (!parte) rolar();
   }
   function ferramentas() {
     var c = resultado.cont, chips = FAMILIAS.map(function (f) {
@@ -259,27 +298,46 @@
     var faixa = S.de != null || S.ate != null;
     chips += '<span class="sep"></span><button type="button" class="chip" data-acao="preco" aria-pressed="' + (faixa || verPreco) + '">' +
       (faixa ? (S.de != null ? brl(S.de) : 'R$ 0') + ' a ' + (S.ate != null ? brl(S.ate) : 'qualquer') : 'Preço') + ' ' + ic('baixo', 's') + '</button>';
-    var ords = [['rel', 'Mais relevantes'], ['preco', 'Menor preço'], ['preco_desc', 'Maior preço'], ['desconto', 'Maior desconto sobre a capa']];
+    var ords = [['rel', 'Mais relevantes']];
+    if (idx.temAv) ords.push(['avaliacoes', 'Mais avaliados']);
+    ords.push(['preco', 'Menor preço'], ['preco_desc', 'Maior preço'], ['desconto', 'Maior desconto sobre a capa']);
     if (idx.temMC) ords.push(['abaixo', 'Mais abaixo do preço comum']);
     ords.push(['titulo', 'Título (A a Z)']);
+    var gens = idx.gen.map(function (g, i) { return [g[0], g[1], c.g[i] || 0]; }).filter(function (g) { return g[2] || g[0] === S.g; })
+      .sort(function (a, b) { return a[1].localeCompare(b[1], 'pt-BR'); });
+    var selGen = gens.length ? '<label class="sel"><span class="vh">Gênero</span><select id="gen"><option value="">Todos os gêneros</option>' +
+      gens.map(function (g) { return '<option value="' + g[0] + '"' + (S.g === g[0] ? ' selected' : '') + '>' + esc(g[1]) + ' (' + g[2].toLocaleString('pt-BR') + ')</option>'; }).join('') +
+      '</select>' + ic('baixo', 's') + '</label>' : '';
     $('#ferr').innerHTML = '<div class="chips" role="group" aria-label="Filtros">' + chips + '</div>' +
       (verPreco || faixa ? '<div class="faixa-preco"><span class="mu sm">Preço</span><input id="de" type="number" inputmode="decimal" min="0" step="1" placeholder="de R$" aria-label="Preço mínimo em reais" value="' + (S.de != null ? S.de / 100 : '') + '">' +
         '<span class="mu sm">até</span><input id="ate" type="number" inputmode="decimal" min="0" step="1" placeholder="até R$" aria-label="Preço máximo em reais" value="' + (S.ate != null ? S.ate / 100 : '') + '"></div>' : '') +
-      '<div class="l2"><span></span><label class="sel"><span class="vh">Ordenar por</span><select id="ord">' + ords.map(function (o) { return '<option value="' + o[0] + '"' + (S.o === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' + ic('baixo', 's') + '</label></div>';
+      '<div class="l2"><span></span><div class="sels">' + selGen + '<label class="sel"><span class="vh">Ordenar por</span><select id="ord">' + ords.map(function (o) { return '<option value="' + o[0] + '"' + (S.o === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' + ic('baixo', 's') + '</label></div></div>';
   }
+  function curta() { var t = S.q.trim(); return t.length === 1 && !L.asinDe(t) && !nFiltros() && S.o === 'rel'; }
   function resultados() {
-    var r = resultado.lista, el = $('#res'), n = r.length, sv = salvos();
-    $('#ferr .l2 span').innerHTML = '<span class="cont">' + (n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro' : ' livros') : '') + '</span>' +
+    if (curta()) {
+      $('#ferr .l2 > span').innerHTML = ''; $('#cont-res').textContent = '';
+      $('#res').innerHTML = '<p class="nota-busca">Continue digitando…</p>';
+      return;
+    }
+    var r = resultado.lista, el = $('#res'), n = r.length, sv = salvos(), carregando = !idx.completo;
+    $('#ferr .l2 > span').innerHTML = '<span class="cont">' + (n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro' : ' livros') + (carregando ? ' até agora' : '') : '') + '</span>' +
       (nFiltros() ? ' <button type="button" class="btn gh sm" data-acao="limpar-filtros">Limpar filtros</button>' : '');
     $('#cont-res').textContent = '';
+    var nota = resultado.correcao ? '<p class="nota-busca">Mostrando resultados para <b>' + esc(resultado.correcao) + '</b></p>' :
+      resultado.parcial ? '<p class="nota-busca">Nenhum livro tem todas as palavras. Estes têm a maior parte delas.</p>' : '';
+    var status = carregando ? '<p class="nota-busca carregando" role="status"><span class="giro" aria-hidden="true"></span>Buscando no restante do catálogo…</p>' :
+      idx.falhou ? '<p class="nota-busca">Parte do catálogo não carregou. <button type="button" class="btn gh sm" data-acao="recarregar">Tentar de novo</button></p>' : '';
     if (!n) {
-      el.innerHTML = '<div class="vazio"><div class="ic">' + ic('busca') + '</div><h2>Nenhum livro encontrado</h2><p>' +
+      // enquanto falta parte do índice, "nada encontrado" ainda não é verdade
+      if (carregando) { el.innerHTML = status + esqueleto(3); return; }
+      el.innerHTML = status + '<div class="vazio"><div class="ic">' + ic('busca') + '</div><h2>Nenhum livro encontrado</h2><p>' +
         (S.q.trim() ? 'Nada para "' + esc(S.q.trim()) + '"' + (nFiltros() ? ' com esses filtros' : '') + '. ' : '') +
         'O catálogo cobre os ~2.000 mais vendidos de cada categoria de livros da Amazon. Tente menos palavras' + (nFiltros() ? ' ou limpe os filtros' : '') + '.</p>' +
         (nFiltros() ? '<button type="button" class="btn" data-acao="limpar-filtros">Limpar filtros</button>' : '') + '</div>';
       return;
     }
-    el.innerHTML = '<ul class="lst card">' + r.slice(0, mostrados).map(function (x) { return linhaObra(x.o, x.eds, sv); }).join('') + '</ul>' +
+    el.innerHTML = nota + status + '<ul class="lst card">' + r.slice(0, mostrados).map(function (x) { return linhaObra(x.o, x.eds, sv); }).join('') + '</ul>' +
       (n > mostrados ? '<div class="mais"><button type="button" class="btn sm" data-acao="mais" id="mais">Mostrar mais</button></div>' : '');
     observarMais();
   }
@@ -306,17 +364,21 @@
     $('#limpa').hidden = !q.value;
     clearTimeout(tBusca);
     tBusca = setTimeout(function () {
-      if (!rotaAtual || rotaAtual.v !== 'busca') { S = { q: '', fam: {}, i: '', o: 'rel', de: null, ate: null }; }
+      if (!rotaAtual || rotaAtual.v !== 'busca') S = VAZIO();
       S.q = q.value; aplicarBusca();
     }, 150);
   });
-  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = { q: '', fam: {}, i: '', o: 'rel', de: null, ate: null }; S.q = q.value; aplicarBusca(); q.blur(); });
+  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = VAZIO(); S.q = q.value; aplicarBusca(); q.blur(); });
   q.addEventListener('keydown', function (e) { if (e.key === 'Escape') { q.value = ''; q.dispatchEvent(new Event('input')); } });
   $('#limpa').addEventListener('click', function () { q.value = ''; q.focus(); q.dispatchEvent(new Event('input')); });
   document.addEventListener('keydown', function (e) {
     if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !e.metaKey && !e.ctrlKey) { e.preventDefault(); q.focus(); q.select(); }
   });
-  app.addEventListener('change', function (e) { if (e.target.id === 'ord') { S.o = e.target.value; aplicarBusca(); } else if (e.target.id === 'ordl') { ordemLista = e.target.value; lista(); } });
+  app.addEventListener('change', function (e) {
+    if (e.target.id === 'ord') { S.o = e.target.value; aplicarBusca(); }
+    else if (e.target.id === 'gen') { S.g = e.target.value; aplicarBusca(); }
+    else if (e.target.id === 'ordl') { ordemLista = e.target.value; lista(); }
+  });
   var tPreco = null;
   app.addEventListener('input', function (e) {
     if (e.target.id !== 'de' && e.target.id !== 'ate') return;
@@ -345,18 +407,19 @@
         (m.aviso ? '<p class="aviso">' + esc(m.aviso) + '</p>' : '') +
         '<section class="heroi sec">' + capa(o, 'g', true) + '<div><h1>' + esc(o.t) + '</h1>' + (o.autor ? '<p class="aut">' + esc(o.autor) + '</p>' : '') +
         '<p class="det">' + det.map(esc).join(' · ') + '</p><div class="fmts" id="fmts" role="group" aria-label="Formato">' +
-        '<a class="fmt" aria-current="true" href="./?livro=' + asin + '" data-r data-sub><span>' + esc(l.f || 'Livro') + '</span><b>' + brl(f.preco) + '</b></a></div></div>' +
+        (l.eds || [[asin, l.f || 'Livro', f.preco]]).map(function (d) {
+          return '<a class="fmt" href="./?livro=' + d[0] + '" data-r data-sub' + (d[0] === asin ? ' aria-current="true"' : '') + '><span>' + esc(d[1]) + '</span><b>' + brl(d[0] === asin ? f.preco : d[2]) + '</b></a>';
+        }).join('') + '</div></div>' +
         '<div class="compra"><div class="preco-g"><b>' + brl(f.preco) + '</b><span class="mu sm">' + (recente ? 'preço em ' + L.dl(ult) : 'último preço visto, em ' + L.dl(ult)) + '</span></div>' +
         '<div class="fat">' + (recente ? '' : '<span class="pill wr">Sem coleta recente: pode ter saído de estoque ou deixado de ser vendido pela Amazon</span>') + L.comparacoes(f) + '</div>' +
         '<div class="acoes"><a class="btn pri" href="' + L.linkAmazon(asin) + '" target="_blank" rel="noopener noreferrer">Ver na Amazon ' + ic('ext', 's') + '</a>' +
         '<button type="button" class="btn salvar" data-salvar="' + asin + '"></button>' +
         '<button type="button" class="btn" data-acao="compartilhar" aria-label="Compartilhar">' + ic('share', 's') + '</button></div></div></section>' +
         '<section class="card pad sec"><div id="graf"></div>' + L.avisoDados(f) + L.estatisticas(f, tr[0][0]) + '</section>' +
-        L.secaoEventos(tr, ev, m.ultima_coleta || ult) + '<section class="sec" id="outras"></section>';
+        L.secaoEventos(tr, ev, m.ultima_coleta || ult) + outrasEdicoes(l.outras);
       botaoSalvar();
       L.grafico($('#graf'), L.dadosGrafico(tr, ev));
       rolar();
-      indice().then(function (x) { if (aindaEm(r)) edicoes(x, asin, o); });
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar este livro'); });
   }
   function botaoSalvar() {
@@ -364,24 +427,14 @@
     var na = Lista.tem(b.dataset.salvar);
     b.setAttribute('aria-pressed', String(na)); b.innerHTML = ic('salvar', 's') + (na ? 'Na sua lista' : 'Salvar na lista');
   }
-  function edicoes(x, asin, o) {
-    var e = x.porAsin[asin];
-    if (e && e.o.eds.length > 1) $('#fmts').innerHTML = e.o.eds.map(function (d) {
-      return '<a class="fmt" href="./?livro=' + d.asin + '" data-r data-sub' + (d.asin === asin ? ' aria-current="true"' : '') + '><span>' + esc(d.fmt) + '</span><b>' + brl(d.preco) + '</b></a>';
-    }).join('');
-    // outras edições: mesmo título (sem subtítulo nem parênteses) e mesmo autor
-    var base = function (nt) { return nt.replace(/\s*[(\[].*$/, '').replace(/\s*[:–—]\s.*$|\s+-\s.*$/, '').trim(); };
-    var obra = e ? e.o : null, chave = base(norm(o.t)), aut = norm(o.autor), achadas = [];
-    if (chave.length >= 4) for (var i = 0; i < x.obras.length && achadas.length < 8; i++) {
-      var c = x.obras[i];
-      if (c === obra || c.eds.some(function (d) { return d.asin === asin; }) || base(c.nt) !== chave) continue;
-      if (aut ? norm(c.autor) !== aut : c.autor || c.nt !== norm(o.t)) continue;
-      achadas.push(c);
-    }
-    var el = $('#outras'); if (!el) return;
-    if (!achadas.length) { el.remove(); return; }
-    var sv = salvos();
-    el.innerHTML = '<div class="sec-h"><h2>Outras edições</h2></div><ul class="lst card">' + achadas.map(function (c) { return linhaObra(c, null, sv); }).join('') + '</ul>';
+  // outras edições do mesmo título e autor (calculadas em site.py): [[asin, título, capa, formato, preço], ...]
+  function outrasEdicoes(outras) {
+    if (!outras || !outras.length) return '';
+    return '<section class="sec"><div class="sec-h"><h2>Outras edições</h2></div><ul class="lst card">' + outras.map(function (c) {
+      var o = { t: L.limpar(c[1]).t, img: c[2] };
+      return '<li><a class="row" href="./?livro=' + c[0] + '" data-r>' + capa(o) + '<div class="bd"><div class="tt">' + esc(o.t) + '</div>' +
+        '<div class="pr"><b>' + brl(c[4]) + '</b></div><div class="eds"><span>' + esc(c[3]) + '</span></div></div></a></li>';
+    }).join('') + '</ul></section>';
   }
   function naoEncontrado() {
     titulo('Livro não encontrado');
@@ -391,15 +444,16 @@
 
   // ---------- minha lista ----------
   var ordemLista = 'recentes';
+  // a lista usa só o histórico de cada livro (h/XX.json): não precisa esperar o índice da busca
   function carregarItens(asins) {
-    return Promise.all([META, indice().catch(function () { return null; })].concat(asins.map(function (a) { return historico(a).then(function (h) { return { asin: a, h: h }; }); })));
+    return Promise.all([META].concat(asins.map(function (a) { return historico(a).then(function (h) { return { asin: a, h: h }; }); })));
   }
-  function itemLista(x, it, hoje) {
-    var e = x && x.porAsin[it.asin], h = it.h;
+  function itemLista(it, hoje) {
+    var h = it.h;
     if (!h) return { asin: it.asin, fora: true };
     var lt = L.limpar(h.t || it.asin), tr = h.h, ult = tr[tr.length - 1][1], f = L.fatos(tr, ult);
-    var o = e ? e.o : { t: lt.t, autor: h.autor || '', img: h.imagem || '', ano: h.publicado ? +h.publicado.slice(0, 4) : 0, idioma: h.idioma || lt.idioma };
-    return { asin: it.asin, o: o, fmt: h.f || (e && e.fmt) || '', preco: f.preco, f: f, tr: tr, ult: ult, recente: hoje == null || ult >= hoje - 1,
+    var o = { t: lt.t, autor: h.autor || '', img: h.imagem || '', ano: h.publicado ? +h.publicado.slice(0, 4) : 0, idioma: h.idioma || lt.idioma };
+    return { asin: it.asin, o: o, fmt: h.f || '', preco: f.preco, f: f, tr: tr, ult: ult, recente: hoje == null || ult >= hoje - 1,
       mc: f.diasObservados >= L.MIN_COMUM ? f.mediana : 0 };
   }
   function spark(tr, ult) {
@@ -431,7 +485,7 @@
     if (!$('#lst')) app.innerHTML = '<div class="lista-h"><div><h1>Minha lista</h1><p class="mu" style="margin:4px 0 0">' + L.plural(asins.length, 'livro', 'livros') + '</p></div></div>' + esqueleto(Math.min(asins.length, 5));
     carregarItens(asins).then(function (rs) {
       if (!aindaEm(r)) return;
-      var m = rs[0], x = rs[1], hoje = m.ultima_coleta, itens = rs.slice(2).map(function (it) { return itemLista(x, it, hoje); });
+      var m = rs[0], hoje = m.ultima_coleta, itens = rs.slice(1).map(function (it) { return itemLista(it, hoje); });
       var precos = {}; itens.forEach(function (i) { if (!i.fora) precos[i.asin] = i.preco; });
       var base = Lista.visita(hoje, precos), mais = 0, menos = 0;
       itens.forEach(function (i) { var a = base && base.precos[i.asin]; if (a && !i.fora) { if (i.preco < a) menos++; else if (i.preco > a) mais++; } });
@@ -465,7 +519,7 @@
     app.innerHTML = esqueleto(Math.min(asins.length, 5));
     carregarItens(asins).then(function (rs) {
       if (!aindaEm(r)) return;
-      var x = rs[1], itens = rs.slice(2).map(function (it) { return itemLista(x, it, rs[0].ultima_coleta); }), minha = salvos();
+      var itens = rs.slice(1).map(function (it) { return itemLista(it, rs[0].ultima_coleta); }), minha = salvos();
       var novos = asins.filter(function (a) { return !minha[a]; }).length;
       app.innerHTML = '<div class="lista-h"><div><h1>Lista compartilhada</h1><p class="mu" style="margin:4px 0 0">' + L.plural(itens.length, 'livro', 'livros') + '</p></div>' +
         (novos ? '<button type="button" class="btn pri" data-acao="importar" data-asins="' + asins.join(',') + '">' + ic('salvar', 's') + 'Adicionar à minha lista' + (novos < asins.length ? ' (' + novos + ' novos)' : '') + '</button>' :
@@ -508,7 +562,7 @@
     var acao = b.dataset.acao;
     if (b.dataset.fam) { if (S.fam[b.dataset.fam]) delete S.fam[b.dataset.fam]; else S.fam[b.dataset.fam] = 1; aplicarBusca(); }
     else if (b.dataset.idioma !== undefined) { S.i = S.i === b.dataset.idioma ? '' : b.dataset.idioma; aplicarBusca(); }
-    else if (b.dataset.baixa !== undefined) { filtroBaixa = b.dataset.baixa; baixaTudo = false; secaoBaixa(idx, salvos()); }
+    else if (b.dataset.baixa !== undefined) { filtroBaixa = b.dataset.baixa; baixaTudo = false; destaques().then(function (x) { secaoBaixa(x, salvos()); }); }
     else if (b.dataset.salvar) {
       var na = Lista.alternar(b.dataset.salvar); botaoSalvar(); contador();
       toast(na ? 'Salvo na sua lista' : 'Removido da sua lista', na ? 'Ver lista' : null, function () { ir('./?lista'); });
@@ -519,8 +573,8 @@
     }
     else if (acao === 'mais') maisResultados();
     else if (acao === 'preco') { verPreco = !verPreco; if (!verPreco) { S.de = S.ate = null; aplicarBusca(); } else { ferramentas(); resultados(); var i = $('#de'); if (i) i.focus(); } }
-    else if (acao === 'limpar-filtros') { S.fam = {}; S.i = ''; S.de = S.ate = null; verPreco = false; aplicarBusca(); }
-    else if (acao === 'baixa-tudo') { baixaTudo = true; secaoBaixa(idx, salvos()); }
+    else if (acao === 'limpar-filtros') { S.fam = {}; S.i = ''; S.g = ''; S.de = S.ate = null; verPreco = false; aplicarBusca(); }
+    else if (acao === 'baixa-tudo') { baixaTudo = true; destaques().then(function (x) { secaoBaixa(x, salvos()); }); }
     else if (acao === 'voltar') voltar();
     else if (acao === 'buscar') { q.focus(); scrollTo(0, 0); }
     else if (acao === 'recarregar') location.reload();
@@ -538,6 +592,8 @@
   contador();
   META.then(function (m) { meta = m; }, function () { erro('Não consegui carregar o catálogo'); });
   desenhar();
-  // o índice da busca é grande: começa a baixar logo, para a busca estar pronta quando a pessoa digitar
-  indice().catch(function () { });
+  // o índice da busca é grande: no início e na busca, começa a baixar logo, para a busca estar pronta quando a
+  // pessoa digitar; na página de um livro ou na lista (links compartilhados), só quando ela for buscar
+  if (rotaAtual.v === 'inicio' || rotaAtual.v === 'busca') indice().catch(function () { });
+  q.addEventListener('focus', function () { indice().catch(function () { }); });
 })();

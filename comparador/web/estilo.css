@@ -139,6 +139,13 @@ div.row:has(.esticar:hover){background:var(--sf2)}
 .faixa-preco input::-webkit-inner-spin-button,.faixa-preco input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 .faixa-preco input{-moz-appearance:textfield;width:100px;height:36px;padding:0 10px;border:1px solid var(--ln2);border-radius:10px;background:var(--sf);font-size:14px}
 .cont{font-size:14px;color:var(--mu)}
+.ferr .sels{display:flex;gap:8px;flex-wrap:wrap}
+.sel select#gen{max-width:220px;text-overflow:ellipsis}
+.nota-busca{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;color:var(--mu);margin:0 0 10px}
+.nota-busca b{color:var(--fg)}
+.giro{width:14px;height:14px;border-radius:50%;border:2px solid var(--ln2);border-top-color:var(--ac);animation:giro .8s linear infinite}
+@keyframes giro{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.giro{animation:none}}
 
 /* ---------- início ---------- */
 .boas{padding:12px 0 4px}
