@@ -67,6 +67,7 @@ svg.i.s{width:16px;height:16px}
 @media(max-width:719px){.pg{padding:18px 16px 48px}}
 .sec{margin:36px 0}.sec:first-child{margin-top:4px}
 .sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px}
+.sec-h h2{margin-right:auto}
 .sec-h a,.sec-h button.lnk{font-size:14px;font-weight:600;white-space:nowrap}
 .card{background:var(--sf);border:1px solid var(--ln);border-radius:var(--r3);box-shadow:var(--sh1)}
 .pad{padding:18px}

@@ -167,6 +167,20 @@
       '<span class="t">' + esc(e.o.t) + '</span><span class="a">' + esc(e.o.autor || e.fmt) + '</span>' +
       '<span class="p"><b>' + brl(e.preco) + '</b>' + (ant ? '<s>' + brl(ant) + '</s>' : '') + '</span></a>';
   }
+  // No computador, a estante mostra uma fileira só (CSS). Se sobrou livro escondido, a seção ganha "Ver todos (N)",
+  // que vira a estante numa grade; os cartões escondidos saem da ordem do teclado (inert). No celular ela rola.
+  function arrumarEstantes() {
+    document.querySelectorAll('.estante').forEach(function (e) {
+      var cs = e.children, h = e.parentNode.querySelector('.sec-h'); if (!cs.length || !h) return;
+      var topo = cs[0].offsetTop, fora = 0;
+      for (var i = 0; i < cs.length; i++) { var x = cs[i].offsetTop > topo + 4; cs[i].inert = x; if (x) fora++; }
+      var b = h.querySelector('[data-acao="abrir-estante"]'), proprio = h.querySelector('a, [data-acao="baixa-tudo"]');
+      if (fora && !proprio && !b) h.insertAdjacentHTML('beforeend', '<button type="button" class="lnk" data-acao="abrir-estante">Ver todos (' + cs.length + ')</button>');
+      else if (!fora && b) b.remove();
+    });
+  }
+  var tEst = null;
+  window.addEventListener('resize', function () { clearTimeout(tEst); tEst = setTimeout(arrumarEstantes, 120); });
   var tToast = null;
   function toast(msg, acao, fn) {
     var t = $('#toast');
@@ -233,6 +247,7 @@
       out.push('<section class="sec" id="baixa"></section>');
       app.innerHTML = out.join('');
       secaoBaixa(x);
+      arrumarEstantes();
       rolar();
       if ($('#sua-lista')) indiceCompleto().then(function (ix) { if (aindaEm(r)) suaLista(ix); });
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); });
@@ -243,6 +258,7 @@
     if (!meus.length) { el.remove(); return; }
     el.innerHTML = '<div class="sec-h"><h2>Sua lista</h2><a href="./?lista" data-r>Ver tudo</a></div><div class="estante">' +
       meus.map(function (e) { return cartao(e); }).join('') + '</div>';
+    arrumarEstantes();
   }
   // "Baixaram de preço": uma estante; "Ver todos" vira uma grade com tudo
   function secaoBaixa(x) {
@@ -257,6 +273,7 @@
       (chips.length > 1 ? '<div class="chips" style="margin-bottom:16px"><button type="button" class="chip" data-baixa="" aria-pressed="' + !filtroBaixa + '">Todos</button>' +
         chips.map(function (f) { return '<button type="button" class="chip" data-baixa="' + f[0] + '" aria-pressed="' + (filtroBaixa === f[0]) + '">' + f[1] + '</button>'; }).join('') + '</div>' : '') +
       '<div class="' + (baixaTudo ? 'grade' : 'estante') + '">' + vis.slice(0, lim).map(function (i) { return cartao(i.e, i.ant); }).join('') + '</div>';
+    arrumarEstantes();
   }
 
   // ---------- busca ----------
@@ -436,6 +453,7 @@
         '<div class="l-resto"><section class="card pad sec"><div id="graf"></div>' + L.estatisticas(f, tr[0][0]) + '</section>' +
         L.secaoEventos(tr, ev, m.ultima_coleta || ult) + outrasEdicoes(l.outras) + '</div></div></div>';
       botaoSalvar();
+      arrumarEstantes();
       L.grafico($('#graf'), L.dadosGrafico(tr, ev));
       rolar();
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar este livro'); });
@@ -587,6 +605,11 @@
     else if (acao === 'limpar-filtros') { S.fam = {}; S.i = ''; S.g = ''; S.de = S.ate = null; verPreco = false; aplicarBusca(); }
     else if (acao === 'baixa-tudo') { baixaTudo = true; destaques().then(function (x) { secaoBaixa(x); }); }
     else if (acao === 'voltar') voltar();
+    else if (acao === 'abrir-estante') {
+      var sec = b.closest('section'), est = sec && sec.querySelector('.estante');
+      if (est) { est.className = 'grade'; [].forEach.call(est.children, function (c) { c.inert = false; }); }
+      b.remove();
+    }
     else if (acao === 'buscar') { q.focus(); scrollTo(0, 0); }
     else if (acao === 'recarregar') location.reload();
     else if (acao === 'compartilhar') compartilhar(location.href, document.title);
