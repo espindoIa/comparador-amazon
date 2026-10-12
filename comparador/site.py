@@ -58,7 +58,8 @@ PARTE_INICIAL = 15_000  # obras na primeira parte do índice (as mais avaliadas)
 PARTE = 40_000         # obras em cada uma das outras partes
 MAX_TITULO = 140       # caracteres do título no índice (o título inteiro fica no histórico)
 MAX_OUTRAS = 8
-MAX_AUTOR = 10         # "mais deste autor" na página do livro
+MAX_AUTOR = 8          # "mais deste autor" na página do livro
+MAX_TITULO_MINI = 80   # título nas estantes da página do livro (o cartão mostra 2 linhas)
 
 # formatos que aparecem nas listas de livros da Amazon mas não são livros: ficam fora da busca
 NAO_LIVRO = frozenset({
@@ -390,7 +391,7 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None) -> d
             o = obras[i]
             if len(o["eds"]) > 1:
                 h["eds"] = [[a, livros[a]["f"] or "Livro", livros[a]["h"][-1][2]] for a in o["eds"]]
-            mini = lambda j: [obras[j]["eds"][0], obras[j]["titulo"], obras[j]["linha"][2],
+            mini = lambda j: [obras[j]["eds"][0], obras[j]["titulo"][:MAX_TITULO_MINI].rstrip(), obras[j]["linha"][2],
                               livros[obras[j]["eds"][0]]["f"] or "Livro", obras[j]["linha"][8][0][2]]
             if i in outras:
                 h["outras"] = [mini(j) for j in outras[i]]
