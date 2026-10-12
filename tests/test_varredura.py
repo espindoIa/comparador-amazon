@@ -7,6 +7,7 @@ Fixtures REAIS (out/2026, trechos de páginas de busca da categoria HQs e Mangá
 import re
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -14,6 +15,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 from comparador import db, varredura
 from comparador.busca import ItemBusca, LayoutDesconhecido, parse_busca, url_busca
 from comparador.ritmo import PPM_RECUO, Ritmo
+
+# Os testes de mecanismo usam 3 faixas largas; as faixas de produção têm o seu próprio teste.
+FAIXAS_PRODUCAO = list(varredura.FAIXAS_VENDIDOS)
+FAIXAS_TESTE = [(0, 3999), (4000, 7999), (8000, varredura.SEM_TETO)]
 
 FIXTURES = Path(__file__).with_name("fixtures")
 ler = lambda nome: (FIXTURES / nome).read_text(encoding="utf-8")  # noqa: E731
@@ -273,10 +278,35 @@ class TestVarredura(unittest.TestCase):
         self.assertFalse(c.dia_completo)
 
 
+class TestFaixasDeProducao(unittest.TestCase):
+    def test_contiguas_sem_buraco_nem_sobreposicao_e_cobrem_todos_os_precos(self):
+        f = FAIXAS_PRODUCAO
+        self.assertEqual(len(f), 9)
+        self.assertEqual(f[0][0], 0)
+        self.assertEqual(f[-1][1], varredura.SEM_TETO)
+        for (_, fim), (inicio, _) in zip(f, f[1:]):
+            self.assertEqual(inicio, fim + 1)
+        self.assertEqual(varredura.faixas_de_precos([0, 20, 30, 40, 50, 60, 80, 120, 200]), f)
+
+    def test_banco_com_as_3_faixas_antigas_passa_para_as_novas_sem_perder_historico(self):
+        conn = db.conectar(":memory:")
+        self.addCleanup(conn.close)
+        varredura.criar_schema(conn)
+        varredura.semear_vendidos(conn, ["1"], FAIXAS_TESTE)
+        conn.execute("UPDATE fatias SET ultima_passada = '2999-01-01T00:00:00+00:00'")
+        varredura.semear_vendidos(conn, ["1"])                       # padrão: as 9 faixas
+        ativas = [tuple(r) for r in conn.execute("SELECT preco_min, preco_max FROM fatias WHERE ativa = 1 ORDER BY preco_min")]
+        self.assertEqual(ativas, FAIXAS_PRODUCAO)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM fatias WHERE ativa = 0").fetchone()[0], 3)  # as antigas ficam, inativas
+
+
 class TestMaisVendidos(unittest.TestCase):
     def setUp(self):
         self.conn = db.conectar(":memory:")
         self.addCleanup(self.conn.close)
+        p = mock.patch.object(varredura, "FAIXAS_VENDIDOS", FAIXAS_TESTE)
+        p.start()
+        self.addCleanup(p.stop)
 
     def test_le_ate_1000_livros_por_faixa_sem_dividir(self):
         # Gênero 1: 1.300 livros (só os 1.200 primeiros aparecem); gênero 2: 50 livros,
@@ -416,6 +446,9 @@ class TestRitmoNaVarredura(unittest.TestCase):
         self.conn = db.conectar(":memory:")
         self.addCleanup(self.conn.close)
         self.pausas = []
+        p = mock.patch.object(varredura, "FAIXAS_VENDIDOS", FAIXAS_TESTE)
+        p.start()
+        self.addCleanup(p.stop)
 
     def varrer(self, amazon, nos=("1",), **kw):
         kw.setdefault("minutos", 10_000)

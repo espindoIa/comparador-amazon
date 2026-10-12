@@ -45,9 +45,13 @@ LIMITE_PAGINAS_AMAZON = 400
 LIMITE_PAGINAS_VENDIDOS = 75
 # Por isso cada categoria é lida em faixas de preço (centavos, inclusive), cada uma até
 # LIVROS_POR_FAIXA livros. Os 2.000 mais vendidos da categoria estão todos na união das faixas
-# desde que nenhuma faixa tenha mais de LIVROS_POR_FAIXA deles (com 3 faixas, ~670 cada em média).
-# Lê até ~3.000 por categoria. A faixa vale para o card: entra se algum formato está nela.
-FAIXAS_VENDIDOS = [(0, 3999), (4000, 7999), (8000, SEM_TETO)]
+# desde que nenhuma faixa tenha mais de LIVROS_POR_FAIXA deles. Com 9 faixas (R$ 0–19,99; 20–29,99;
+# 30–39,99; 40–49,99; 50–59,99; 60–79,99; 80–119,99; 120–199,99; 200+), a leitura vai até ~9.000
+# livros por categoria, bem além dos 2.000 mais vendidos, e as faixas mais largas ficam onde há
+# menos livros. Medido em 7 gêneros: 63,7 mil livros lidos contra ~24 mil com 3 faixas. A faixa vale
+# para o card: entra se algum formato está nela (por isso as faixas se sobrepõem um pouco).
+FAIXAS_VENDIDOS = [(0, 1999), (2000, 2999), (3000, 3999), (4000, 4999), (5000, 5999), (6000, 7999),
+                   (8000, 11999), (12000, 19999), (20000, SEM_TETO)]
 # Quantos livros disponíveis (com preço de compra) lemos por faixa na ordem "mais vendidos".
 # Livros sem preço (indisponíveis, só Kindle Unlimited) não contam: a leitura segue até completar
 # esta quantidade ou até o limite de páginas acima.
