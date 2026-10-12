@@ -407,8 +407,13 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.wait_for_function("location.search.includes('raridade') && document.querySelector('#res .carregando')"
                                  " && !document.querySelector('#res .row')")
             self.assertNotIn("Nenhum livro", pg.inner_text("#res"))
-            presos[0].continue_()
+            pg.click('[data-acao="preco"]')                                            # a pessoa está digitando um preço...
+            pg.fill("#de", "5")
+            presos[0].continue_()                                                       # ...quando chega a última parte
             pg.wait_for_function("document.querySelector('#res').textContent.includes('Raridade escondida')")
+            self.assertEqual(pg.evaluate("document.activeElement.id"), "de")            # o campo não foi refeito
+            self.assertEqual(pg.input_value("#de"), "5")
+            pg.click('[data-acao="limpar-filtros"]')
             self.assertEqual(pg.locator("#res .carregando").count(), 0)
             pg.fill("#q", "xyzw")
             pg.wait_for_selector("#res .vazio")                                         # agora sim: nada encontrado

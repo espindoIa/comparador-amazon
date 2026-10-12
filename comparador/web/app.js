@@ -286,7 +286,9 @@
     if (!idx) { app.innerHTML = esqueleto(6); indice().then(function () { if (aindaEm(r)) busca(false); }, function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); }); return; }
     resultado = curta() ? { lista: [], cont: { fam: {}, i: {}, g: {} } } : buscar(idx);
     if (!$('#ferr')) app.innerHTML = '<div class="ferr" id="ferr"></div><div aria-live="polite" class="cont" id="cont-res"></div><div id="res" style="margin-top:10px"></div>';
-    ferramentas(); resultados(); if (!parte) rolar();
+    // parte nova do índice enquanto a pessoa mexe num filtro (campo de preço, lista aberta): não refaz a barra
+    if (!parte || !$('#ferr').contains(document.activeElement)) ferramentas();
+    resultados(); if (!parte) rolar();
   }
   function ferramentas() {
     var c = resultado.cont, chips = FAMILIAS.map(function (f) {

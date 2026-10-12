@@ -87,6 +87,7 @@ assert.strictEqual(r.lista[0].eds.length, 1);                              // s�
 r = busca('', { g: 5 });
 assert.deepStrictEqual(titulos(r), ['O Alquimista', 'Dom Casmurro', 'Memórias Póstumas de Brás Cubas', 'Alquimista, O Sonho do']);
 assert.strictEqual(r.cont.g[3], 3);
+assert.strictEqual(busca('', { g: -2 }).lista.length, 0);                 // gênero que não existe: nada (não "todos")
 r = busca('', { i: 'Inglês' });
 assert.deepStrictEqual(titulos(r), ['Pride and Prejudice (English Edition)']);
 r = busca('', { de: 1000, ate: 2000, o: 'preco' });

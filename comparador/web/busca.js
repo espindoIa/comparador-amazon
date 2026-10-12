@@ -62,7 +62,8 @@
   function contagens() { return { fam: {}, i: {}, g: {} }; }
   function soma(m, k) { m[k] = (m[k] || 0) + 1; }
 
-  // c = {fam: {f: 1}, i: idioma, g: nº do gênero ou '', de, ate}; minimo = 0: todos os termos; senão, pelo menos `minimo`
+  // c = {fam: {f: 1}, i: idioma, g: nº do gênero ('' = todos; um número que nenhuma obra tem = nenhuma), de, ate};
+  // minimo = 0: todos os termos; senão, pelo menos `minimo`
   function filtrar(obras, termos, frase, c, minimo) {
     var lista = [], cont = contagens(), n = termos.length, temFam = false, f;
     for (f in c.fam || {}) temFam = true;
@@ -81,7 +82,7 @@
         if ((c.de == null || e.preco >= c.de) && (c.ate == null || e.preco <= c.ate)) eds.push(e);
       }
       if (!eds.length) continue;
-      var okI = !c.i || o.idioma === c.i, okG = gen < 0 || o.gen.indexOf(gen) >= 0;
+      var okI = !c.i || o.idioma === c.i, okG = gen === -1 || o.gen.indexOf(gen) >= 0;
       if (okI && okG) {
         var vistas = {};
         for (k = 0; k < eds.length; k++) if (!vistas[eds[k].fam]) { vistas[eds[k].fam] = 1; soma(cont.fam, eds[k].fam); }
