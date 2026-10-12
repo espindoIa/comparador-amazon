@@ -97,6 +97,7 @@ LIVROS_MIN_AVISO = 50
 # que a Amazon tenha mudado o layout; a execução avisa. (O catálogo guarda o último valor não vazio, então
 # só a leitura do dia mostra a falha; a data e o idioma não vêm em todo card e ficam de fora.)
 CAMPOS_ESPERADOS = ("imagem", "autor", "obra")
+AVISO_LAYOUT = "o layout da página de busca pode ter mudado"
 PREENCHIMENTO_MIN = 0.8
 ITENS_MIN_PREENCHIMENTO = 200
 
@@ -476,7 +477,7 @@ def varrer(
 
     _fechar_dia_se_completo(conn, grupo, desde)
     if falta := detalhes_em_falta(pl.itens, pl.com):
-        pl.avisos.append(f"poucos itens com {', '.join(falta)}: o layout da página de busca pode ter mudado")
+        pl.avisos.append(f"poucos itens com {', '.join(falta)}: {AVISO_LAYOUT}")
     corridos = max((relogio() - inicio) / 60, 1e-9)
     conn.execute(
         "UPDATE execucoes SET finalizada_em = ?, paginas = ?, itens = ?, bloqueios = ?, erros = ?, curtas = ?, "

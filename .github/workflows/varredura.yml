@@ -19,6 +19,7 @@
 #   cópia nova com data no nome e só então apaga as antigas. Ficam as 14 mais recentes e a
 #   última de cada um dos 30 dias anteriores (scripts/podar_copias.py; ~10–20 MB cada).
 # - A primeira execução do dia falha (e o GitHub avisa por e-mail) se ONTEM ficou incompleto.
+# - Qualquer execução falha se os cards vierem sem capa ou autor (sinal de layout novo da Amazon).
 name: varredura
 
 on:
@@ -127,7 +128,7 @@ jobs:
           [ -f "$DB" ] || exit 0
           EXIGIR=""; [ "$PRIMEIRA_DO_DIA" = "true" ] && EXIGIR="--exigir-ontem"
           if [ "$ALVO" = vendidos ]; then QUAL=(--vendidos); else QUAL=(--no "$ALVO"); fi
-          python -m comparador --db "$DB" catalogo "${QUAL[@]}" $EXIGIR | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m comparador --db "$DB" catalogo "${QUAL[@]}" $EXIGIR --exigir-detalhes | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Opcional: check no healthchecks.io (período 1 dia, tolerância 1 dia).
       - name: Avisa o healthchecks.io

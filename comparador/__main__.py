@@ -43,6 +43,8 @@ def main() -> None:
     k.add_argument("--vendidos", action="store_true", help="banco dos mais vendidos")
     k.add_argument("--exigir-ontem", action="store_true",
                    help="sai com código 1 se ontem não teve varredura completa (para alertas)")
+    k.add_argument("--exigir-detalhes", action="store_true",
+                   help="sai com código 1 se a última execução avisou que os cards vieram sem capa ou autor (para alertas)")
 
     g = sub.add_parser("grafico", help="gráfico HTML do histórico de preço de um livro (números e gráfico, sem conclusões)")
     g.add_argument("livro", help="ASIN ou parte do título")
@@ -123,6 +125,9 @@ def main() -> None:
         ontem = db.hoje_brasil() - timedelta(days=1)
         if args.exigir_ontem and ontem in c.lacunas:
             raise SystemExit(f"{ontem} ficou sem varredura completa")
+        ultima = conn.execute("SELECT observacao FROM execucoes ORDER BY id DESC LIMIT 1").fetchone()
+        if args.exigir_detalhes and ultima and varredura.AVISO_LAYOUT in (ultima[0] or ""):
+            raise SystemExit(f"a última execução avisou: {ultima[0]}")
 
 
 if __name__ == "__main__":
