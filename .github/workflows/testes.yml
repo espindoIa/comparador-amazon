@@ -1,0 +1,42 @@
+# Roda todos os testes (Python, JavaScript e os do navegador) em cada PR e em cada push na main.
+name: testes
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: pip install -r requirements.txt
+
+      # Os testes de navegador acham o Chromium pela variável COMPARADOR_NAVEGADOR.
+      - name: Instala o Chromium
+        run: |
+          python -m playwright install --with-deps chromium
+          echo "COMPARADOR_NAVEGADOR=$(python -c 'from playwright.sync_api import sync_playwright as s; p = s().start(); print(p.chromium.executable_path); p.stop()')" >> "$GITHUB_ENV"
+
+      - name: Testes
+        run: python -m unittest discover -s tests -v
