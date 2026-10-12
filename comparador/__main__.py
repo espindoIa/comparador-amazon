@@ -112,6 +112,10 @@ def main() -> None:
         print(f"{c.itens} itens no catálogo; {c.vistos_hoje} com preço lido hoje")
         print(f"hoje: {c.fatias_hoje} de {c.fatias} fatias lidas" + (" (dia completo)" if c.dia_completo else ""))
         print("dias sem varredura completa: " + (", ".join(map(str, c.lacunas)) if c.lacunas else "nenhum"))
+        n, fracoes = varredura.preenchimento(conn, varredura.inicio_do_dia())
+        if n:
+            print(f"detalhes dos {n} itens lidos hoje: " + ", ".join(
+                f"{nome} {fracoes[c]:.0%}" for c, nome in varredura.CAMPOS_PREENCHIMENTO.items()))
         for r in conn.execute("SELECT * FROM execucoes ORDER BY id DESC LIMIT 5"):
             print(f"execução {r['id']}: {r['iniciada_em']}  {r['paginas']} páginas, {r['itens']} preços, "
                   f"{r['bloqueios']} bloqueios, {r['erros']} erros, {r['curtas']} curtas, {r['ppm'] or '?'} pág/min"

@@ -33,7 +33,8 @@ from .busca import SEM_TETO, ItemBusca, LayoutDesconhecido, parse_busca, url_bus
 from .rede import PAUSA_APOS_BLOQUEIO, baixar_lote, guardar_html
 from .ritmo import Ritmo
 
-COLUNAS_DETALHE = ("autor", "imagem", "publicado", "idioma", "obra")
+COLUNAS_DETALHE = {"autor": "TEXT", "imagem": "TEXT", "publicado": "TEXT", "idioma": "TEXT", "obra": "TEXT",
+                   "nota": "INTEGER", "avaliacoes": "INTEGER"}
 SCHEMA = Path(__file__).with_name("schema_catalogo.sql")
 
 NO_HQ_MANGA = "7842710011"  # Livros > HQs, Mangás e Graphic Novels
@@ -91,6 +92,13 @@ PAGINAS_MIN_VAZIA = 5
 # No fim de uma fatia, avisa se leu menos de QUEDA_LIVROS da quantidade de livros da passada anterior.
 QUEDA_LIVROS = 0.8
 LIVROS_MIN_AVISO = 50
+# Capa, autor e obra vêm em quase todo card (medido em out/2026: ~100%). Se numa execução com pelo menos
+# ITENS_MIN_PREENCHIMENTO itens menos de PREENCHIMENTO_MIN deles vierem com um desses detalhes, é provável
+# que a Amazon tenha mudado o layout; a execução avisa. (O catálogo guarda o último valor não vazio, então
+# só a leitura do dia mostra a falha; a data e o idioma não vêm em todo card e ficam de fora.)
+CAMPOS_ESPERADOS = ("imagem", "autor", "obra")
+PREENCHIMENTO_MIN = 0.8
+ITENS_MIN_PREENCHIMENTO = 200
 
 
 @dataclass
@@ -127,9 +135,13 @@ def criar_schema(conn: sqlite3.Connection) -> None:
         if coluna not in {r[1] for r in conn.execute(f"PRAGMA table_info({tabela})")}:
             conn.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
     existentes = {r[1] for r in conn.execute("PRAGMA table_info(catalogo)")}
-    for coluna in COLUNAS_DETALHE:                      # banco anterior aos detalhes do livro
+    for coluna, tipo in COLUNAS_DETALHE.items():        # banco anterior aos detalhes do livro
         if coluna not in existentes:
-            conn.execute(f"ALTER TABLE catalogo ADD COLUMN {coluna} TEXT")
+            conn.execute(f"ALTER TABLE catalogo ADD COLUMN {coluna} {tipo}")
+    if not conn.execute("SELECT 1 FROM generos LIMIT 1").fetchone():
+        # Banco anterior à tabela de gêneros: começa pelo gênero em que cada livro foi visto primeiro.
+        conn.execute("INSERT OR IGNORE INTO generos (asin, no) SELECT asin, no FROM catalogo "
+                     "WHERE no IS NOT NULL AND no != ?", (NO_LIVROS,))
     conn.commit()
 
 
@@ -238,15 +250,18 @@ def _instante(iso: str) -> datetime:
 
 def registrar(conn: sqlite3.Connection, item: ItemBusca, no: str, quando: str) -> None:
     conn.execute(
-        "INSERT INTO catalogo (asin, titulo, formato, autor, imagem, publicado, idioma, obra, no, "
-        "primeiro_visto, ultimo_visto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (asin) DO UPDATE SET "
+        "INSERT INTO catalogo (asin, titulo, formato, autor, imagem, publicado, idioma, obra, nota, avaliacoes, no, "
+        "primeiro_visto, ultimo_visto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (asin) DO UPDATE SET "
         "titulo = COALESCE(excluded.titulo, titulo), formato = COALESCE(excluded.formato, formato), "
         "autor = COALESCE(excluded.autor, autor), imagem = COALESCE(excluded.imagem, imagem), "
         "publicado = COALESCE(excluded.publicado, publicado), idioma = COALESCE(excluded.idioma, idioma), "
-        "obra = COALESCE(excluded.obra, obra), ultimo_visto = excluded.ultimo_visto",
+        "obra = COALESCE(excluded.obra, obra), nota = COALESCE(excluded.nota, nota), "
+        "avaliacoes = COALESCE(excluded.avaliacoes, avaliacoes), ultimo_visto = excluded.ultimo_visto",
         (item.asin, item.titulo, item.formato, item.autor, item.imagem, item.publicado, item.idioma,
-         item.obra, no, quando, quando),
+         item.obra, item.nota, item.avaliacoes, no, quando, quando),
     )
+    if no != NO_LIVROS:   # o ranking geral não é gênero; um livro pode estar em vários gêneros
+        conn.execute("INSERT OR IGNORE INTO generos (asin, no) VALUES (?, ?)", (item.asin, no))
     ultimo = conn.execute(
         "SELECT id, preco_centavos, preco_capa_centavos, ate FROM historico "
         "WHERE asin = ? ORDER BY id DESC LIMIT 1", (item.asin,)
@@ -281,6 +296,7 @@ class Placar:
     curtas: int = 0
     falhas_seguidas: int = 0     # lotes seguidos com alguma falha
     avisos: list = field(default_factory=list)
+    com: dict = field(default_factory=dict)   # itens lidos com cada detalhe esperado (ver CAMPOS_ESPERADOS)
 
     @property
     def tentativas(self) -> int:
@@ -395,6 +411,8 @@ def varrer(
         quando = db.agora()
         for item in pagina.itens:
             registrar(conn, item, f.no, quando)
+            for c in CAMPOS_ESPERADOS:
+                pl.com[c] = pl.com.get(c, 0) + bool(getattr(item, c))
         pl.itens += len(pagina.itens)
 
         ultima = min(pagina.ultima_pagina or pag, limite)
@@ -457,6 +475,8 @@ def varrer(
             dormir(espera)
 
     _fechar_dia_se_completo(conn, grupo, desde)
+    if falta := detalhes_em_falta(pl.itens, pl.com):
+        pl.avisos.append(f"poucos itens com {', '.join(falta)}: o layout da página de busca pode ter mudado")
     corridos = max((relogio() - inicio) / 60, 1e-9)
     conn.execute(
         "UPDATE execucoes SET finalizada_em = ?, paginas = ?, itens = ?, bloqueios = ?, erros = ?, curtas = ?, "
@@ -476,6 +496,26 @@ class Cobertura:
     fatias_hoje: int        # fatias já lidas por inteiro hoje
     dia_completo: bool
     lacunas: list           # dias (date) sem varredura completa, da primeira execução até ontem
+
+
+CAMPOS_PREENCHIMENTO = {"imagem": "capa", "autor": "autor", "publicado": "data", "idioma": "idioma",
+                        "obra": "obra", "avaliacoes": "avaliações"}
+
+
+def preenchimento(conn: sqlite3.Connection, desde: str) -> tuple[int, dict[str, float]]:
+    """Itens lidos desde `desde` e a fração deles com cada detalhe (capa, autor...) no catálogo."""
+    colunas = ", ".join(f"COUNT({c})" for c in CAMPOS_PREENCHIMENTO)
+    r = conn.execute(f"SELECT COUNT(*), {colunas} FROM catalogo WHERE ultimo_visto >= ?", (desde,)).fetchone()
+    n = r[0]
+    return n, {c: (r[i + 1] / n if n else 0.0) for i, c in enumerate(CAMPOS_PREENCHIMENTO)}
+
+
+def detalhes_em_falta(n: int, com: dict[str, int]) -> list[str]:
+    """Detalhes que deveriam vir em quase todo card e vieram em poucos dos `n` itens lidos (`com[campo]`
+    = quantos vieram com ele): sinal de que a Amazon mudou o layout e o parser deixou de achá-los."""
+    if n < ITENS_MIN_PREENCHIMENTO:
+        return []
+    return [CAMPOS_PREENCHIMENTO[c] for c in CAMPOS_ESPERADOS if com.get(c, 0) < PREENCHIMENTO_MIN * n]
 
 
 def cobertura(conn: sqlite3.Connection, grupo: str = NO_HQ_MANGA) -> Cobertura:

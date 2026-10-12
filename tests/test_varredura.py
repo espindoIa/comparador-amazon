@@ -49,6 +49,20 @@ class TestParseBusca(unittest.TestCase):
         self.assertEqual((outros["B0GRJPWPF2"].publicado, outros["B0GRJPWPF2"].idioma), ("2026-04-16", None))
         self.assertEqual(outros["658991284X"].obra, "B09HNF5J57")       # o card é do Kindle; a capa dura é a mesma obra
 
+    def test_nota_e_avaliacoes_valem_para_todos_os_formatos_do_card(self):
+        itens = {i.asin: i for i in parse_busca(ler("busca_formatos.html")).itens}
+        self.assertEqual((itens["8577870405"].nota, itens["8577870405"].avaliacoes), (49, 2713))
+        self.assertEqual((itens["B07TZNQB5S"].nota, itens["B07TZNQB5S"].avaliacoes), (49, 2713))   # Kindle do mesmo card
+        outros = {i.asin: i for i in parse_busca(ler("busca_fatia.html")).itens}
+        self.assertEqual((outros["658991284X"].nota, outros["658991284X"].avaliacoes), (46, 1801))  # "1.801"
+        self.assertEqual((outros["B0GRJPWPF2"].nota, outros["B0GRJPWPF2"].avaliacoes), (48, 75))
+
+    def test_card_sem_avaliacoes(self):
+        html = ler("busca_formatos.html")
+        sem = re.sub(r'aria-label="[\d.,]+ (de 5 estrelas[^"]*|classificaç[^"]*)"', 'aria-label="x"', html)
+        item = parse_busca(sem).itens[0]
+        self.assertEqual((item.nota, item.avaliacoes), (None, None))
+
     def test_card_do_kindle_com_fisico_secundario_e_kindle_unlimited(self):
         itens = {i.asin: i for i in parse_busca(ler("busca_fatia.html")).itens}
         # Card B09HNF5J57 é do Kindle (R$ 0,00 = Kindle Unlimited, descartado); o físico vale.
@@ -106,25 +120,31 @@ class TestParseBusca(unittest.TestCase):
                          "&s=price-asc-rank&page=3")
 
 
-def card(asin, preco, patrocinado=False):
-    """`preco=None`: livro sem preço de compra (indisponível); 0: Kindle Unlimited (R$ 0,00)."""
+def card(asin, preco, patrocinado=False, detalhes=True):
+    """`preco=None`: livro sem preço de compra (indisponível); 0: Kindle Unlimited (R$ 0,00).
+    `detalhes`: capa e autor como no layout real; sem eles, como se o layout tivesse mudado."""
     reais, cent = divmod(preco or 0, 100)
     link_preco = "" if preco is None else (
         f'<a href="/x/dp/{asin}/ref=sr"><span class="a-price" data-a-color="base">'
         f'<span class="a-offscreen">R$&nbsp;{reais},{cent:02d}</span></span></a>')
+    titulo = f"<h2><span>Livro {asin}</span></h2>"
+    if detalhes:
+        titulo = (f'<img class="s-image" src="https://m.media-amazon.com/images/I/C{asin}._AC_UY218_.jpg">'
+                  f'<div class="s-title-instructions-style">{titulo}'
+                  f'<div class="a-row a-color-secondary"><span>por Autor {asin}</span></div></div>')
     return f"""<div data-component-type="s-search-result" data-asin="{asin}">
       {'<span class="puis-sponsored-label-text">Patrocinado</span>' if patrocinado else ''}
-      <h2><span>Livro {asin}</span></h2>
+      {titulo}
       <a href="/x/dp/{asin}/ref=sr">Capa Comum</a>
       {link_preco}</div>"""
 
 
-def pagina_busca(itens, *, ultima, total, primeiro=1, patrocinado=False):
+def pagina_busca(itens, *, ultima, total, primeiro=1, patrocinado=False, detalhes=True):
     paginacao = "".join(f'<span class="s-pagination-item">{n}</span>' for n in range(1, (ultima or 0) + 1))
     return f"""<html><title>Amazon.com.br</title><body>
       <div data-component-type="s-result-info-bar"><h2>{primeiro}-{primeiro + len(itens) - 1} de
         {total} resultados</h2></div>
-      {''.join(card(a, p, patrocinado) for a, p in itens)}
+      {''.join(card(a, p, patrocinado, detalhes) for a, p in itens)}
       <span class="s-pagination-strip">{paginacao}</span></body></html>"""
 
 
@@ -138,6 +158,7 @@ class AmazonFalsa:
     no máximo 400 páginas, e a página 400 vem incompleta como na real."""
 
     POR_PAGINA = 16
+    detalhes = True     # False: cards sem capa e sem autor (layout mudou)
 
     def __init__(self, precos: dict[str, int], falhas: list[Resposta] | None = None):
         self.precos, self.falhas, self.chamadas = precos, list(falhas or []), []
@@ -157,7 +178,8 @@ class AmazonFalsa:
         fatia = itens[ini:ini + self.POR_PAGINA] if pag <= ultima else []
         if pag == 400:
             fatia = fatia[:6]
-        return Resposta(pagina_busca([(a, p) for p, a in fatia], ultima=ultima, total=len(itens), primeiro=ini + 1))
+        return Resposta(pagina_busca([(a, p) for p, a in fatia], ultima=ultima, total=len(itens), primeiro=ini + 1,
+                                     detalhes=self.detalhes))
 
 
 class AmazonFalsaVendidos(AmazonFalsa):
@@ -177,7 +199,7 @@ class AmazonFalsaVendidos(AmazonFalsa):
         pag = int(q["page"][0])
         ini = (pag - 1) * self.POR_PAGINA
         itens = lista[ini:ini + self.POR_PAGINA] if pag <= 75 else []
-        return Resposta(pagina_busca(itens, ultima=400, total=90000, primeiro=ini + 1))
+        return Resposta(pagina_busca(itens, ultima=400, total=90000, primeiro=ini + 1, detalhes=self.detalhes))
 
 
 class TestVarredura(unittest.TestCase):
@@ -398,6 +420,59 @@ class TestMaisVendidos(unittest.TestCase):
         varredura.registrar(self.conn, ItemBusca("A000000001", "Capa comum", "X", 500), "1", "2026-10-03T12:00:00+00:00")
         r = self.conn.execute("SELECT autor, imagem, obra, primeiro_visto FROM catalogo").fetchone()
         self.assertEqual(tuple(r), ("Fulano", "abc", "A000000001", "a"))   # leitura sem detalhes não apaga
+
+
+    def test_banco_sem_generos_comeca_pelo_no_de_cada_livro(self):
+        self.conn.executescript(
+            "CREATE TABLE catalogo (asin TEXT PRIMARY KEY, titulo TEXT, formato TEXT, no TEXT, "
+            "primeiro_visto TEXT NOT NULL, ultimo_visto TEXT NOT NULL);"
+            f"INSERT INTO catalogo VALUES ('A000000001', 'X', 'Capa comum', '7882388011', 'a', 'b'),"
+            f"('A000000002', 'Y', 'Kindle', '{varredura.NO_LIVROS}', 'a', 'b');")
+        varredura.criar_schema(self.conn)
+        self.assertEqual([tuple(r) for r in self.conn.execute("SELECT asin, no FROM generos")], [("A000000001", "7882388011")])
+        cols = {c[1]: c[2] for c in self.conn.execute("PRAGMA table_info(catalogo)")}
+        self.assertEqual((cols["nota"], cols["avaliacoes"]), ("INTEGER", "INTEGER"))
+
+    def test_generos_acumulam_e_avaliacoes_ficam_com_a_ultima_lida(self):
+        varredura.criar_schema(self.conn)
+        q = "2026-10-02T12:00:00+00:00"
+        varredura.registrar(self.conn, ItemBusca("A000000001", "Kindle", "X", 500, nota=46, avaliacoes=100), "7882388011", q)
+        varredura.registrar(self.conn, ItemBusca("A000000001", "Kindle", "X", 500, nota=47, avaliacoes=120), "7872687011", q)
+        varredura.registrar(self.conn, ItemBusca("A000000001", "Kindle", "X", 500), varredura.NO_LIVROS, q)
+        varredura.registrar(self.conn, ItemBusca("A000000001", "Kindle", "X", 500), "7882388011", q)
+        self.assertEqual(tuple(self.conn.execute("SELECT nota, avaliacoes, no FROM catalogo").fetchone()),
+                         (47, 120, "7882388011"))
+        self.assertEqual({r[0] for r in self.conn.execute("SELECT no FROM generos")}, {"7882388011", "7872687011"})
+
+    def test_preenchimento_dos_detalhes_no_catalogo(self):
+        varredura.criar_schema(self.conn)
+        hoje = varredura.inicio_do_dia()
+        for i in range(4):
+            com = i < 2
+            varredura.registrar(self.conn, ItemBusca(f"A{i:09d}", "Capa comum", "X", 500, autor="F" if com else None,
+                                                     imagem="abc" if com else None, obra=f"A{i:09d}",
+                                                     avaliacoes=3), "1", hoje)
+        n, fracoes = varredura.preenchimento(self.conn, hoje)
+        self.assertEqual((n, fracoes["imagem"], fracoes["obra"], fracoes["idioma"]), (4, 0.5, 1.0, 0.0))
+        self.assertEqual(varredura.preenchimento(self.conn, "2999-01-01T00:00:00+00:00"), (0, {
+            c: 0.0 for c in varredura.CAMPOS_PREENCHIMENTO}))
+
+    def test_execucao_avisa_quando_os_cards_param_de_trazer_capa_e_autor(self):
+        livros = [(f"G{i:09d}", 1000 + i) for i in range(300)]
+        amazon = AmazonFalsaVendidos({"1": livros})
+        eid = varredura.varrer(self.conn, amazon, vendidos=["1"], minutos=10_000, dormir=lambda s: None)
+        obs = self.conn.execute("SELECT observacao FROM execucoes WHERE id = ?", (eid,)).fetchone()[0]
+        self.assertNotIn("layout", obs)
+        self.assertEqual(self.conn.execute("SELECT imagem, autor FROM catalogo WHERE asin = 'G000000007'").fetchone()[:],
+                         ("CG000000007", "Autor G000000007"))
+        self.conn.execute("UPDATE fatias SET ultima_passada = '2000-01-01T00:00:00+00:00'")   # dia seguinte
+        self.conn.execute("DELETE FROM dias")
+        amazon.detalhes = False
+        eid = varredura.varrer(self.conn, amazon, vendidos=["1"], minutos=10_000, dormir=lambda s: None)
+        obs = self.conn.execute("SELECT observacao FROM execucoes WHERE id = ?", (eid,)).fetchone()[0]
+        self.assertIn("poucos itens com capa, autor: o layout da página de busca pode ter mudado", obs)
+        self.assertEqual(self.conn.execute("SELECT imagem FROM catalogo WHERE asin = 'G000000007'").fetchone()[0],
+                         "CG000000007")    # o que já se sabia continua lá
 
 
 CACHORROS = Resposta("<html><head><title>Amazon.com.br Algo deu errado</title></head></html>", 503)
