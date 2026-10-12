@@ -133,6 +133,9 @@
 
   function etiquetaIdioma(o) { return o.idioma && o.idioma !== 'Português' ? ' <span class="tag">' + esc(o.idioma) + '</span>' : ''; }
   function subtitulo(o, extra) { return [esc(o.autor), o.ano || '', extra].filter(Boolean).join(' · ') + etiquetaIdioma(o); }
+  // edição no menor preço já registrado (com 14+ dias de coleta e abaixo do preço mais comum, ou seja, o preço variou)
+  function noMenor(e) { return !!(e.menor && e.preco <= e.menor && e.mc && e.preco < e.mc); }
+  var MENOR = '<span class="pill dn">menor preço registrado</span>';
   function pillComum(preco, mc) {
     if (!mc) return '';
     var p = Math.round((preco - mc) / mc * 100);
@@ -149,7 +152,7 @@
     var formatos = o.eds.length > 1 ? o.eds.map(function (e) { return '<span' + (e === m ? ' class="on"' : '') + '>' + esc(e.fmt) + ' ' + brl(e.preco) + '</span>'; }).join('') : '<span>' + esc(m.fmt) + '</span>';
     var velho = m.idade > 1 && idx ? ' <span class="pill wr">preço de ' + L.dmes(idx.hoje - m.idade) + '</span>' : '';
     return '<li><a class="row" href="./?livro=' + m.asin + '" data-r>' + capa(o) + '<div class="bd"><div class="tt">' + esc(o.t) + '</div>' +
-      '<div class="sub">' + subtitulo(o) + '</div><div class="pr">' + (preco || ((eds.length > 1 ? '<span class="de">a partir de</span>' : '') + '<b>' + brl(m.preco) + '</b>' + pillComum(m.preco, m.mc) + velho)) +
+      '<div class="sub">' + subtitulo(o) + '</div><div class="pr">' + (preco || ((eds.length > 1 ? '<span class="de">a partir de</span>' : '') + '<b>' + brl(m.preco) + '</b>' + (noMenor(m) ? MENOR : pillComum(m.preco, m.mc)) + velho)) +
       '</div><div class="eds">' + formatos + '</div></div>' + (o.eds.some(function (e) { return sv[e.asin]; }) ? SALVO : '') + '</a></li>';
   }
   function esqueleto(n) {
@@ -161,11 +164,12 @@
       '<button type="button" class="btn pri" data-acao="recarregar">Tentar de novo</button></div></div>';
   }
   // cartão de capa (estantes e grades): e = edição; ant = preço anterior (riscado), se houver
-  function cartao(e, ant) {
-    var selo = ant ? '<span class="selo pill dn">−' + Math.round((ant - e.preco) / ant * 100) + '%</span>' : '';
+  // selo: texto sobre a capa (ex.: "no seu preço"); sem preço (e.preco = 0), o cartão não mostra preço
+  function cartao(e, ant, selo) {
+    selo = ant ? '<span class="selo pill dn">−' + Math.round((ant - e.preco) / ant * 100) + '%</span>' : selo ? '<span class="selo pill dn">' + esc(selo) + '</span>' : '';
     return '<a class="cartao" href="./?livro=' + e.asin + '" data-r>' + capa(e.o, 'm').replace(/<\/div>$/, selo + '</div>') +
-      '<span class="t">' + esc(e.o.t) + '</span><span class="a">' + esc(e.o.autor || e.fmt) + '</span>' +
-      '<span class="p"><b>' + brl(e.preco) + '</b>' + (ant ? '<s>' + brl(ant) + '</s>' : '') + '</span></a>';
+      '<span class="t">' + esc(e.o.t) + '</span>' + (e.o.autor || e.fmt ? '<span class="a">' + esc(e.o.autor || e.fmt) + '</span>' : '') +
+      (e.preco ? '<span class="p"><b>' + brl(e.preco) + '</b>' + (ant ? '<s>' + brl(ant) + '</s>' : '') + '</span>' : '') + '</a>';
   }
   // No computador, a estante mostra uma fileira só (CSS). Se sobrou livro escondido, a seção ganha "Ver todos (N)",
   // que vira a estante numa grade; os cartões escondidos saem da ordem do teclado (inert). No celular ela rola.
@@ -238,6 +242,9 @@
       out.push('<section class="boas sec"><h1>Histórico de preço de livros</h1><p>' + m.itens.toLocaleString('pt-BR') +
         ' livros da Amazon.com.br, com o preço lido todo dia.</p>' + (m.aviso ? '<p class="aviso">' + esc(m.aviso) + '</p>' : '') + '</section>');
       if (Lista.ler().length) out.push('<section class="sec" id="sua-lista"></section>');
+      var rec = Lista.recentes();
+      if (rec.length) out.push('<section class="sec"><div class="sec-h"><h2>Vistos recentemente</h2><button type="button" class="lnk" data-acao="limpar-recentes">Limpar</button></div><div class="estante">' +
+        rec.map(function (v) { return cartao({ asin: v.a, preco: 0, o: { t: v.t, img: v.img } }); }).join('') + '</div></section>');
       var prox = ev.filter(function (e) { return e[1] >= x.hoje; }).sort(function (a, b) { return a[1] - b[1]; })[0];
       if (prox) {
         var d = new Date((prox[1] - 719163) * 864e5), faltam = prox[1] - x.hoje;
@@ -245,6 +252,13 @@
           (faltam === 0 ? 'Hoje' : 'Daqui a ' + L.plural(faltam, 'dia', 'dias')) + '</p></div></section>');
       }
       out.push('<section class="sec" id="baixa"></section>');
+      var menores = (x.menor || []).map(function (a) { return x.porAsin[a]; }).filter(Boolean);
+      if (menores.length) out.push('<section class="sec"><div class="sec-h"><h2>No menor preço registrado</h2></div><div class="estante">' +
+        menores.slice(0, 24).map(function (e) { return cartao(e); }).join('') + '</div></section>');
+      var gens = x.gen.map(function (g, i) { return [g[0], g[1], (x.ngen || [])[i] || 0]; }).filter(function (g) { return g[2]; })
+        .sort(function (a, b) { return a[1].localeCompare(b[1], 'pt-BR'); });
+      if (gens.length) out.push('<section class="sec"><div class="sec-h"><h2>Gêneros</h2></div><div class="gens">' +
+        gens.map(function (g) { return '<a href="./?g=' + g[0] + '" data-r>' + esc(g[1]) + '<span>' + g[2].toLocaleString('pt-BR') + '</span></a>'; }).join('') + '</div></section>');
       app.innerHTML = out.join('');
       secaoBaixa(x);
       arrumarEstantes();
@@ -256,8 +270,9 @@
     var el = $('#sua-lista'); if (!el) return;
     var meus = Lista.ler().slice().reverse().map(function (a) { return x.porAsin[a]; }).filter(Boolean).slice(0, 12);
     if (!meus.length) { el.remove(); return; }
+    var alv = Lista.alvos();
     el.innerHTML = '<div class="sec-h"><h2>Sua lista</h2><a href="./?lista" data-r>Ver tudo</a></div><div class="estante">' +
-      meus.map(function (e) { return cartao(e); }).join('') + '</div>';
+      meus.map(function (e) { return cartao(e, 0, alv[e.asin] && e.preco <= alv[e.asin] ? 'no seu preço' : ''); }).join('') + '</div>';
     arrumarEstantes();
   }
   // "Baixaram de preço": uma estante; "Ver todos" vira uma grade com tudo
@@ -308,7 +323,11 @@
     var r = rotaAtual;
     if (!idx) { app.innerHTML = esqueleto(6); indice().then(function () { if (aindaEm(r)) busca(false); }, function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); }); return; }
     resultado = curta() ? { lista: [], cont: { fam: {}, i: {}, g: {} } } : buscar(idx);
-    if (!$('#ferr')) app.innerHTML = '<div class="ferr" id="ferr"></div><div aria-live="polite" class="cont" id="cont-res"></div><div id="res" style="margin-top:10px"></div>';
+    if (!$('#ferr')) app.innerHTML = '<h1 class="busca-h" id="bh" hidden></h1><div class="ferr" id="ferr"></div><div aria-live="polite" class="cont" id="cont-res"></div><div id="res" style="margin-top:10px"></div>';
+    // navegando por um gênero (sem texto): o nome do gênero vira o título da página
+    var gi = S.g ? idx.genPorNo[S.g] : null, bh = $('#bh');
+    bh.hidden = gi == null || !!S.q.trim();
+    if (!bh.hidden) { bh.textContent = idx.gen[gi][1]; titulo(idx.gen[gi][1]); }
     // parte nova do índice enquanto a pessoa mexe num filtro (campo de preço, lista aberta): não refaz a barra
     if (!parte || !$('#ferr').contains(document.activeElement)) ferramentas();
     resultados(); if (!parte) rolar();
@@ -429,6 +448,7 @@
       var lt = L.limpar(l.t || asin), o = { t: lt.t, autor: l.autor || '', img: l.imagem || '', ano: l.publicado ? +l.publicado.slice(0, 4) : 0, idioma: l.idioma || lt.idioma };
       var tr = l.h, ult = tr[tr.length - 1][1], f = L.fatos(tr, ult), recente = m.ultima_coleta == null || ult >= m.ultima_coleta - 1;
       titulo(o.t);
+      Lista.visto({ a: asin, t: o.t, img: o.img, p: f.preco });
       var det = [];
       if (l.nota) det.push('<span class="nota"><svg viewBox="0 0 24 24" aria-hidden="true">' + IC.estrela + '</svg>' + (l.nota / 10).toFixed(1).replace('.', ',') +
         (l.avaliacoes ? ' · ' + L.plural(l.avaliacoes, 'avaliação', 'avaliações').replace(/^\d+/, l.avaliacoes.toLocaleString('pt-BR')) : '') + '</span>');
@@ -442,16 +462,19 @@
         '<div class="acoes"><a class="btn pri" href="' + L.linkAmazon(asin) + '" target="_blank" rel="noopener noreferrer">Ver na Amazon ' + ic('ext', 's') + '</a>' +
         '<button type="button" class="btn salvar" data-salvar="' + asin + '"></button>' +
         '<button type="button" class="btn ico" data-acao="compartilhar" aria-label="Compartilhar">' + ic('share', 's') + '<span class="rot">Compartilhar</span></button></div></aside>' +
-        '<div class="l-corpo"><header class="l-cab"><h1>' + esc(o.t) + '</h1>' + (o.autor ? '<p class="aut">' + esc(o.autor) + '</p>' : '') +
-        '<p class="det">' + det.map(function (d) { return '<span>' + d + '</span>'; }).join('') + '</p></header>' +
+        '<div class="l-corpo"><header class="l-cab"><h1>' + esc(o.t) + '</h1>' +
+        (o.autor ? '<p class="aut"><a href="./?q=' + encodeURIComponent(l.autor1 || o.autor) + '" data-r>' + esc(o.autor) + '</a></p>' : '') +
+        '<p class="det">' + det.map(function (d) { return '<span>' + d + '</span>'; }).join('') + '</p>' +
+        (l.gen ? '<p class="l-gens">' + l.gen.map(function (g) { return '<a href="./?g=' + g[0] + '" data-r>' + esc(g[1]) + '</a>'; }).join('') + '</p>' : '') + '</header>' +
         (eds.length > 1 ? '<div class="fmts" id="fmts" role="group" aria-label="Formato">' + eds.map(function (d) {
           return '<a class="fmt" href="./?livro=' + d[0] + '" data-r data-sub' + (d[0] === asin ? ' aria-current="true"' : '') + '><span>' + esc(d[1]) + '</span><b>' + brl(d[0] === asin ? f.preco : d[2]) + '</b></a>';
         }).join('') + '</div>' : '') +
         '<div class="compra"><div class="preco-g"><b>' + brl(f.preco) + '</b><span class="mu sm">' + (eds.length > 1 ? '' : esc(l.f || 'Livro') + ' · ') +
         (recente ? 'em ' + L.dl(ult) : 'último preço visto, em ' + L.dl(ult)) + '</span></div>' +
-        '<div class="fat">' + (recente ? '' : '<span class="pill wr">Sem coleta recente</span>') + L.comparacoes(f) + '</div></div>' +
+        '<div class="fat">' + (recente ? '' : '<span class="pill wr">Sem coleta recente</span>') + (menorRegistrado(tr, f) ? MENOR.replace('menor', 'Menor') : '') + L.comparacoes(f) + '</div></div>' +
         '<div class="l-resto"><section class="card pad sec"><div id="graf"></div>' + L.estatisticas(f, tr[0][0]) + '</section>' +
-        L.secaoEventos(tr, ev, m.ultima_coleta || ult) + outrasEdicoes(l.outras) + '</div></div></div>';
+        L.secaoEventos(tr, ev, m.ultima_coleta || ult) + estante('Outras edições', l.outras) +
+        estante('Mais de ' + (l.autor1 || o.autor), l.mesmo_autor) + '</div></div></div>';
       botaoSalvar();
       arrumarEstantes();
       L.grafico($('#graf'), L.dadosGrafico(tr, ev));
@@ -463,12 +486,19 @@
     var na = Lista.tem(b.dataset.salvar);
     b.setAttribute('aria-pressed', String(na)); b.innerHTML = ic('salvar', 's') + (na ? 'Na sua lista' : 'Salvar');
   }
-  // outras edições do mesmo título e autor (calculadas em site.py): [[asin, título, capa, formato, preço], ...]
-  function outrasEdicoes(outras) {
-    if (!outras || !outras.length) return '';
-    return '<section class="sec"><div class="sec-h"><h2>Outras edições</h2></div><div class="estante">' + outras.map(function (c) {
+  // estante de livros calculada em site.py (outras edições, mais do autor): [[asin, título, capa, formato, preço], ...]
+  function estante(tit, livros) {
+    if (!livros || !livros.length) return '';
+    return '<section class="sec"><div class="sec-h"><h2>' + esc(tit) + '</h2></div><div class="estante">' + livros.map(function (c) {
       return cartao({ asin: c[0], preco: c[4], fmt: c[3], o: { t: L.limpar(c[1]).t, img: c[2], autor: c[3] } });
     }).join('') + '</div></section>';
+  }
+  // o preço de agora é o menor já registrado? (14+ dias de coleta e o preço já foi maior)
+  function menorRegistrado(tr, f) {
+    if (f.diasObservados < L.MIN_COMUM) return false;
+    var min = Infinity, max = 0;
+    tr.forEach(function (t) { min = Math.min(min, t[2]); max = Math.max(max, t[2]); });
+    return f.preco <= min && max > min;
   }
   function naoEncontrado() {
     titulo('Livro não encontrado');
@@ -498,13 +528,21 @@
     var d = dias.map(function (x, i) { return (i ? 'L' + X(x) + ',' + Y(pd.preco[dias[i - 1]]) + 'L' : 'M') + X(x) + ',' + Y(pd.preco[x]); }).join('');
     return '<svg class="spark" viewBox="0 0 96 32" aria-hidden="true"><path d="' + d + '"/></svg>';
   }
-  function linhaLista(i, base, remover) {
+  // preço-alvo (só na sua lista): "Definir preço-alvo", ou o alvo e se o preço já chegou nele
+  function alvoHtml(i, alv) {
+    var a = alv && alv[i.asin];
+    if (!alv) return '';
+    if (!a) return '<div class="alvo"><button type="button" class="lnk" data-alvo="' + i.asin + '">Definir preço-alvo</button></div>';
+    return '<div class="alvo"><span>Seu preço: ' + brl(a) + '</span>' + (i.preco <= a ? '<span class="pill dn">chegou</span>' : '<span class="mu">faltam ' + brl(i.preco - a) + '</span>') +
+      '<button type="button" class="lnk" data-alvo="' + i.asin + '">Mudar</button></div>';
+  }
+  function linhaLista(i, base, remover, alv) {
     if (i.fora) return '<li><div class="row">' + placeholder(i.asin, 'cv p') + '<div class="bd"><div class="tt">' + i.asin + '</div><div class="sub">Sem preço registrado</div></div>' +
       (remover ? '<div class="lado"><button type="button" class="ib rm" data-remover="' + i.asin + '" aria-label="Remover da lista">' + ic('x', 's') + '</button></div>' : '') + '</div></li>';
     var antes = base && base.precos[i.asin], dif = antes && antes !== i.preco ? i.preco - antes : 0;
     var mud = dif ? '<span class="pill ' + (dif < 0 ? 'dn' : 'up') + '">' + (dif < 0 ? '▼ ' : '▲ ') + brl(Math.abs(dif)) + ' desde ' + L.dmes(base.dia) + '</span>' : '';
     return '<li><div class="row">' + capa(i.o, 'p') + '<div class="bd"><a class="tt esticar" href="./?livro=' + i.asin + '" data-r>' + esc(i.o.t) + '</a><div class="sub">' + subtitulo(i.o, esc(i.fmt)) + '</div>' +
-      '<div class="pr"><b>' + brl(i.preco) + '</b>' + mud + pillComum(i.preco, i.mc) + (i.recente ? '' : '<span class="pill wr">último preço visto em ' + L.dl(i.ult) + '</span>') + '</div></div>' +
+      '<div class="pr"><b>' + brl(i.preco) + '</b>' + mud + pillComum(i.preco, i.mc) + (i.recente ? '' : '<span class="pill wr">último preço visto em ' + L.dl(i.ult) + '</span>') + '</div>' + alvoHtml(i, alv) + '</div>' +
       '<div class="lado">' + (remover ? '<button type="button" class="ib rm" data-remover="' + i.asin + '" aria-label="Remover ' + esc(i.o.t) + ' da lista">' + ic('x', 's') + '</button>' : '') + spark(i.tr, i.ult) + '</div></div></li>';
   }
   function lista() {
@@ -521,10 +559,12 @@
       if (!aindaEm(r)) return;
       var m = rs[0], hoje = m.ultima_coleta, itens = rs.slice(1).map(function (it) { return itemLista(it, hoje); });
       var precos = {}; itens.forEach(function (i) { if (!i.fora) precos[i.asin] = i.preco; });
-      var base = Lista.visita(hoje, precos), mais = 0, menos = 0;
+      var base = Lista.visita(hoje, precos), mais = 0, menos = 0, alv = Lista.alvos();
+      var noAlvo = itens.filter(function (i) { return !i.fora && alv[i.asin] && i.preco <= alv[i.asin]; }).length;
       itens.forEach(function (i) { var a = base && base.precos[i.asin]; if (a && !i.fora) { if (i.preco < a) menos++; else if (i.preco > a) mais++; } });
       var ordens = [['recentes', 'Adicionados por último'], ['preco', 'Menor preço']];
       if (base) ordens.push(['queda', 'Maior queda desde a última visita']);
+      if (Object.keys(alv).length) ordens.push(['alvo', 'Mais perto do seu preço']);
       if (itens.some(function (i) { return i.mc; })) ordens.push(['abaixo', 'Mais abaixo do preço comum']);
       ordens.push(['titulo', 'Título (A a Z)']);
       if (!ordens.some(function (o) { return o[0] === ordemLista; })) ordemLista = 'recentes';
@@ -532,16 +572,18 @@
       if (ordemLista === 'recentes') v.reverse();
       else if (ordemLista === 'preco') v.sort(function (a, b) { return (a.fora ? 1e12 : a.preco) - (b.fora ? 1e12 : b.preco); });
       else if (ordemLista === 'queda') v.sort(function (a, b) { return dif(a) - dif(b); });
+      else if (ordemLista === 'alvo') v.sort(function (a, b) { var d = function (i) { return i.fora || !alv[i.asin] ? 9 : (i.preco - alv[i.asin]) / alv[i.asin]; }; return d(a) - d(b); });
       else if (ordemLista === 'abaixo') v.sort(function (a, b) { return (a.mc ? (a.preco - a.mc) / a.mc : 9) - (b.mc ? (b.preco - b.mc) / b.mc : 9); });
       else v.sort(function (a, b) { var p = a.fora ? '~' : norm(a.o.t), s = b.fora ? '~' : norm(b.o.t); return p < s ? -1 : p > s ? 1 : 0; });
       app.innerHTML = '<div class="lista-h"><div><h1>Minha lista</h1><p class="mu" style="margin:4px 0 0">' + L.plural(itens.length, 'livro', 'livros') + ' · salva neste aparelho</p></div>' +
         '<div class="ctl"><label class="sel"><span class="vh">Ordenar por</span><select id="ordl">' +
         ordens.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === ordemLista ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' + ic('baixo', 's') + '</label>' +
         '<button type="button" class="btn sm" data-acao="compartilhar-lista">' + ic('share', 's') + 'Compartilhar</button></div></div>' +
-        (base && (mais || menos) ? '<div class="resumo"><span class="mu">Desde sua visita de ' + L.dmes(base.dia) + ':</span>' +
+        (base && (mais || menos) || noAlvo ? '<div class="resumo">' + (base && (mais || menos) ? '<span class="mu">Desde sua visita de ' + L.dmes(base.dia) + ':</span>' +
           (menos ? '<span class="pill dn">▼ ' + L.plural(menos, 'ficou mais barato', 'ficaram mais baratos') + '</span>' : '') +
-          (mais ? '<span class="pill up">▲ ' + L.plural(mais, 'ficou mais caro', 'ficaram mais caros') + '</span>' : '') + '</div>' : '') +
-        '<ul class="lst" id="lst">' + v.map(function (i) { return linhaLista(i, base, true); }).join('') + '</ul>';
+          (mais ? '<span class="pill up">▲ ' + L.plural(mais, 'ficou mais caro', 'ficaram mais caros') + '</span>' : '') : '') +
+          (noAlvo ? '<span class="pill dn">' + L.plural(noAlvo, 'chegou no seu preço', 'chegaram no seu preço') + '</span>' : '') + '</div>' : '') +
+        '<ul class="lst" id="lst">' + v.map(function (i) { return linhaLista(i, base, true, alv); }).join('') + '</ul>';
       rolar();
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar sua lista'); });
   }
@@ -573,7 +615,9 @@
         '<dt>Preço mais comum</dt><dd>A mediana dos preços dos últimos 90 dias. Aparece com ' + L.MIN_COMUM + ' dias de coleta.</dd>' +
         '<dt>Menor e maior</dt><dd>O menor e o maior preço dos últimos 90 dias.</dd>' +
         '<dt>Preço de capa</dt><dd>O preço "De:" que a Amazon mostra riscado.</dd>' +
+        '<dt>Menor preço registrado</dt><dd>O menor preço desde o início da coleta, quando o livro tem ' + L.MIN_COMUM + ' dias de coleta ou mais.</dd>' +
         '<dt>Baixaram de preço</dt><dd>Queda de 5% ou mais nas duas últimas coletas.</dd>' +
+        '<dt>Preço-alvo</dt><dd>O preço que você quer pagar. Fica só neste aparelho; o site não manda avisos.</dd>' +
         '<dt>Datas de promoção</dt><dd>O preço no dia, comparado com o dos 90 dias anteriores.</dd></dl>' +
         '<h2>Limites</h2><ul><li>Só entram os ~2.000 mais vendidos de cada categoria, vendidos pela própria Amazon.</li>' +
         '<li>Dias sem coleta ficam em branco no gráfico.</li><li>O preço pode mudar a qualquer momento. Confira na loja.</li></ul>' +
@@ -610,11 +654,27 @@
       if (est) { est.className = 'grade'; [].forEach.call(est.children, function (c) { c.inert = false; }); }
       b.remove();
     }
+    else if (acao === 'limpar-recentes') { Lista.limparRecentes(); var sr = b.closest('section'); if (sr) sr.remove(); }
+    else if (b.dataset.alvo) {
+      var ali = b.closest('.alvo'), at = Lista.alvos()[b.dataset.alvo];
+      ali.innerHTML = '<form class="alvo-f" data-alvo-f="' + b.dataset.alvo + '"><label class="vh" for="alvo-v">Preço-alvo em reais</label>' +
+        '<input id="alvo-v" type="number" inputmode="decimal" min="0" step="0.01" placeholder="R$" value="' + (at ? (at / 100).toFixed(2) : '') + '">' +
+        '<button type="submit" class="btn sm pri">Salvar</button>' + (at ? '<button type="button" class="btn sm gh" data-acao="tirar-alvo">Tirar</button>' : '') + '</form>';
+      ali.querySelector('input').focus();
+    }
+    else if (acao === 'tirar-alvo') { Lista.definirAlvo(b.closest('form').dataset.alvoF, 0); lista(); }
     else if (acao === 'buscar') { q.focus(); scrollTo(0, 0); }
     else if (acao === 'recarregar') location.reload();
     else if (acao === 'compartilhar') compartilhar(location.href, document.title);
     else if (acao === 'compartilhar-lista') compartilhar(location.origin + location.pathname + '?lista=' + Lista.ler().join(','), 'Minha lista de livros');
     else if (acao === 'importar') { var n = Lista.importar(b.dataset.asins).adicionados; contador(); ir('./?lista', true); toast(L.plural(n, 'livro adicionado', 'livros adicionados') + ' à sua lista'); }
+  });
+  app.addEventListener('submit', function (e) {
+    var f = e.target.closest('[data-alvo-f]'); if (!f) return;
+    e.preventDefault();
+    var v = parseFloat(String(f.querySelector('input').value).replace(',', '.'));
+    Lista.definirAlvo(f.dataset.alvoF, isFinite(v) && v > 0 ? Math.round(v * 100) : 0);
+    lista();
   });
   window.addEventListener('popstate', function () { scrollAlvo = (history.state || {}).y || 0; desenhar(); });
   window.addEventListener('storage', function (e) { if (e.key === 'lista_v1') { contador(); if (rotaAtual.v === 'lista' && !rotaAtual.comp) lista(); } });

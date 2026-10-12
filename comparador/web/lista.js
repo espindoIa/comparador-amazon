@@ -41,6 +41,38 @@
     try { localStorage.setItem(VISTOS, JSON.stringify(s)); } catch (e) { }
     return s.b ? { dia: s.b.d, precos: s.b.p } : null;
   }
-  root.Lista = { ler: ler, tem: tem, alternar: alternar, remover: remover, inserir: inserir, extrair: extrair, importar: importar, exportar: exportar, visita: visita };
+  function lerJSON(k, padrao) { try { var v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? padrao : v; } catch (e) { return padrao; } }
+  function gravarJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
+
+  // Vistos recentemente: os últimos livros abertos neste aparelho, com o que é preciso para mostrar a capa
+  // sem baixar nada (título, código da capa e o preço quando foi visto).
+  var RECENTES = 'recentes_v1', MAX_RECENTES = 12;
+  function recentes() {
+    var v = lerJSON(RECENTES, []);
+    return Array.isArray(v) ? v.filter(function (x) { return x && ASIN.test(x.a); }) : [];
+  }
+  function visto(item) {
+    if (!item || !ASIN.test(item.a)) return;
+    var l = recentes().filter(function (x) { return x.a !== item.a; });
+    l.unshift({ a: item.a, t: String(item.t || '').slice(0, 160), img: String(item.img || '').slice(0, 40), p: Math.max(0, Math.round(+item.p || 0)) });
+    gravarJSON(RECENTES, l.slice(0, MAX_RECENTES));
+  }
+  function limparRecentes() { gravarJSON(RECENTES, []); }
+
+  // Preço-alvo de cada livro (centavos), só neste aparelho: a lista mostra quais já chegaram nele.
+  var ALVOS = 'alvos_v1';
+  function alvos() {
+    var v = lerJSON(ALVOS, {}), out = {};
+    if (v && typeof v === 'object' && !Array.isArray(v)) for (var k in v) if (ASIN.test(k) && +v[k] > 0) out[k] = Math.round(+v[k]);
+    return out;
+  }
+  function definirAlvo(asin, centavos) {
+    if (!ASIN.test(asin)) return;
+    var a = alvos();
+    if (centavos > 0) a[asin] = Math.round(centavos); else delete a[asin];
+    gravarJSON(ALVOS, a);
+  }
+  root.Lista = { ler: ler, tem: tem, alternar: alternar, remover: remover, inserir: inserir, extrair: extrair, importar: importar, exportar: exportar, visita: visita,
+    recentes: recentes, visto: visto, limparRecentes: limparRecentes, alvos: alvos, definirAlvo: definirAlvo };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.Lista;
 })(typeof window !== 'undefined' ? window : globalThis);

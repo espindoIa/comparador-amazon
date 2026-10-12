@@ -21,8 +21,9 @@ Dados gerados em `dados/` (textos vazios "" e números 0 = não informado; dias 
                  preço agora há pouco), "menor" (asins no menor preço registrado) e "ngen" (obras por gênero).
 - `h/XX.json`    histórico de ~1/256 dos livros (XX = hash de 1 byte do ASIN, em hexadecimal), carregado sob
                  demanda, com autor, imagem, publicado, idioma, nota, avaliações e gêneros quando conhecidos,
-                 os outros formatos da obra ("eds": [[asin, formato, preço]]) e outras edições do mesmo
-                 título e autor ("outras": [[asin, título, capa, formato, preço]]).
+                 os outros formatos da obra ("eds": [[asin, formato, preço]]), outras edições do mesmo
+                 título e autor ("outras": [[asin, título, capa, formato, preço]]) e as obras mais avaliadas
+                 do mesmo autor principal ("autor1" e "mesmo_autor", no formato de "outras").
 - `meta.json`    data da última coleta, totais e aviso (bancos simulados)
 - `eventos.json` promoções (de eventos.csv)
 """
@@ -57,6 +58,7 @@ PARTE_INICIAL = 15_000  # obras na primeira parte do índice (as mais avaliadas)
 PARTE = 40_000         # obras em cada uma das outras partes
 MAX_TITULO = 140       # caracteres do título no índice (o título inteiro fica no histórico)
 MAX_OUTRAS = 8
+MAX_AUTOR = 10         # "mais deste autor" na página do livro
 
 # formatos que aparecem nas listas de livros da Amazon mas não são livros: ficam fora da busca
 NAO_LIVRO = frozenset({
@@ -309,6 +311,28 @@ def _obra(asins: list[str], livros: dict[str, dict], t: dict[str, Tabela], hoje:
     return {"linha": linha, "eds": eds, "titulo": titulo, "autor": det["autor"] or "", "pop": linha[7]}
 
 
+def autor_principal(autor: str) -> str:
+    """O primeiro autor, como veio ("Machado de Assis, Fulano e outros." → "Machado de Assis")."""
+    return re.split(r",|;| e | & ", autor or "", maxsplit=1)[0].strip(" .")
+
+
+def _mesmo_autor(obras: list[dict], outras: dict[int, list[int]]) -> dict[int, list[int]]:
+    """Para cada obra, as mais avaliadas do mesmo autor principal (sem ela e sem as outras edições dela)."""
+    grupos: dict[str, list[int]] = {}
+    for i, o in enumerate(obras):                     # obras já vêm das mais avaliadas para as menos
+        autor = normalizar(autor_principal(o["autor"]))
+        if len(autor) >= 4 and autor not in AUTORES_GENERICOS:
+            grupos.setdefault(autor, []).append(i)
+    out: dict[int, list[int]] = {}
+    for membros in grupos.values():
+        if len(membros) < 2:
+            continue
+        for i in membros:
+            fora = {i, *outras.get(i, [])}
+            out[i] = [j for j in membros[:MAX_AUTOR + len(fora)] if j not in fora][:MAX_AUTOR]
+    return out
+
+
 def _outras(obras: list[dict]) -> dict[int, list[int]]:
     """Para cada obra, outras com o mesmo título-base e o mesmo autor (outras edições do mesmo livro)."""
     grupos: dict[tuple, list[int]] = {}
@@ -349,6 +373,7 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None) -> d
     obras = sorted((_obra(g, visiveis, t, hoje) for g in agrupar(visiveis)),
                    key=lambda o: (-o["pop"], o["titulo"].casefold(), o["eds"][0]))
     outras = _outras(obras)
+    autor = _mesmo_autor(obras, outras)
     obra_de = {a: i for i, o in enumerate(obras) for a in o["eds"]}
 
     # histórico de cada livro, com os outros formatos da obra e outras edições
@@ -365,9 +390,13 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None) -> d
             o = obras[i]
             if len(o["eds"]) > 1:
                 h["eds"] = [[a, livros[a]["f"] or "Livro", livros[a]["h"][-1][2]] for a in o["eds"]]
+            mini = lambda j: [obras[j]["eds"][0], obras[j]["titulo"], obras[j]["linha"][2],
+                              livros[obras[j]["eds"][0]]["f"] or "Livro", obras[j]["linha"][8][0][2]]
             if i in outras:
-                h["outras"] = [[obras[j]["eds"][0], obras[j]["titulo"], obras[j]["linha"][2],
-                                livros[obras[j]["eds"][0]]["f"] or "Livro", obras[j]["linha"][8][0][2]] for j in outras[i]]
+                h["outras"] = [mini(j) for j in outras[i]]
+            if autor.get(i):
+                h["mesmo_autor"] = [mini(j) for j in autor[i]]
+                h["autor1"] = autor_principal(o["autor"])
         fragmentos.setdefault(fragmento(asin), {})[asin] = h
     for chave, conteudo in fragmentos.items():
         (saida / "dados" / "h" / f"{chave}.json").write_text(_json(conteudo), encoding="utf-8")
