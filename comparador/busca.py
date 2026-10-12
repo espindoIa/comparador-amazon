@@ -49,6 +49,11 @@ class ItemBusca:
     titulo: str | None
     preco_centavos: int
     preco_capa_centavos: int | None = None
+    autor: str | None = None
+    imagem: str | None = None       # código da capa em m.media-amazon.com/images/I/<código>._AC_...jpg
+    publicado: str | None = None    # AAAA-MM-DD (a Amazon só mostra dia, mês e ano)
+    idioma: str | None = None       # "Português", quando o card diz "Edição Português"
+    obra: str | None = None         # ASIN do card: os formatos do mesmo card são a mesma obra
 
 
 @dataclass
@@ -95,6 +100,35 @@ def _formato(texto: str, titulo: str | None = None) -> str | None:
     return _FORMATOS.get(t.lower(), t)
 
 
+_MESES = {m: i for i, m in enumerate(
+    ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"), 1)}
+_DATA_RE = re.compile(r"^(\d{1,2}) (\w{3})\.? (\d{4})$")
+_IMAGEM_RE = re.compile(r"/images/I/([\w%+-]+?)\.")
+
+
+def _detalhes(card) -> dict:
+    """Autor, data, idioma e capa do card (a linha cinza sob o título: "Edição Português | por X | 5 ago. 2024")."""
+    out: dict = {}
+    img = card.select_one("img.s-image")
+    m = _IMAGEM_RE.search(img.get("src", "")) if img else None
+    if m:
+        out["imagem"] = m.group(1)
+    h2 = card.select_one("h2")
+    bloco = h2.find_parent(class_="s-title-instructions-style") if h2 else None
+    linha = bloco.select_one(".a-row.a-color-secondary") if bloco else None
+    if linha is None:
+        return out
+    texto = re.sub(r"\s+([,.])", r"\1", " ".join(linha.get_text(" ", strip=True).split()))
+    for parte in (p.strip() for p in texto.split("|")):
+        if parte.startswith("por "):
+            out["autor"] = parte[4:].strip().rstrip(".") + ("." if parte.endswith("outros.") else "") or None
+        elif parte.lower().startswith("edição "):
+            out["idioma"] = parte[7:].strip() or None
+        elif (d := _DATA_RE.match(parte)) and d.group(2).lower() in _MESES:
+            out["publicado"] = f"{int(d.group(3)):04d}-{_MESES[d.group(2).lower()]:02d}-{int(d.group(1)):02d}"
+    return out
+
+
 def _patrocinado(card) -> bool:
     if "AdHolder" in (card.get("class") or []):
         return True
@@ -128,8 +162,9 @@ def _itens_do_card(card) -> list[ItemBusca]:
                 capa = parse_preco(t)
                 break
         precos.setdefault(asin, (preco, capa))
+    det = _detalhes(card)
     return [
-        ItemBusca(asin, formatos.get(asin), titulo, preco, capa)
+        ItemBusca(asin, formatos.get(asin), titulo, preco, capa, obra=card.get("data-asin") or None, **det)
         for asin, (preco, capa) in precos.items()
     ]
 

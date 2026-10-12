@@ -21,7 +21,7 @@ def banco(caminho=":memory:"):
     c = sqlite3.connect(caminho)
     c.row_factory = sqlite3.Row
     varredura.criar_schema(c)
-    c.execute("INSERT INTO catalogo VALUES ('B1','Livro Teste','Capa comum','n','2026-09-01','2026-12-01')")
+    c.execute("INSERT INTO catalogo (asin, titulo, formato, no, primeiro_visto, ultimo_visto) VALUES ('B1','Livro Teste','Capa comum','n','2026-09-01','2026-12-01')")
     for preco, capa, d0, d1 in [(5000, 8000, "2026-09-01", "2026-10-20"), (6000, 8000, "2026-10-21", "2026-11-26"),
                                 (4500, 8000, "2026-11-27", "2026-11-27"), (6000, 8000, "2026-11-28", "2026-12-01")]:
         c.execute("INSERT INTO historico (asin, preco_centavos, preco_capa_centavos, desde, ate) VALUES ('B1',?,?,?,?)",

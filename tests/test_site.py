@@ -18,7 +18,7 @@ def banco(caminho, itens, aviso=None):
     c = sqlite3.connect(caminho)
     varredura.criar_schema(c)
     for asin, titulo, formato, trechos in itens:
-        c.execute("INSERT INTO catalogo VALUES (?,?,?,?,?,?)", (asin, titulo, formato, "n", "2026-10-01T12:00:00+00:00",
+        c.execute("INSERT INTO catalogo (asin, titulo, formato, no, primeiro_visto, ultimo_visto) VALUES (?,?,?,?,?,?)", (asin, titulo, formato, "n", "2026-10-01T12:00:00+00:00",
                                                               (trechos[-1][1] if trechos else "2026-10-01") + "T12:00:00+00:00"))
         for desde, ate, preco, capa in trechos:
             c.execute("INSERT INTO historico (asin, preco_centavos, preco_capa_centavos, desde, ate) VALUES (?,?,?,?,?)",
@@ -56,6 +56,34 @@ class TestSite(unittest.TestCase):
         h = json.loads((self.d / f"out/dados/h/{site.fragmento('B000000001')}.json").read_text(encoding="utf-8"))
         self.assertEqual(len(h["B000000001"]["h"]), 1)           # os dois históricos viraram um trecho só
         self.assertEqual(len(json.loads((self.d / "out/dados/eventos.json").read_text())), 2)
+
+    def test_detalhes_do_livro_vao_para_o_indice_e_o_historico(self):
+        banco(self.d / "a.db", [("B000000001", "Livro Um", "Capa dura", [("2026-10-01", "2026-10-05", 5000, None)]),
+                                ("B000000002", "Livro Dois", "Kindle", [("2026-10-01", "2026-10-05", 900, None)])])
+        c = sqlite3.connect(self.d / "a.db")
+        c.execute("UPDATE catalogo SET autor='Ana', imagem='img1', publicado='2024-08-05', idioma='Português', "
+                  "obra='B000000001' WHERE asin='B000000001'")
+        c.commit()
+        c.close()
+        site.construir([self.d / "a.db"], self.d / "out", Path(RAIZ) / "eventos.csv")
+        indice = {i[0]: i for i in json.loads((self.d / "out/dados/indice.json").read_text(encoding="utf-8"))["itens"]}
+        self.assertEqual(indice["B000000001"][6:], ["Ana", "img1", "2024-08-05", "Português", "B000000001"])
+        self.assertEqual(indice["B000000002"][6:], [None] * 5)          # livro ainda sem detalhes
+        h = json.loads((self.d / f"out/dados/h/{site.fragmento('B000000001')}.json").read_text(encoding="utf-8"))
+        self.assertEqual(h["B000000001"]["autor"], "Ana")
+
+    def test_banco_antigo_sem_colunas_de_detalhe_ainda_vira_site(self):
+        c = sqlite3.connect(self.d / "velho.db")
+        c.executescript(
+            "CREATE TABLE catalogo (asin TEXT PRIMARY KEY, titulo TEXT, formato TEXT, no TEXT, "
+            "primeiro_visto TEXT NOT NULL, ultimo_visto TEXT NOT NULL);"
+            "CREATE TABLE historico (id INTEGER PRIMARY KEY, asin TEXT, preco_centavos INTEGER, preco_capa_centavos INTEGER, "
+            "desde TEXT, ate TEXT, vezes INTEGER DEFAULT 1);"
+            "INSERT INTO catalogo VALUES ('B000000001','Velho','Capa comum','n','2026-10-01T12:00:00+00:00','2026-10-02T12:00:00+00:00');"
+            "INSERT INTO historico (asin, preco_centavos, desde, ate) VALUES ('B000000001', 100, '2026-10-01T12:00:00+00:00', '2026-10-02T12:00:00+00:00');")
+        c.commit()
+        c.close()
+        self.assertEqual(site.construir([self.d / "velho.db"], self.d / "out", Path(RAIZ) / "eventos.csv")["itens"], 1)
 
     def test_esconde_o_que_nao_foi_visto_depois_do_filtro_da_amazon(self):
         itens = [("B000000001", "Vendido pela Amazon", None, [("2026-10-01", "2026-10-20", 5000, None)]),

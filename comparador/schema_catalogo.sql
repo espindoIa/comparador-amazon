@@ -29,7 +29,12 @@ CREATE TABLE IF NOT EXISTS catalogo (
     formato        TEXT,
     no             TEXT,
     primeiro_visto TEXT NOT NULL,
-    ultimo_visto   TEXT NOT NULL
+    ultimo_visto   TEXT NOT NULL,
+    autor          TEXT,
+    imagem         TEXT,                        -- código da capa (m.media-amazon.com/images/I/<código>._AC_UY218_.jpg)
+    publicado      TEXT,                        -- AAAA-MM-DD
+    idioma         TEXT,                        -- "Português", quando a Amazon informa
+    obra           TEXT                         -- ASIN do card da busca: formatos do mesmo card = mesma obra
 );
 
 -- Histórico por intervalos: uma linha por "período com o mesmo preço". Só cresce

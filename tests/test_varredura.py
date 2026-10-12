@@ -31,6 +31,18 @@ class TestParseBusca(unittest.TestCase):
         # "em até 2x de R$ 21,73" não vira preço nem preço de capa.
         self.assertEqual((itens["8577876853"].preco_centavos, itens["8577876853"].preco_capa_centavos), (4346, 6990))
 
+    def test_autor_capa_data_idioma_e_obra(self):
+        itens = {i.asin: i for i in parse_busca(ler("busca_formatos.html")).itens}
+        fisico, kindle = itens["8577870405"], itens["B07TZNQB5S"]
+        self.assertEqual((fisico.autor, fisico.imagem, fisico.publicado, fisico.idioma),
+                         ("Yoshihiro Togashi", "61NPpt5HC6L", "2024-08-05", "Português"))
+        self.assertEqual((kindle.obra, fisico.obra), ("8577870405", "8577870405"))   # mesmo card = mesma obra
+        self.assertEqual(itens["8577876853"].autor, "Tsugumi Ohba e Takeshi Obata")
+        outros = {i.asin: i for i in parse_busca(ler("busca_fatia.html")).itens}
+        self.assertEqual(outros["B0GRJPWPF2"].autor, "Corbeyran, Roy Allan Martinez, e outros.")
+        self.assertEqual((outros["B0GRJPWPF2"].publicado, outros["B0GRJPWPF2"].idioma), ("2026-04-16", None))
+        self.assertEqual(outros["658991284X"].obra, "B09HNF5J57")       # o card é do Kindle; a capa dura é a mesma obra
+
     def test_card_do_kindle_com_fisico_secundario_e_kindle_unlimited(self):
         itens = {i.asin: i for i in parse_busca(ler("busca_fatia.html")).itens}
         # Card B09HNF5J57 é do Kindle (R$ 0,00 = Kindle Unlimited, descartado); o físico vale.
@@ -341,6 +353,20 @@ class TestMaisVendidos(unittest.TestCase):
         varredura.criar_schema(self.conn)
         r = self.conn.execute("SELECT grupo, ordem FROM fatias").fetchone()
         self.assertEqual(tuple(r), ("7842710011", "preco"))
+
+
+    def test_banco_sem_detalhes_ganha_as_colunas_e_nao_perde_o_que_ja_tinha(self):
+        self.conn.executescript(
+            "CREATE TABLE catalogo (asin TEXT PRIMARY KEY, titulo TEXT, formato TEXT, no TEXT, "
+            "primeiro_visto TEXT NOT NULL, ultimo_visto TEXT NOT NULL);"
+            "INSERT INTO catalogo VALUES ('A000000001', 'X', 'Capa comum', '1', 'a', 'b');")
+        varredura.criar_schema(self.conn)
+        varredura.criar_schema(self.conn)                                # idempotente
+        item = ItemBusca("A000000001", "Capa comum", "X", 500, autor="Fulano", imagem="abc", obra="A000000001")
+        varredura.registrar(self.conn, item, "1", "2026-10-02T12:00:00+00:00")
+        varredura.registrar(self.conn, ItemBusca("A000000001", "Capa comum", "X", 500), "1", "2026-10-03T12:00:00+00:00")
+        r = self.conn.execute("SELECT autor, imagem, obra, primeiro_visto FROM catalogo").fetchone()
+        self.assertEqual(tuple(r), ("Fulano", "abc", "A000000001", "a"))   # leitura sem detalhes não apaga
 
 
 class TestHistorico(unittest.TestCase):
