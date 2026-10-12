@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from datetime import date
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,6 +31,12 @@ def banco(caminho, itens, aviso=None):
     c.close()
 
 
+def edicoes(saida):
+    """{asin: (obra, edição)} do índice v2."""
+    ind = json.loads((Path(saida) / "dados/indice.json").read_text(encoding="utf-8"))
+    return {e[0]: (o, e) for o in ind["o"] for e in o[5]}
+
+
 class TestSite(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -50,9 +57,12 @@ class TestSite(unittest.TestCase):
         self.assertEqual(meta["aviso"], "SIMULADO")
         for nome in site.ARQUIVOS_WEB:
             self.assertTrue((self.d / "out" / nome).exists(), nome)
-        indice = json.loads((self.d / "out/dados/indice.json").read_text(encoding="utf-8"))["itens"]
-        um = next(i for i in indice if i[0] == "B000000001")
-        self.assertEqual(um[1:5], ["Livro Um", "Capa comum", 5000, 8000])
+        ind = json.loads((self.d / "out/dados/indice.json").read_text(encoding="utf-8"))
+        o, e = edicoes(self.d / "out")["B000000001"]
+        self.assertEqual(o[0], "Livro Um")
+        self.assertEqual([ind["fmt"][e[1]], e[2], e[3]], ["Capa comum", 5000, 8000])
+        self.assertEqual(ind["hoje"], meta["ultima_coleta"])
+        self.assertEqual(e[4], 0)                                # visto na última coleta
         h = json.loads((self.d / f"out/dados/h/{site.fragmento('B000000001')}.json").read_text(encoding="utf-8"))
         self.assertEqual(len(h["B000000001"]["h"]), 1)           # os dois históricos viraram um trecho só
         self.assertEqual(len(json.loads((self.d / "out/dados/eventos.json").read_text())), 2)
@@ -66,9 +76,9 @@ class TestSite(unittest.TestCase):
         c.commit()
         c.close()
         site.construir([self.d / "a.db"], self.d / "out", Path(RAIZ) / "eventos.csv")
-        indice = {i[0]: i for i in json.loads((self.d / "out/dados/indice.json").read_text(encoding="utf-8"))["itens"]}
-        self.assertEqual(indice["B000000001"][6:], ["Ana", "img1", "2024-08-05", "Português", "B000000001"])
-        self.assertEqual(indice["B000000002"][6:], [None] * 5)          # livro ainda sem detalhes
+        ed = edicoes(self.d / "out")
+        self.assertEqual(ed["B000000001"][0][:5], ["Livro Um", "Ana", "img1", 2024, "Português"])
+        self.assertEqual(ed["B000000002"][0][:5], ["Livro Dois", "", "", 0, ""])          # livro ainda sem detalhes
         h = json.loads((self.d / f"out/dados/h/{site.fragmento('B000000001')}.json").read_text(encoding="utf-8"))
         self.assertEqual(h["B000000001"]["autor"], "Ana")
 
@@ -95,15 +105,59 @@ class TestSite(unittest.TestCase):
         c.commit()
         # antes de uma varredura completa com o filtro: nada é escondido
         site.construir([self.d / "a.db"], self.d / "s1")
-        self.assertEqual(json.loads((self.d / "s1/dados/indice.json").read_text())["itens"].__len__(), 2)
+        self.assertEqual(len(edicoes(self.d / "s1")), 2)
         c.execute("INSERT INTO dias VALUES ('vendidos', '2026-10-11', '2026-10-11T20:00:00+00:00')")
         c.commit()
         c.close()
         site.construir([self.d / "a.db"], self.d / "s2")
-        indice = json.loads((self.d / "s2/dados/indice.json").read_text())["itens"]
-        self.assertEqual([i[0] for i in indice], ["B000000001"])
+        self.assertEqual(list(edicoes(self.d / "s2")), ["B000000001"])
         h = json.loads((self.d / f"s2/dados/h/{site.fragmento('B000000002')}.json").read_text())
         self.assertIn("B000000002", h)                          # o histórico segue disponível (lista de desejos)
+
+    def test_formatos_da_mesma_obra_viram_um_item(self):
+        h = lambda p: [("2026-10-01", "2026-10-05", p, None)]
+        banco(self.d / "a.db", [("B000000001", "Livro Um", "Kindle", h(1900)), ("B000000002", "Livro Um", "Capa comum", h(4000)),
+                                ("B000000003", "Livro Um", "Capa dura", h(9000)), ("B000000004", "Outro", "Capa comum", h(3000)),
+                                ("B000000005", "Agenda 2027", "Agenda ou Calendário", h(2000))])
+        c = sqlite3.connect(self.d / "a.db")
+        # a capa dura apareceu no card da capa comum, que apareceu no card do Kindle: tudo uma obra só
+        c.execute("UPDATE catalogo SET obra='B000000001', autor='Ana' WHERE asin IN ('B000000001','B000000002')")
+        c.execute("UPDATE catalogo SET obra='B000000002' WHERE asin='B000000003'")
+        c.commit()
+        c.close()
+        meta = site.construir([self.d / "a.db"], self.d / "out")
+        ind = json.loads((self.d / "out/dados/indice.json").read_text(encoding="utf-8"))
+        self.assertEqual((meta["itens"], meta["obras"]), (4, 2))       # a agenda não é livro
+        um = next(o for o in ind["o"] if o[0] == "Livro Um")
+        self.assertEqual([e[0] for e in um[5]], ["B000000002", "B000000003", "B000000001"])   # físicos primeiro, do mais barato
+        self.assertEqual(um[1], "Ana")
+        self.assertIn("B000000005", json.loads((self.d / f"out/dados/h/{site.fragmento('B000000005')}.json").read_text()))
+
+    def test_preco_mais_comum_so_com_dias_suficientes(self):
+        d = date(2026, 10, 1).toordinal()
+        self.assertIsNone(site.mais_comum([[d, d + 12, 5000, None]], d + 12))          # 13 dias
+        self.assertEqual(site.mais_comum([[d, d + 9, 5000, None], [d + 10, d + 13, 3000, None]], d + 13), 5000)
+        velho = [[d, d + 99, 1000, None], [d + 100, d + 119, 2000, None]]
+        self.assertEqual(site.mais_comum(velho, d + 119), 1000)                  # 70 dias a 1000 e 20 a 2000 na janela
+        self.assertEqual(site.mais_comum(velho, d + 200), None)                  # nada nos últimos 90 dias
+
+    def test_baixaram_de_preco(self):
+        h = {"B000000001": [("2026-10-01", "2026-10-08", 5000, None), ("2026-10-09", "2026-10-09", 4000, None)],   # -20%: entra
+             "B000000002": [("2026-10-01", "2026-10-08", 5000, None), ("2026-10-09", "2026-10-09", 4900, None)],   # -2%: não
+             "B000000003": [("2026-10-01", "2026-10-03", 5000, None), ("2026-10-04", "2026-10-09", 3000, None)],   # caiu há dias
+             "B000000004": [("2026-10-01", "2026-10-08", 3000, None), ("2026-10-09", "2026-10-09", 5000, None)],   # subiu
+             "B000000005": [("2026-10-01", "2026-10-08", 5000, None), ("2026-10-09", "2026-10-09", 2500, None)]}   # -50%
+        banco(self.d / "a.db", [(a, a, "Capa comum", t) for a, t in h.items()])
+        site.construir([self.d / "a.db"], self.d / "out")
+        baixa = json.loads((self.d / "out/dados/indice.json").read_text())["baixa"]
+        self.assertEqual(baixa, [["B000000005", 5000, date(2026, 10, 9).toordinal()], ["B000000001", 5000, date(2026, 10, 9).toordinal()]])
+
+    def test_arquivos_do_app_levam_a_versao(self):
+        banco(self.d / "a.db", [("B000000001", "Livro Um", None, [("2026-10-01", "2026-10-05", 5000, None)])])
+        site.construir([self.d / "a.db"], self.d / "out")
+        html = (self.d / "out/index.html").read_text(encoding="utf-8")
+        self.assertRegex(html, r'src="app\.js\?v=[0-9a-f]{10}"')
+        self.assertRegex(html, r'href="estilo\.css\?v=[0-9a-f]{10}"')
 
     def test_cli_site(self):
         banco(self.d / "a.db", [("B000000001", "Livro Um", None, [("2026-10-01", "2026-10-05", 5000, None)])])
@@ -145,40 +199,45 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg = b.new_page()
             erros = []
             pg.on("pageerror", lambda e: erros.append(str(e)))
-            pg.goto(f"{base}/index.html")
+            pg.goto(f"{base}/")
             pg.evaluate("localStorage.clear()")
-            pg.reload()
-            pg.wait_for_selector("#q:not([disabled])")
-            titulos = lambda: pg.eval_on_selector_all("#res .it .tt a", "e => e.map(x => x.textContent)")
-            self.assertEqual(pg.inner_text("#res").startswith("Digite"), True)           # sem busca nem filtro: só a dica
-            pg.select_option("#o-ord", "preco")                                          # ordenar sozinho já lista tudo
-            pg.wait_for_selector("#res .it")
+            pg.goto(f"{base}/?o=preco")                                                  # ordenar sozinho já lista tudo
+            pg.wait_for_selector("#res .row")
+            titulos = lambda: pg.eval_on_selector_all("#res .row .tt", "e => e.map(x => x.textContent)")
+            esperar = lambda n: pg.wait_for_function(f"document.querySelectorAll('#res .row').length === {n}")
             self.assertEqual(titulos(), ["Beta", "Epsilon", "Delta", "Alfa", "Gama"])
-            pg.select_option("#o-ord", "preco_desc")
+            pg.select_option("#ord", "preco_desc")
             self.assertEqual(titulos(), ["Gama", "Alfa", "Delta", "Epsilon", "Beta"])
-            pg.select_option("#o-ord", "desconto")
+            pg.select_option("#ord", "desconto")
             self.assertEqual(titulos()[:2], ["Alfa", "Epsilon"])                         # 50% e 50%, empate por título
-            pg.select_option("#o-ord", "titulo")
+            pg.select_option("#ord", "titulo")
             self.assertEqual(titulos(), ["Alfa", "Beta", "Delta", "Epsilon", "Gama"])
-            pg.click(".filtros summary")
-            pg.click('[data-fmt="Capa comum"]')
-            self.assertEqual(titulos(), ["Alfa", "Delta"])
-            pg.click('[data-fl="desc"]')
-            self.assertEqual(titulos(), ["Alfa"])
-            self.assertIn("(2)", pg.inner_text("#n-filtros"))
-            pg.click("#limpar")
-            pg.fill("#pmin", "20")
-            pg.fill("#pmax", "50")
-            pg.wait_for_function("document.querySelectorAll('#res .it').length === 3")
+            self.assertIn("3", pg.inner_text('[data-fam="f"]'))                          # contagem no filtro
+            pg.click('[data-fam="f"]')                                                   # livro físico: capa comum e dura
+            self.assertEqual(titulos(), ["Alfa", "Delta", "Gama"])
+            self.assertIn("f=f", pg.url)
+            pg.reload()                                                                  # filtros ficam no endereço
+            pg.wait_for_selector("#res .row")
+            self.assertEqual(titulos(), ["Alfa", "Delta", "Gama"])
+            pg.click('[data-acao="limpar-filtros"]')
+            esperar(5)
+            pg.click('[data-acao="preco"]')
+            pg.fill("#de", "20")
+            pg.fill("#ate", "50")
+            esperar(3)
             self.assertEqual(titulos(), ["Alfa", "Delta", "Epsilon"])                    # R$ 20 a R$ 50
             pg.fill("#q", "ep")
-            pg.wait_for_function("document.querySelectorAll('#res .it').length === 1")
+            esperar(1)
             self.assertEqual(titulos(), ["Epsilon"])
-            pg.click("#res .fav")                                                        # na lista
-            pg.fill("#q", "")
-            pg.click('[data-fl="lista"]')
-            pg.wait_for_function("document.querySelectorAll('#res .it').length === 1")
+            pg.click("#res .row")
+            pg.wait_for_selector("[data-salvar]")
+            pg.click("[data-salvar]")
+            self.assertEqual(pg.inner_text("#cont"), "1")
+            pg.go_back()                                                                 # volta para a mesma busca
+            pg.wait_for_selector("#res .row")
             self.assertEqual(titulos(), ["Epsilon"])
+            self.assertEqual(pg.input_value("#q"), "ep")
+            self.assertEqual(pg.locator("#res .salvo").count(), 1)
             b.close()
         self.assertEqual(erros, [])
 
@@ -199,57 +258,58 @@ class TestSiteNoNavegador(unittest.TestCase):
         srv.RequestHandlerClass.log_message = lambda *a, **k: None
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_port}"
         with sync_playwright() as p:
             b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
             pg = b.new_page()
-            pg.goto(f"http://127.0.0.1:{srv.server_port}/index.html")
+            pg.goto(f"{base}/")
             pg.evaluate("localStorage.setItem('lista_v1', JSON.stringify(['A000000002']))")
-            pg.reload()
-            pg.wait_for_selector("#q:not([disabled])")
-            pg.fill("#q", "saiu")
+            pg.goto(f"{base}/?q=saiu")
             pg.wait_for_function("document.querySelector('#res').textContent.includes('Nenhum livro')")  # sumiu da busca
-            pg.click("#t-lista")
-            pg.wait_for_selector("#lst .it b")
-            self.assertIn("sem coleta recente", pg.inner_text("#lst"))              # mas segue na lista, com o último preço
+            pg.click(".hdr-lista")
+            pg.wait_for_selector("#lst .row b")
+            self.assertIn("último preço visto em 05/10/2026", pg.inner_text("#lst"))      # mas segue na lista, com o último preço
             self.assertIn("R$ 30,00", pg.inner_text("#lst"))
             b.close()
 
-    def test_buscar_adicionar_a_lista_e_abrir_historico(self):
+    def test_buscar_salvar_na_lista_e_abrir_historico(self):
         from playwright.sync_api import sync_playwright
-        with tempfile.TemporaryDirectory() as d:
-            d = Path(d)
-            banco(d / "a.db", [("8535902775", "A paciente silenciosa", "Capa comum", [("2026-10-01", "2026-10-20", 3499, 6490)]),
-                               ("B0ABCDEFGH", "Outro livro", "Kindle", [("2026-10-01", "2026-10-20", 1999, None)])])
-            site.construir([d / "a.db"], d / "s", Path(RAIZ) / "eventos.csv")
-            srv = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(d / "s")))
-            srv.RequestHandlerClass.log_message = lambda *a, **k: None
-            threading.Thread(target=srv.serve_forever, daemon=True).start()
-            self.addCleanup(srv.shutdown)
-            base = f"http://127.0.0.1:{srv.server_port}"
-            with sync_playwright() as p:
-                b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
-                pg = b.new_page()
-                erros = []
-                pg.on("pageerror", lambda e: erros.append(str(e)))
-                pg.goto(f"{base}/index.html")
-                pg.wait_for_selector("#q:not([disabled])")
-                pg.fill("#q", "silenciósa PACIENTE")            # sem acento e ordem trocada também acha
-                pg.wait_for_selector(".it")
-                self.assertIn("A paciente silenciosa", pg.inner_text("#res"))
-                self.assertNotIn("Outro livro", pg.inner_text("#res"))
-                pg.click(".fav")
-                pg.click("#t-lista")
-                pg.wait_for_selector("#lst .it b")
-                self.assertIn("R$ 34,99", pg.inner_text("#lst"))
-                self.assertIn("(1)", pg.inner_text("#t-lista"))
-                pg.click("#lst .tt a")
-                pg.wait_for_selector(".graf-box svg")
-                self.assertIn("A paciente silenciosa", pg.inner_text("h1"))
-                pg.goto(f"{base}/livro.html?asin=ZZZZZZZZZZ")
-                pg.wait_for_selector("main p")
-                self.assertIn("não está no catálogo", pg.inner_text("main"))
-                b.close()
-            self.assertEqual(erros, [])
+        base = self._servir([("8535902775", "A paciente silenciosa", "Capa comum", [("2026-10-01", "2026-10-20", 3499, 6490)]),
+                             ("B0ABCDEFGH", "Outro livro", "Kindle", [("2026-10-01", "2026-10-20", 1999, None)])])
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            pg = b.new_page()
+            erros = []
+            pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.goto(f"{base}/index.html")
+            pg.wait_for_selector(".boas h1")
+            pg.fill("#q", "silenciósa PACIENTE")                                         # sem acento e ordem trocada também acha
+            pg.wait_for_selector("#res .row")
+            self.assertIn("A paciente silenciosa", pg.inner_text("#res"))
+            self.assertNotIn("Outro livro", pg.inner_text("#res"))
+            pg.click("#res .row")
+            pg.wait_for_selector("#graf svg")
+            self.assertIn("A paciente silenciosa", pg.inner_text("h1"))
+            self.assertIn("R$ 34,99", pg.inner_text(".preco-g"))
+            pg.click("[data-salvar]")
+            self.assertEqual(pg.get_attribute("[data-salvar]", "aria-pressed"), "true")
+            pg.click(".hdr-lista")
+            pg.wait_for_selector("#lst .row b")
+            self.assertIn("R$ 34,99", pg.inner_text("#lst"))
+            self.assertEqual(pg.inner_text("#cont"), "1")
+            pg.click("#lst .tt")
+            pg.wait_for_selector("#graf svg")
+            pg.goto(f"{base}/?q=978-85-359-0277-8")
+            pg.wait_for_selector("#res .row")
+            self.assertIn("A paciente silenciosa", pg.inner_text("#res"))
+            pg.goto(f"{base}/livro.html?asin=8535902775")                                # endereço antigo ainda funciona
+            pg.wait_for_selector("#graf svg")
+            self.assertIn("livro=8535902775", pg.url)
+            pg.goto(f"{base}/?livro=ZZZZZZZZZZ")
+            pg.wait_for_selector(".vazio h2")
+            self.assertIn("Livro não encontrado", pg.inner_text("main"))
+            b.close()
+        self.assertEqual(erros, [])
 
 
 if __name__ == "__main__":

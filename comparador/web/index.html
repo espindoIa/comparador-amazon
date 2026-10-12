@@ -1,50 +1,36 @@
 <!doctype html>
 <html lang="pt-BR">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Preços de livros</title>
+<meta name="description" content="Histórico de preço dos livros mais vendidos da Amazon.com.br, atualizado todo dia. Veja quanto um livro custa agora e quanto já custou.">
+<meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0f12" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icone.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icone.svg">
+<link rel="manifest" href="manifest.json">
+<link rel="preconnect" href="https://m.media-amazon.com">
 <link rel="stylesheet" href="estilo.css">
-<body class="app">
-<header class="topo"><h1>Preços de livros</h1><span id="info" class="mu">carregando…</span></header>
-<p id="aviso" class="aviso" hidden></p>
-<nav class="abas" role="tablist">
-  <button type="button" id="t-busca" role="tab" aria-selected="true">Buscar</button>
-  <button type="button" id="t-lista" role="tab" aria-selected="false">Minha lista<span id="cont"></span></button>
-</nav>
-<main>
-  <section id="aba-busca">
-    <input id="q" type="search" placeholder="Título, autor ou ASIN/ISBN-10" autocomplete="off" aria-label="Buscar livro">
-    <div class="fo">
-      <label class="ord">Ordenar por
-        <select id="o-ord"><option value="rel">mais relevantes</option><option value="preco">menor preço</option>
-          <option value="preco_desc">maior preço</option><option value="desconto">maior desconto sobre o preço de capa</option>
-          <option value="titulo">título (A a Z)</option></select></label>
-      <details class="filtros"><summary>Filtrar<span id="n-filtros"></span></summary>
-        <div class="fl"><span class="t">Formato</span><span id="fmts" class="chips"></span></div>
-        <div class="fl"><span class="t">Preço (R$)</span>
-          <input id="pmin" type="number" inputmode="decimal" min="0" step="0.01" placeholder="de" aria-label="Preço mínimo em reais">
-          <input id="pmax" type="number" inputmode="decimal" min="0" step="0.01" placeholder="até" aria-label="Preço máximo em reais"></div>
-        <div class="fl"><span class="t">Mostrar só</span><span class="chips">
-          <button type="button" data-fl="desc" aria-pressed="false" title="livros com preço de capa maior que o preço atual">Com desconto sobre a capa</button>
-          <button type="button" data-fl="lista" aria-pressed="false">Na minha lista</button></span></div>
-        <p><button type="button" id="limpar" class="bt" hidden>Limpar filtros</button></p>
-      </details>
-    </div>
-    <div id="res"></div>
-  </section>
-  <section id="aba-lista" hidden>
-    <label class="ord">Ordenar por
-      <select id="ord"><option value="adicao">ordem em que adicionei</option><option value="nome">título</option>
-        <option value="preco">menor preço</option><option value="dif">preço em relação ao mais comum (do menor para o maior)</option></select></label>
-    <div id="lst"></div>
-    <details class="io"><summary>Levar a lista para outro aparelho</summary>
-      <p class="mu">A lista fica só neste navegador: não há conta nem servidor. Para usar em outro aparelho, copie aqui e cole lá.</p>
-      <textarea id="io" rows="3" placeholder="Cole aqui a lista copiada, ASINs ou links da Amazon"></textarea>
-      <p><button type="button" id="copiar" class="bt">Copiar minha lista</button> <button type="button" id="importar" class="bt">Importar o texto acima</button></p>
-      <p id="msg" class="mu" role="status"></p></details>
-  </section>
+<body>
+<header class="hdr">
+  <div class="hdr-in">
+    <a class="marca" href="./" data-r><img src="icone.svg" alt="" width="30" height="30">Preços de livros</a>
+    <form class="busca" role="search" action="./">
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="q" name="q" type="search" placeholder="Buscar por título, autor ou ISBN" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Buscar livro">
+      <button type="button" class="limpa" id="limpa" aria-label="Limpar busca" hidden><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </form>
+    <a class="hdr-lista" href="./?lista" data-r><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="rot">Minha lista</span><span class="badge" id="cont"></span></a>
+  </div>
+</header>
+<main class="pg" id="app" tabindex="-1">
+  <noscript><p>Este site precisa de JavaScript para buscar os livros e mostrar o histórico de preço.</p></noscript>
 </main>
-<footer class="mu">Preços lidos do site da Amazon.com.br, sem vínculo com a Amazon. Confira o preço na loja antes de comprar.</footer>
+<footer class="rod">
+  <span>Preços lidos do site da Amazon.com.br, sem vínculo com a Amazon. Confira o preço na loja antes de comprar.</span>
+  <a href="./?sobre" data-r>Como funciona</a>
+</footer>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="livro.js"></script><script src="lista.js"></script><script src="app.js"></script>
 </body>
 </html>

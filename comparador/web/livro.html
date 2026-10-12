@@ -2,34 +2,12 @@
 <html lang="pt-BR">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Histórico de preço</title>
-<link rel="stylesheet" href="estilo.css">
-<body>
-<p><a href="index.html">← Buscar outro livro</a> · <a href="index.html#lista">Minha lista</a></p>
-<p id="acoes"></p>
-<main id="livro"><noscript>Esta página precisa de JavaScript.</noscript><p class="mu">Carregando…</p></main>
-<script src="livro.js"></script><script src="lista.js"></script>
+<title>Preços de livros</title>
+<meta name="robots" content="noindex">
 <script>
-(function () {
-  var asin = (new URLSearchParams(location.search).get('asin') || '').toUpperCase(), raiz = document.getElementById('livro');
-  function fragmento(a) { var h = 0; for (var i = 0; i < a.length; i++) h = (h * 31 + a.charCodeAt(i)) % 256; return (h < 16 ? '0' : '') + h.toString(16); }
-  function nada(msg) { raiz.innerHTML = '<p>' + msg + ' <a href="index.html">Voltar para a busca</a>.</p>'; }
-  if (!/^[A-Z0-9]{10}$/.test(asin)) return nada('Livro não informado.');
-  function botao() {
-    var na = Lista.tem(asin), b = document.getElementById('acoes');
-    b.innerHTML = '<button type="button" class="bt" aria-pressed="' + na + '">' + (na ? '★ Na minha lista (remover)' : '☆ Adicionar à minha lista') + '</button> ' +
-      '<a class="bt amz" href="' + Livro.linkAmazon(asin) + '" target="_blank" rel="noopener noreferrer">Ver na Amazon ↗</a>';
-    b.firstChild.onclick = function () { Lista.alternar(asin); botao(); };
-  }
-  Promise.all([fetch('dados/h/' + fragmento(asin) + '.json').then(function (r) { return r.status === 404 ? {} : r.ok ? r.json() : Promise.reject(r.status); }),
-    fetch('dados/eventos.json').then(function (r) { return r.json(); }), fetch('dados/meta.json').then(function (r) { return r.json(); })])
-    .then(function (rs) {
-      var l = rs[0][asin]; if (!l) return nada('Esse livro não está no catálogo.');
-      document.title = (l.t || asin) + ' · histórico de preço';
-      botao();
-      Livro.montar(raiz, { asin: asin, titulo: l.t, formato: l.f, aviso: rs[2].aviso, ultimaColeta: rs[2].ultima_coleta, trechos: l.h, eventos: rs[1] });
-    }).catch(function () { nada('Não consegui carregar os dados desse livro.'); });
-})();
+  // Endereço antigo da página do livro: leva para o mesmo livro no app.
+  var a = (new URLSearchParams(location.search).get('asin') || '').toUpperCase();
+  location.replace('./' + (/^[A-Z0-9]{10}$/.test(a) ? '?livro=' + a : ''));
 </script>
-</body>
+<p><a href="./">Abrir Preços de livros</a></p>
 </html>

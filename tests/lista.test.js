@@ -26,4 +26,21 @@ mem.lista_v1 = '["8535902775","<script>"]';
 assert.deepEqual(Lista.ler(), ['8535902775']);
 Lista.remover('8535902775');
 assert.deepEqual(Lista.ler(), []);
+
+// desfazer a remoção devolve o livro à mesma posição
+['A000000001', 'A000000002', 'A000000003'].forEach((a) => Lista.alternar(a));
+Lista.remover('A000000002');
+Lista.inserir('A000000002', 1);
+assert.deepEqual(Lista.ler(), ['A000000001', 'A000000002', 'A000000003']);
+
+// "desde sua última visita": compara com a visita de um dia de coleta anterior
+assert.equal(Lista.visita(100, { A000000001: 5000 }), null);                 // primeira visita
+assert.equal(Lista.visita(100, { A000000001: 5000 }), null);                 // mesmo dia de novo
+let v = Lista.visita(101, { A000000001: 4000, A000000002: 3000 });
+assert.deepEqual(v, { dia: 100, precos: { A000000001: 5000 } });
+v = Lista.visita(101, { A000000001: 4000 });                                   // recarregar não apaga a comparação
+assert.equal(v.precos.A000000001, 5000);
+assert.deepEqual(Lista.visita(102, {}).precos, { A000000001: 4000, A000000002: 3000 });
+mem.vistos_v1 = 'lixo';
+assert.equal(Lista.visita(103, {}), null);
 console.log('testes de lista.js ok');

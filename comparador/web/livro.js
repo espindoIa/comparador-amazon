@@ -1,11 +1,11 @@
-/* Página de histórico de preço de um livro: números e gráfico, sem conclusões.
- * Usada pelo site (livro.html) e pelo comando `grafico`. Entrada (D):
+/* Histórico de preço de um livro: cálculos, números e gráfico, sem conclusões.
+ * Usado pelo app (app.js) e pela página avulsa do comando `grafico` (montar). Entrada de montar (D):
  *   {asin, titulo, formato, aviso, trechos: [[dia_ini, dia_fim, preco, capa|null]...], eventos: [[nome, dia_ini, dia_fim]...]}
  * Dias são números ordinais como os de date.toordinal() do Python (1 = 0001-01-01); preços em centavos.
  */
 (function (root) {
   'use strict';
-  var BURACO = 10, JANELA = 90, JANELA_PICO = 21, EPOCA = 719163;
+  var BURACO = 10, JANELA = 90, JANELA_PICO = 21, EPOCA = 719163, MIN_COMUM = 14;   // MIN_COMUM: o mesmo de site.py
 
   // ---------- cálculo (puro) ----------
   function porDia(trechos) {
@@ -64,29 +64,72 @@
     return menor === null ? null : fatos(trechos, ev[1] - 1, menor);
   }
 
+
   // ---------- formatação ----------
+  var MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  var MESES_L = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
   function brl(c) { return c == null ? '–' : 'R$ ' + (c / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+,)/g, '.'); }
+  function brlCurto(c) { return c % 100 ? brl(c) : brl(c).slice(0, -3); }
   function dtObj(o) { return new Date((o - EPOCA) * 864e5); }
   function dl(o) { if (o == null) return '–'; var d = dtObj(o); return pad(d.getUTCDate()) + '/' + pad(d.getUTCMonth() + 1) + '/' + d.getUTCFullYear(); }
   function dc(o) { var d = dtObj(o); return pad(d.getUTCDate()) + '/' + pad(d.getUTCMonth() + 1) + '/' + String(d.getUTCFullYear()).slice(2); }
+  function dmes(o, ano) { var d = dtObj(o); return d.getUTCDate() + ' ' + MESES[d.getUTCMonth()] + (ano ? ' ' + d.getUTCFullYear() : ''); }
+  function dlongo(o) { var d = dtObj(o); return d.getUTCDate() + ' de ' + MESES_L[d.getUTCMonth()] + ' de ' + d.getUTCFullYear(); }
   function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function pct(a, b) { var x = Math.round((a - b) / b * 100); return x === 0 ? '0%' : (x > 0 ? '+' : '') + x + '%'; }
   function comparar(v, ref) { var p = Math.round(Math.abs(v - ref) / ref * 100); return p === 0 ? 'igual a' : p + '% ' + (v > ref ? 'acima' : 'abaixo') + ' do'; }
   function linkAmazon(asin) { return 'https://www.amazon.com.br/dp/' + encodeURIComponent(asin); }
-  function cartao(rot, val, nota) { return '<div class="c"><span>' + esc(rot) + '</span><b>' + esc(val) + '</b>' + (nota ? '<small>' + esc(nota) + '</small>' : '') + '</div>'; }
+  function plural(n, um, varios) { return n + ' ' + (n === 1 ? um : varios); }
 
-  function cartoesAtuais(f, recente) {
-    var c = [cartao(recente === false ? 'Último preço' : 'Preço atual', brl(f.preco), dl(f.ate))];
-    // com um único dia de preço, mediana, mínimo e máximo seriam o mesmo número repetido
-    if (f.mediana !== null && f.diasObservados > 1) c.push(cartao('Preço mais comum', brl(f.mediana), 'mediana dos últimos ' + f.diasJanela + ' dias'),
-      cartao('Mais barato', brl(f.minimo), dl(f.diaMinimo)), cartao('Mais caro', brl(f.maximo), dl(f.diaMaximo)));
-    return c.join('');
+  // "(English Edition)" e afins saem do título e viram etiqueta de idioma
+  var EDICOES = { english: 'Inglês', portuguese: '', spanish: 'Espanhol', french: 'Francês', italian: 'Italiano', german: 'Alemão', japanese: 'Japonês' };
+  function limpar(titulo) {
+    var t = String(titulo || '').trim(), idioma = '';
+    t = t.replace(/\s*[(\[](\w+) Edition[)\]]\s*$/i, function (m, l) { var k = l.toLowerCase(); if (!(k in EDICOES)) return m; idioma = EDICOES[k]; return ''; });
+    return { t: t || String(titulo || ''), idioma: idioma };
+  }
+  // ASIN a partir de um link da Amazon, de um ASIN/ISBN-10 ou de um ISBN-13 (978...); null se não for nada disso
+  function asinDe(texto) {
+    var s = String(texto || '').trim(), m = s.match(/\/(?:dp|gp\/product)\/([A-Za-z0-9]{10})/);
+    if (m) return m[1].toUpperCase();
+    var c = s.replace(/[\s-]/g, '').toUpperCase();
+    if (/^97[89]\d{10}$/.test(c)) {
+      if (c.slice(0, 3) !== '978') return null;
+      var b = c.slice(3, 12), soma = 0;
+      for (var i = 0; i < 9; i++) soma += (10 - i) * +b[i];
+      var dv = (11 - soma % 11) % 11;
+      return b + (dv === 10 ? 'X' : dv);
+    }
+    return /^(?=.*\d)[A-Z0-9]{10}$/.test(c) ? c : null;
+  }
+
+  // ---------- blocos de texto ----------
+  function celula(rot, val, nota) { return '<div><span>' + esc(rot) + '</span><b>' + val + '</b>' + (nota ? '<small>' + esc(nota) + '</small>' : '') + '</div>'; }
+  // grade de números do livro (f = fatos até o último dia; inicio = primeiro dia com preço)
+  function estatisticas(f, inicio) {
+    var varios = f.diasObservados > 1, curto = f.ate - inicio + 1 < f.diasJanela, desde = curto ? 'desde ' + dmes(inicio) : 'em ' + f.diasJanela + ' dias';
+    return '<div class="stats">' +
+      celula('Preço mais comum', f.diasObservados >= MIN_COMUM ? brl(f.mediana) : '–', f.diasObservados >= MIN_COMUM ? 'mediana ' + desde : 'aparece com ' + MIN_COMUM + ' dias de coleta') +
+      celula('Mais barato', varios ? brl(f.minimo) : '–', varios ? dl(f.diaMinimo) : 'precisa de 2 dias de coleta') +
+      celula('Mais caro', varios ? brl(f.maximo) : '–', varios ? dl(f.diaMaximo) : 'precisa de 2 dias de coleta') +
+      celula('Acompanhado desde', dl(inicio), plural(f.diasObservados, 'dia com preço', 'dias com preço') + (curto ? '' : ' em 90')) + '</div>';
   }
   function avisoDados(f) {
-    if (f.diasObservados >= f.diasJanela * 0.5) return '';
-    if (f.diasObservados <= 1) return '<p class="mu">Começamos a acompanhar este livro há pouco: só temos 1 dia de preço. O histórico e a comparação aparecem conforme as coletas diárias se acumulam.</p>';
-    return '<p class="mu">Ainda temos poucos dados: só ' + f.diasObservados + ' dias com preço registrado nos últimos ' + f.diasJanela + '.</p>';
+    if (f.diasObservados >= MIN_COMUM) return '';
+    return '<div class="poucos"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/></svg><p>' +
+      (f.diasObservados <= 1 ? 'Começamos a acompanhar este livro há pouco: só há 1 dia de preço. ' : 'Ainda há poucos dados: ' + f.diasObservados + ' dias com preço registrado. ') +
+      'O preço mais comum aparece a partir de ' + MIN_COMUM + ' dias de coleta.</p></div>';
+  }
+  // comparação do preço atual (etiquetas abaixo do preço grande)
+  function comparacoes(f) {
+    var out = [];
+    if (f.diasObservados >= MIN_COMUM && f.mediana) {
+      var c = comparar(f.preco, f.mediana), cls = f.preco < f.mediana ? 'dn' : f.preco > f.mediana ? 'up' : '';
+      out.push('<span class="pill ' + cls + '">' + (c === 'igual a' ? 'Igual ao preço mais comum' : c[0].toUpperCase() + c.slice(1) + ' preço mais comum') + '</span>');
+    }
+    if (f.capa && f.capa > f.preco) out.push('<span class="sm">Preço de capa <s>' + brl(f.capa) + '</s> (' + Math.round((f.capa - f.preco) / f.capa * 100) + '% abaixo)</span>');
+    return out.join('');
   }
   function resumoEvento(ev, f) {
     if (!f) return ev[0] + ': sem coleta durante o evento';
@@ -96,16 +139,27 @@
   }
   function blocoEvento(ev, f) {
     var quando = dl(ev[1]) + (ev[2] !== ev[1] ? ' a ' + dl(ev[2]) : ''), cab = '<h3>' + esc(ev[0]) + ' <small>' + quando + '</small></h3>';
-    if (!f) return '<section>' + cab + '<p class="mu">Sem preço registrado durante o evento.</p></section>';
-    if (f.mediana === null) return '<section>' + cab + '<p><b>' + brl(f.preco) + '</b> no evento. Não há preços registrados nos ' + f.diasJanela + ' dias anteriores para comparar.</p></section>';
-    var li = ['Antes do evento, o preço mais comum era <b>' + brl(f.mediana) + '</b> (entre ' + brl(f.minimo) + ', em ' + dl(f.diaMinimo) + ', e ' + brl(f.maximo) + ', em ' + dl(f.diaMaximo) + ').'];
+    if (f.mediana === null) return '<div class="ev-b">' + cab + '<p class="gr"><b>' + brl(f.preco) + '</b> no evento.</p><p class="mu sm">Não há preços registrados nos ' + f.diasJanela + ' dias anteriores para comparar.</p></div>';
+    var li = ['Antes do evento, o preço mais comum era <b>' + brl(f.mediana) + '</b>, entre ' + brl(f.minimo) + ' (' + dl(f.diaMinimo) + ') e ' + brl(f.maximo) + ' (' + dl(f.diaMaximo) + ').'];
     if (f.picoRecente) li.push('Nas 3 semanas antes, chegou a ' + brl(f.picoRecente) + '.');
     li.push('Última vez com preço igual ou menor: ' + (f.ultimaIgualOuMenor ? dl(f.ultimaIgualOuMenor) : 'nunca, desde o início da coleta') + '.');
-    var det = ['Faixa onde ficou a metade central dos dias: ' + brl(f.q1) + ' a ' + brl(f.q3) + '.', 'Dias com preço registrado na janela: ' + f.diasObservados + ' de ' + f.diasJanela + '.'];
+    var det = ['Metade dos dias ficou entre ' + brl(f.q1) + ' e ' + brl(f.q3) + '.', 'Dias com preço registrado na janela: ' + f.diasObservados + ' de ' + f.diasJanela + '.'];
     if (f.capa) det.splice(1, 0, 'Preço de capa informado pela Amazon: ' + brl(f.capa) + ' (evento ' + comparar(f.preco, f.capa) + ' preço de capa).');
-    return '<section>' + cab + '<p class="gr"><b>' + brl(f.preco) + '</b> no evento, ' + comparar(f.preco, f.mediana) + ' preço mais comum.</p><ul>' +
+    return '<div class="ev-b">' + cab + '<p class="gr"><b>' + brl(f.preco) + '</b> no evento, ' + comparar(f.preco, f.mediana) + ' preço mais comum.</p><ul>' +
       li.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul><details><summary>Mais detalhes</summary><ul>' +
-      det.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></details></section>';
+      det.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></details></div>';
+  }
+  // seção de promoções: as que têm preço registrado e a próxima (com contagem regressiva); '' se nada a mostrar
+  function secaoEventos(trechos, eventos, hoje) {
+    var blocos = [], prox = null;
+    eventos.forEach(function (e) {
+      var f = fatosEvento(trechos, e);
+      if (f) blocos.push(blocoEvento(e, f));
+      else if (e[1] > hoje && (!prox || e[1] < prox[1])) prox = e;
+    });
+    if (prox) blocos.push('<div class="ev-b"><h3>' + esc(prox[0]) + ' <small>' + dl(prox[1]) + ', daqui a ' + plural(prox[1] - hoje, 'dia', 'dias') + '</small></h3>' +
+      '<p class="mu sm">O preço deste livro na data vai aparecer aqui, comparado com o preço mais comum dos 90 dias anteriores.</p></div>');
+    return blocos.length ? '<section class="card pad sec"><h2 style="margin-bottom:8px">Datas de promoção</h2>' + blocos.join('') + '</section>' : '';
   }
 
   // dados do gráfico: dias com faixa, trechos, eventos próximos e janela inicial
@@ -120,7 +174,7 @@
         ev.push([e[0], e[1], e[2], menor, dm]); d0 = Math.min(d0, e[1]); d1 = Math.max(d1, e[2]);
       }
     });
-    d1 = Math.max(d1, d0 + 6);
+    d0 = Math.min(d0, d1 - 6);                     // pouco histórico: mostra pelo menos uma semana, terminando no último dia
     var capa = null, i;
     for (i = trechos.length - 1; i >= 0; i--) if (trechos[i][3]) { capa = trechos[i][3]; break; }
     return { dias: mov.map(function (r) { return [r[0], pd.preco[r[0]], r[1], r[2], r[3]]; }),
@@ -128,116 +182,130 @@
       full: [d0, d1], def: [(d1 - d0) <= 120 ? d0 : d1 - 89, d1] };
   }
 
-  var CSS_OPCOES = [['med', 'Preço mais comum', 'mediana dos últimos 90 dias'], ['faixa', 'Faixa usual', 'onde ficou a metade central dos dias, nos últimos 90 dias'],
-    ['capa', 'Preço de capa', 'preço de capa informado pela Amazon'], ['ev', 'Promoções', 'Black Friday e outras datas'],
-    ['lac', 'Dias sem coleta', 'períodos em que não há preço registrado'], ['pts', 'Cada coleta', 'um ponto por dia com preço registrado']];
-
-  function controles(G) {
-    var chips = G.ev.map(function (e, i) { return e[3] === null ? '' : '<button type="button" data-ev="' + i + '">' + esc(e[0]) + '</button>'; }).join('');
-    var per = [[30, '30 dias'], [90, '90 dias'], [0, 'Tudo']].map(function (p) { return '<button type="button" data-per="' + p[0] + '">' + p[1] + '</button>'; }).join('');
-    var ops = CSS_OPCOES.map(function (o) { return '<button type="button" data-op="' + o[0] + '" title="' + esc(o[2]) + '" aria-pressed="false">' + esc(o[1]) + '</button>'; }).join('');
-    return '<div class="ctl"><div class="l"><span class="t">Período</span>' + per + chips + '</div><div class="l"><span class="t">Zoom</span>' +
-      '<button type="button" data-z="1" aria-label="Aproximar">＋ Aproximar</button><button type="button" data-z="-1" aria-label="Afastar">－ Afastar</button>' +
-      '<button type="button" data-pan="-1" aria-label="Voltar no tempo">◀</button><button type="button" data-pan="1" aria-label="Avançar no tempo">▶</button></div>' +
-      '<div class="l"><span class="t">Mostrar</span>' + ops + '</div></div>';
+  // marcas "redondas" do eixo de preço, dentro de [lo, hi]: 3 a 5 linhas com passo 1, 2 ou 5 × 10^n centavos
+  function marcas(lo, hi) {
+    var bruto = Math.max((hi - lo) / 4, 1), p = Math.pow(10, Math.floor(Math.log10(bruto))), passo = [1, 2, 5, 10].map(function (k) { return k * p; }).filter(function (x) { return x >= bruto; })[0];
+    var a = Math.ceil(lo / passo) * passo, out = [];
+    for (var v = a; v <= hi; v += passo) out.push(Math.round(v));
+    return out;
   }
 
-  // ---------- DOM ----------
-  function montar(raiz, D) {
-    var tr = D.trechos, eventos = D.eventos || [];
-    var ult = tr[tr.length - 1][1], atual = fatos(tr, ult), G = dadosGrafico(tr, eventos);
-    var blocos = eventos.map(function (e) { return blocoEvento(e, fatosEvento(tr, e)); }).join('');
-    raiz.innerHTML = (D.aviso ? '<p><b>' + esc(D.aviso) + '</b></p>' : '') +
-      '<h1>' + esc(D.titulo || D.asin) + (D.formato ? ' <small>[' + esc(D.formato) + ']</small>' : '') + '</h1>' +
-      '<small>ASIN ' + esc(D.asin) + ' · ' + (tr[0][0] === ult ? 'preço de ' + dl(ult) : 'preços de ' + dl(tr[0][0]) + ' a ' + dl(ult)) + '</small>' +
-      '<div class="cs" style="margin:12px 0">' + cartoesAtuais(atual, D.ultimaColeta == null ? null : ult >= D.ultimaColeta) + '</div>' + avisoDados(atual) +
-      '<div class="graf-box"></div><div class="tip"></div>' + controles(G) +
-      (blocos ? '<h2>Black Friday e outras promoções</h2>' + blocos : '');
-    grafico(raiz, G);
-  }
+  // ---------- gráfico (DOM) ----------
+  // el recebe o cabeçalho com os períodos, o gráfico e a legenda. G = dadosGrafico(...)
+  function grafico(el, G, titulo) {
+    var NS = 'opt_graf2', opt = { med: 1, capa: 0 };
+    try { var sv = JSON.parse(localStorage.getItem(NS) || 'null'); if (sv) for (var k in opt) if (k in sv) opt[k] = sv[k] ? 1 : 0; } catch (e) { }
+    var temMed = G.dias.length >= MIN_COMUM, F0 = G.full[0], F1 = G.full[1], UL = G.dias[G.dias.length - 1][0], v = { a: G.def[0], b: G.def[1] };
+    var span = UL - F0, pers = [[30, '30 dias'], [90, '90 dias'], [365, '1 ano']].filter(function (p) { return span > p[0]; });
+    var evs = G.ev.map(function (e, i) { return e[3] === null ? '' : '<button type="button" data-ev="' + i + '">' + esc(e[0]) + '</button>'; }).join('');
+    var seg = pers.length || evs ? '<div class="seg" role="group" aria-label="Período">' + pers.map(function (p) { return '<button type="button" data-per="' + p[0] + '">' + p[1] + '</button>'; }).join('') +
+      '<button type="button" data-per="0">Tudo</button>' + evs + '</div>' : '';
+    el.innerHTML = '<div class="graf-h"><h2>' + esc(titulo || 'Histórico de preço') + '</h2>' + seg + '</div>' +
+      '<div class="graf"><div class="tip" hidden></div></div><div class="leg"><button type="button" class="fixo" tabindex="-1"><i></i>Preço</button>' +
+      (temMed ? '<button type="button" class="lmed" data-op="med">Preço mais comum</button>' : '') +
+      (G.capa ? '<button type="button" class="lcapa" data-op="capa">Preço de capa</button>' : '') + '</div>';
+    var box = el.querySelector('.graf'), tip = box.querySelector('.tip'), W = 0, H = 0, ML = 0, MR = 12, MT = 22, MB = 26, X, Y;
 
-  function grafico(raiz, D) {
-    var W = 860, H = 380, ML = 72, MR = 20, MT = 22, MB = 40, BASE = H - MB;
-    var box = raiz.querySelector('.graf-box'), tip = raiz.querySelector('.tip'), ctl = raiz.querySelector('.ctl');
-    var DICA = 'Toque ou passe o mouse no gráfico para ver o preço de cada dia.';
-    var opt = { med: 1, faixa: 0, capa: 0, ev: 1, lac: 1, pts: 0 };
-    try { var sv = JSON.parse(localStorage.getItem('opt_graf') || 'null'); if (sv) for (var k in opt) if (k in sv) opt[k] = sv[k] ? 1 : 0; } catch (e) { }
-    var F0 = D.full[0], F1 = D.full[1], v = { a: D.def[0], b: D.def[1] };
-    function clamp(a, b) { var sp = Math.max(6, Math.min(b - a, F1 - F0)); a = Math.max(F0, Math.min(a, F1 - sp)); v.a = a; v.b = a + sp; }
-    function X(o) { return ML + (o - v.a) / (v.b - v.a) * (W - ML - MR); }
+    function n1(x) { return Math.round(x * 10) / 10; }
     function draw() {
-      ML = (root.innerWidth || 1000) <= 600 ? 104 : 72;
-      var vals = [], i, out = [];
-      D.dias.forEach(function (r) { if (r[0] >= v.a && r[0] <= v.b) { vals.push(r[1]); if (opt.med) vals.push(r[3]); if (opt.faixa) vals.push(r[2], r[4]); } });
-      if (!vals.length) D.dias.forEach(function (r) { vals.push(r[1]); });
-      if (opt.capa && D.capa) vals.push(D.capa);
-      var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), f = Math.max((hi - lo) * .12, 50); lo = Math.max(0, lo - f); hi += f;
-      function Y(c) { return MT + (1 - (c - lo) / (hi - lo)) * (BASE - MT); }
-      function n1(x) { return x.toFixed(1); }
-      out.push('<svg class="graf" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Histórico de preço"><defs><clipPath id="rec"><rect x="' + ML + '" y="' + MT + '" width="' + (W - ML - MR) + '" height="' + (BASE - MT) + '"/></clipPath>' +
-        '<pattern id="lac" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" class="lacl"/></pattern></defs>');
-      for (i = 0; i < 5; i++) { var c = lo + (hi - lo) * i / 4; out.push('<line x1="' + ML + '" x2="' + (W - MR) + '" y1="' + n1(Y(c)) + '" y2="' + n1(Y(c)) + '" class="g"/><text x="' + (ML - 8) + '" y="' + n1(Y(c) + 4) + '" text-anchor="end">' + brl(Math.round(c)) + '</text>'); }
-      for (i = 0; i < 5; i++) { if (v.b - v.a < 12 && i % 4) continue; var o = Math.round(v.a + (v.b - v.a) * i / 4); out.push('<text x="' + n1(X(o)) + '" y="' + (H - 14) + '" text-anchor="' + (i === 0 ? 'start' : i === 4 ? 'end' : 'middle') + '">' + dc(o) + '</text>'); }
-      out.push('<g clip-path="url(#rec)">');
-      if (opt.lac) for (i = 1; i < D.tr.length; i++) { var a = D.tr[i - 1], b = D.tr[i]; if (b[0] - a[1] > BURACO) out.push('<rect x="' + n1(X(a[1])) + '" y="' + MT + '" width="' + n1(X(b[0]) - X(a[1])) + '" height="' + (BASE - MT) + '" fill="url(#lac)"><title>Sem coleta de ' + dc(a[1]) + ' a ' + dc(b[0]) + '</title></rect>'); }
-      if (opt.ev) D.ev.forEach(function (e) {
-        var x0 = X(e[1]) - 3, w = Math.max(X(e[2]) - X(e[1]), 0) + 6, dir = x0 > W * .6;
-        out.push('<rect x="' + n1(x0) + '" y="' + MT + '" width="' + n1(w) + '" height="' + (BASE - MT) + '" class="ev"/><text x="' + n1(dir ? x0 - 4 : x0 + w + 4) + '" y="' + (MT + 12) + '" class="evt" text-anchor="' + (dir ? 'end' : 'start') + '">' + esc(e[0]) + '</text>');
-      });
-      if (opt.faixa && D.dias.length > 1) {
-        var top = '', bot = ''; D.dias.forEach(function (r, j) { top += (j ? 'L' : 'M') + n1(X(r[0])) + ',' + n1(Y(r[4])); });
-        for (i = D.dias.length - 1; i >= 0; i--) bot += 'L' + n1(X(D.dias[i][0])) + ',' + n1(Y(D.dias[i][2]));
-        out.push('<path d="' + top + bot + 'Z" class="faixa"/>');
+      W = box.clientWidth || 640; H = W < 520 ? 220 : 280;
+      var vals = [], i, out = [], BASE = H - MB;
+      G.dias.forEach(function (r, j) { if (r[0] >= v.a && r[0] <= v.b) { vals.push(r[1]); if (opt.med && temMed && j >= MIN_COMUM - 1) vals.push(r[3]); } });
+      if (!vals.length) G.dias.forEach(function (r) { vals.push(r[1]); });
+      if (opt.capa && G.capa) vals.push(G.capa);
+      var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), f = Math.max((hi - lo) * .15, 100); lo = Math.max(0, lo - f); hi += f;
+      var ms = marcas(lo, hi);
+      ML = Math.max.apply(null, ms.map(function (m) { return brlCurto(m).length; })) * 6.6 + 10;
+      X = function (o) { return ML + (o - v.a) / Math.max(1, v.b - v.a) * (W - ML - MR); };
+      Y = function (c) { return MT + (1 - (c - lo) / (hi - lo)) * (BASE - MT); };
+      out.push('<svg width="' + W + '" height="' + H + '" role="img" aria-label="Gráfico do histórico de preço"><defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="var(--ac)" stop-opacity=".22"/><stop offset="1" stop-color="var(--ac)" stop-opacity="0"/></linearGradient>' +
+        '<clipPath id="gRec"><rect x="' + ML + '" y="0" width="' + (W - ML - MR + 1) + '" height="' + H + '"/></clipPath></defs>');
+      ms.forEach(function (m) { if (m < lo || m > hi) return; var y = n1(Y(m)); out.push('<line x1="' + ML + '" x2="' + (W - MR) + '" y1="' + y + '" y2="' + y + '" class="g"/><text x="' + (ML - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + brlCurto(m) + '</text>'); });
+      // datas do eixo: passo inteiro de dias, para ficarem igualmente espaçadas; a última encosta no fim
+      var nx = W < 520 ? 3 : 5, ano = v.b - v.a > 300, passo = Math.max(1, Math.ceil((v.b - v.a) / (nx - 1)));
+      for (var o = v.b; o >= v.a; o -= passo) {
+        var xo = X(o), ponta = o === v.b ? 'end' : xo - ML < 24 ? 'start' : 'middle';
+        out.push('<text x="' + n1(xo) + '" y="' + (H - 6) + '" text-anchor="' + ponta + '">' + (ano ? MESES[dtObj(o).getUTCMonth()] + ' ' + String(dtObj(o).getUTCFullYear()).slice(2) : dmes(o)) + '</text>');
       }
-      if (opt.med) { var m = ''; D.dias.forEach(function (r, j) { m += (j ? 'L' : 'M') + n1(X(r[0])) + ',' + n1(Y(r[3])); }); out.push('<path d="' + m + '" class="med"/>'); }
-      if (opt.capa && D.capa) out.push('<line x1="' + ML + '" x2="' + (W - MR) + '" y1="' + n1(Y(D.capa)) + '" y2="' + n1(Y(D.capa)) + '" class="capa"/>');
-      var pa = ''; D.tr.forEach(function (t, j) { var x0 = X(t[0]), x1 = Math.max(X(t[1]), x0 + 1), y = n1(Y(t[2])), lig = j && t[0] - D.tr[j - 1][1] <= BURACO; pa += (lig ? 'L' : 'M') + n1(x0) + ',' + y + 'L' + n1(x1) + ',' + y; });
-      out.push('<path d="' + pa + '" class="preco"/>');
-      if (opt.pts) D.dias.forEach(function (r) { out.push('<circle cx="' + n1(X(r[0])) + '" cy="' + n1(Y(r[1])) + '" r="2" class="pt"/>'); });
-      else D.tr.forEach(function (t) { out.push('<circle cx="' + n1(X(t[0])) + '" cy="' + n1(Y(t[2])) + '" r="3" class="pt"/>'); });
-      if (opt.ev) D.ev.forEach(function (e) {
-        if (e[3] == null) return; var x = X(e[4]), dir = x > W * .6;
-        out.push('<circle cx="' + n1(x) + '" cy="' + n1(Y(e[3])) + '" r="5.5" class="pe"/><text x="' + n1(x + (dir ? -9 : 9)) + '" y="' + n1(Y(e[3]) + 4) + '" class="pet" text-anchor="' + (dir ? 'end' : 'start') + '">' + brl(e[3]) + '</text>');
+      out.push('<g clip-path="url(#gRec)">');
+      G.ev.forEach(function (e) {
+        var x0 = X(e[1] - .5), w = Math.max(X(e[2] + .5) - x0, 4), dir = x0 > W * .6;
+        out.push('<rect x="' + n1(x0) + '" y="' + MT + '" width="' + n1(w) + '" height="' + (BASE - MT) + '" class="ev" rx="3"/><text x="' + n1(dir ? x0 - 5 : x0 + w + 5) + '" y="' + (MT + 12) + '" class="evt" text-anchor="' + (dir ? 'end' : 'start') + '">' + esc(e[0]) + '</text>');
       });
+      if (opt.capa && G.capa) out.push('<line x1="' + ML + '" x2="' + (W - MR) + '" y1="' + n1(Y(G.capa)) + '" y2="' + n1(Y(G.capa)) + '" class="capa"/>');
+      if (opt.med && temMed) { var m = ''; G.dias.forEach(function (r, j) { if (j >= MIN_COMUM - 1) m += (m ? 'L' : 'M') + n1(X(r[0])) + ',' + n1(Y(r[3])); }); out.push('<path d="' + m + '" class="med"/>'); }
+      // preço em degraus: vale até mudar; mais de BURACO dias sem coleta interrompem a linha
+      var linha = '', area = '', run = '', ini = null, fimX = null;
+      function fecha() { if (run) { area += run + 'L' + fimX + ',' + BASE + 'L' + ini + ',' + BASE + 'Z'; linha += run; } run = ''; }
+      G.tr.forEach(function (t, j) {
+        var prox = G.tr[j + 1], liga = prox && prox[0] - t[1] <= BURACO, x0 = n1(X(t[0])), x1 = n1(X(liga ? prox[0] : t[1])), y = n1(Y(t[2]));
+        if (!run) { run = 'M' + x0 + ',' + y; ini = x0; } else run += 'L' + x0 + ',' + y;
+        run += 'L' + x1 + ',' + y; fimX = x1;
+        if (!liga) fecha();
+      });
+      fecha();
+      out.push('<path d="' + area + '" class="area"/><path d="' + linha + '" class="preco"/>');
+      var ul = G.tr[G.tr.length - 1];
+      out.push('<circle cx="' + n1(X(ul[1])) + '" cy="' + n1(Y(ul[2])) + '" r="4.5" class="fim"/>');
+      G.ev.forEach(function (e) { if (e[3] != null) out.push('<circle cx="' + n1(X(e[4])) + '" cy="' + n1(Y(e[3])) + '" r="5" class="pe"/>'); });
       out.push('</g>');
-      if (opt.capa && D.capa) out.push('<text x="' + (W - MR) + '" y="' + n1(Y(D.capa) - 4) + '" text-anchor="end">capa ' + brl(D.capa) + '</text>');
-      out.push('<line class="cur" x1="0" x2="0" y1="' + MT + '" y2="' + BASE + '" visibility="hidden"/></svg>');
-      box.innerHTML = out.join('');
-      var s = box.querySelector('svg');
-      s.addEventListener('pointermove', hover);
-      s.addEventListener('pointerleave', function () { s.querySelector('.cur').setAttribute('visibility', 'hidden'); tip.textContent = DICA; });
+      if (opt.capa && G.capa) out.push('<text x="' + (W - MR) + '" y="' + n1(Y(G.capa) - 5) + '" text-anchor="end">capa ' + brl(G.capa) + '</text>');
+      out.push('<line class="cur" y1="' + MT + '" y2="' + BASE + '" visibility="hidden"/><circle class="curp" r="5" visibility="hidden"/></svg>');
+      var velho = box.querySelector('svg'); if (velho) velho.remove();
+      box.insertAdjacentHTML('beforeend', out.join(''));
       painel();
     }
-    function hover(e) {
-      var s = box.querySelector('svg'), r = s.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * W, o = (x - ML) / (W - ML - MR) * (v.b - v.a) + v.a, b = null, bd = 1e9;
-      D.dias.forEach(function (q) { if (q[0] < v.a || q[0] > v.b) return; var k = Math.abs(q[0] - o); if (k < bd) { bd = k; b = q; } });
+    function mostra(e) {
+      var s = box.querySelector('svg'), r = s.getBoundingClientRect(), x = e.clientX - r.left, o = (x - ML) / (W - ML - MR) * (v.b - v.a) + v.a, b = null, bd = 1e9, bj = 0;
+      G.dias.forEach(function (q, j) { if (q[0] < v.a || q[0] > v.b) return; var k = Math.abs(q[0] - o); if (k < bd) { bd = k; b = q; bj = j; } });
       if (!b) return;
-      var c = s.querySelector('.cur'), px = X(b[0]); c.setAttribute('x1', px); c.setAttribute('x2', px); c.setAttribute('visibility', 'visible');
-      var t = dl(b[0]) + ': ' + brl(b[1]);
-      if (opt.med) t += ' · preço mais comum ' + brl(b[3]);
-      if (opt.faixa) t += ' · faixa usual ' + brl(b[2]) + ' a ' + brl(b[4]);
-      if (opt.capa && D.capa) t += ' · capa ' + brl(D.capa);
-      tip.textContent = t;
+      var px = X(b[0]), py = Y(b[1]), c = s.querySelector('.cur'), p = s.querySelector('.curp');
+      c.setAttribute('x1', px); c.setAttribute('x2', px); c.setAttribute('visibility', 'visible');
+      p.setAttribute('cx', px); p.setAttribute('cy', py); p.setAttribute('visibility', 'visible');
+      tip.innerHTML = '<b>' + brl(b[1]) + '</b><br>' + dmes(b[0], true) + (opt.med && temMed && bj >= MIN_COMUM - 1 ? '<br>mais comum ' + brl(b[3]) : '');
+      tip.hidden = false;
+      var tw = tip.offsetWidth; tip.style.left = Math.max(tw / 2, Math.min(W - tw / 2, px)) + 'px';
+      tip.style.top = Math.max(0, py - tip.offsetHeight - 14) + 'px';
     }
+    function esconde() { var s = box.querySelector('svg'); if (!s) return; s.querySelector('.cur').setAttribute('visibility', 'hidden'); s.querySelector('.curp').setAttribute('visibility', 'hidden'); tip.hidden = true; }
     function painel() {
-      ctl.querySelectorAll('[data-op]').forEach(function (b) { b.setAttribute('aria-pressed', opt[b.dataset.op] ? 'true' : 'false'); });
-      var sp = v.b - v.a;
-      ctl.querySelectorAll('[data-per]').forEach(function (b) { var n = +b.dataset.per, al = n === 0 ? (v.a === F0 && v.b === F1) : (sp === n - 1 && v.b === F1); b.setAttribute('aria-pressed', al ? 'true' : 'false'); });
-      var zm = ctl.querySelector('[data-z="1"]'), zo = ctl.querySelector('[data-z="-1"]'); if (zm) zm.disabled = sp <= 6; if (zo) zo.disabled = sp >= F1 - F0;
+      el.querySelectorAll('[data-op]').forEach(function (b) { b.setAttribute('aria-pressed', opt[b.dataset.op] ? 'true' : 'false'); });
+      el.querySelectorAll('[data-per]').forEach(function (b) { var n = +b.dataset.per, al = n === 0 ? (v.a === F0 && v.b === F1) : (v.a === Math.max(F0, UL - n + 1) && v.b === UL); b.setAttribute('aria-pressed', al ? 'true' : 'false'); });
+      el.querySelectorAll('[data-ev]').forEach(function (b) { var e = G.ev[+b.dataset.ev]; b.setAttribute('aria-pressed', v.a === Math.max(F0, e[1] - 45) && v.b === Math.min(F1, e[2] + 7) ? 'true' : 'false'); });
     }
-    ctl.addEventListener('click', function (e) {
-      var b = e.target.closest('button'); if (!b) return; var sp = v.b - v.a, c = (v.a + v.b) / 2;
-      if (b.dataset.op) { opt[b.dataset.op] = opt[b.dataset.op] ? 0 : 1; try { localStorage.setItem('opt_graf', JSON.stringify(opt)); } catch (x) { } }
-      else if (b.dataset.per !== undefined) { var n = +b.dataset.per; if (n === 0) { v.a = F0; v.b = F1; } else clamp(F1 - n + 1, F1); }
-      else if (b.dataset.z) { var f = b.dataset.z === '1' ? .5 : 2; clamp(c - sp * f / 2, c + sp * f / 2); }
-      else if (b.dataset.pan) { var d = Math.round(sp / 3) * (+b.dataset.pan); clamp(v.a + d, v.b + d); }
-      else if (b.dataset.ev !== undefined) { var ev = D.ev[+b.dataset.ev]; clamp(ev[1] - 45, ev[2] + 7); }
-      draw();
+    box.addEventListener('pointermove', mostra);
+    box.addEventListener('pointerdown', mostra);
+    box.addEventListener('pointerleave', esconde);
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.op) { opt[b.dataset.op] = opt[b.dataset.op] ? 0 : 1; try { localStorage.setItem(NS, JSON.stringify(opt)); } catch (x) { } }
+      else if (b.dataset.per !== undefined) { var n = +b.dataset.per; v.a = n === 0 ? F0 : Math.max(F0, UL - n + 1); v.b = n === 0 ? F1 : UL; }
+      else if (b.dataset.ev !== undefined) { var ev = G.ev[+b.dataset.ev]; v.a = Math.max(F0, ev[1] - 45); v.b = Math.min(F1, ev[2] + 7); }
+      else return;
+      esconde(); draw();
     });
-    tip.textContent = DICA; draw();
+    var tm = null, larg = 0;
+    function aoRedimensionar() { clearTimeout(tm); tm = setTimeout(function () { if (box.isConnected && box.clientWidth !== larg) { larg = box.clientWidth; draw(); } }, 80); }
+    if (root.ResizeObserver) new ResizeObserver(aoRedimensionar).observe(box); else root.addEventListener('resize', aoRedimensionar);
+    draw(); larg = box.clientWidth;
+  }
+
+  // ---------- página avulsa (comando `grafico`) ----------
+  function montar(raiz, D) {
+    var tr = D.trechos, eventos = D.eventos || [], ult = tr[tr.length - 1][1], atual = fatos(tr, ult), G = dadosGrafico(tr, eventos), L = limpar(D.titulo || D.asin);
+    if (root.document && root.document.body) root.document.body.classList.add('avulsa');
+    raiz.innerHTML = (D.aviso ? '<p class="aviso">' + esc(D.aviso) + '</p>' : '') +
+      '<section class="sec"><h1>' + esc(L.t) + '</h1><p class="mu" style="margin-top:6px">' + [D.formato, L.idioma, 'ASIN ' + D.asin].filter(Boolean).map(esc).join(' · ') + '</p>' +
+      '<div class="compra"><div class="preco-g"><b>' + brl(atual.preco) + '</b><span class="mu sm">em ' + dl(ult) + '</span></div><div class="fat">' + comparacoes(atual) + '</div></div></section>' +
+      '<section class="card pad sec"><div class="g-box"></div>' + avisoDados(atual) + estatisticas(atual, tr[0][0]) + '</section>' +
+      secaoEventos(tr, eventos, ult);
+    grafico(raiz.querySelector('.g-box'), G);
   }
 
   var API = { porDia: porDia, quartis: quartis, janelaMovel: janelaMovel, fatos: fatos, fatosEvento: fatosEvento, resumoEvento: resumoEvento,
-    dadosGrafico: dadosGrafico, avisoDados: avisoDados, cartoesAtuais: cartoesAtuais, linkAmazon: linkAmazon, montar: montar, brl: brl, dl: dl, esc: esc, pct: pct, comparar: comparar };
+    dadosGrafico: dadosGrafico, marcas: marcas, avisoDados: avisoDados, estatisticas: estatisticas, comparacoes: comparacoes, secaoEventos: secaoEventos,
+    grafico: grafico, montar: montar, linkAmazon: linkAmazon, limpar: limpar, asinDe: asinDe, MIN_COMUM: MIN_COMUM,
+    brl: brl, dl: dl, dc: dc, dmes: dmes, dlongo: dlongo, esc: esc, pct: pct, comparar: comparar, plural: plural };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Livro = API;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -27,6 +27,20 @@
     gravar(l); return { lidos: novos.length, adicionados: n };
   }
   function exportar() { return JSON.stringify(ler()); }
-  root.Lista = { ler: ler, tem: tem, alternar: alternar, remover: remover, extrair: extrair, importar: importar, exportar: exportar };
+  function inserir(asin, pos) { var l = ler().filter(function (a) { return a !== asin; }); l.splice(Math.min(pos, l.length), 0, asin); gravar(l); }
+
+  // Preços "desde a sua última visita": guarda os preços vistos em cada dia de coleta. A comparação é com
+  // a visita feita num dia de coleta anterior, então recarregar a página no mesmo dia não apaga as mudanças.
+  // hoje = dia da coleta mais recente; precos = {asin: centavos}. Devolve {dia, precos} da visita anterior, ou null.
+  var VISTOS = 'vistos_v1';
+  function visita(hoje, precos) {
+    var s; try { s = JSON.parse(localStorage.getItem(VISTOS) || 'null'); } catch (e) { s = null; }
+    if (!s || typeof s !== 'object') s = {};
+    if (!s.a || s.a.d !== hoje) { if (s.a && s.a.d < hoje) s.b = s.a; s.a = { d: hoje, p: {} }; }
+    for (var k in precos) s.a.p[k] = precos[k];
+    try { localStorage.setItem(VISTOS, JSON.stringify(s)); } catch (e) { }
+    return s.b ? { dia: s.b.d, precos: s.b.p } : null;
+  }
+  root.Lista = { ler: ler, tem: tem, alternar: alternar, remover: remover, inserir: inserir, extrair: extrair, importar: importar, exportar: exportar, visita: visita };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.Lista;
 })(typeof window !== 'undefined' ? window : globalThis);
