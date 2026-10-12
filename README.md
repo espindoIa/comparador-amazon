@@ -1,7 +1,7 @@
 # Comparador de preços de livros (Amazon Brasil)
 
-Lê, todo dia, os preços dos ~1.000 livros mais vendidos de cada categoria de livros da Amazon
-Brasil (cerca de 20 mil livros diferentes) e guarda o histórico. O objetivo é saber se uma oferta de
+Lê, todo dia, os preços dos ~2.000 livros mais vendidos de cada categoria de livros da Amazon
+Brasil (algumas dezenas de milhares de livros diferentes) e guarda o histórico. O objetivo é saber se uma oferta de
 Black Friday ou Dia do Consumidor é boa de verdade, comparando com o preço praticado no resto
 do ano, e não só com o preço de capa.
 
@@ -39,7 +39,7 @@ seguintes com `fetch` dentro dela, na mesma sessão. Ele roda sem janela (headle
 o Chrome ou o Edge que você já tem. Para indicar outro navegador, defina a variável
 `COMPARADOR_NAVEGADOR` com o caminho do executável.
 
-## Os ~20 mil livros mais vendidos, todo dia
+## Os mais vendidos de cada categoria, todo dia
 
 ```bash
 python -m comparador --db data/vendidos.db varrer --vendidos
@@ -52,12 +52,17 @@ formato (capa comum, capa dura, Kindle, audiolivro) e o preço de capa quando h�
 No workflow `varredura.yml` é a linha `vendidos` da matrix, num servidor próprio; o
 banco vai para a release `catalogo` como `catalogo-vendidos-<data>.db.gz`.
 
-**Os ~1.000 mais vendidos de cada categoria, só com preço de compra.** Na ordem "Mais vendidos", a
+**Os ~2.000 mais vendidos de cada categoria, só com preço de compra.** Na ordem "Mais vendidos", a
 Amazon só mostra **75 páginas (1.200 livros) por consulta**, embora a paginação anuncie 400, e as
-páginas de busca não mostram a posição de vendas de cada livro. Por isso a leitura é por gênero, e
-para ao completar **1.000 livros com preço de compra** (ou ao chegar à página 75). Livros "fora de
+páginas de busca não mostram a posição de vendas de cada livro. Mas cada **faixa de preço** (filtro
+`p_36`) tem o seu próprio ranking de 75 páginas, na mesma ordem. Por isso cada gênero é lido em
+3 faixas (até R$ 39,99; R$ 40 a R$ 79,99; R$ 80 ou mais, em `FAIXAS_VENDIDOS`), e cada faixa para ao
+completar **1.000 livros com preço de compra** (ou ao chegar à página 75). Juntas, as faixas contêm
+os ~2.000 mais vendidos do gênero, a não ser que uma faixa sozinha tenha mais de 1.000 deles (em
+média são ~670 por faixa); na prática a leitura passa de 2.000 (até ~3.000 por gênero). A faixa vale
+para o card: um livro entra se algum formato dele estiver nela. Livros "fora de
 catálogo", isto é, sem preço de compra na busca (indisponíveis, ou e-books só do Kindle Unlimited,
-que aparecem como "R$ 0,00"), não entram na base e não contam nos 1.000; a leitura segue um pouco
+que aparecem como "R$ 0,00"), não entram na base e não contam nos 1.000 de cada faixa; a leitura segue um pouco
 mais fundo para compensar. Se um deles voltar a aparecer com preço em outro dia, entra na base nesse
 dia; o que já estava na base nunca é apagado. **Só livros vendidos pela Amazon:** toda consulta usa o filtro "Vendido por Amazon.com.br" da própria
 busca (`p_6`, em `VENDEDOR_AMAZON`, `comparador/busca.py`). Limite medido: o filtro vale para o livro
@@ -68,9 +73,9 @@ Brasil Ltda" (um 2º filtro, quase só e-books) não entra, porque a busca não 
 O site esconde da busca o que não foi visto desde que o filtro começou (livros de outros vendedores
 que entraram antes), assim que a primeira varredura completa com o filtro termina; o histórico deles
 continua guardado, e quem estiver na sua lista aparece com "sem coleta recente".
-São 30 consultas (29 gêneros mais o ranking geral),
-~2.000 páginas, ~1h40 por dia; como um livro pode estar em mais de um gênero, o número de livros
-distintos fica abaixo de 30 mil. Os gêneros (inclusive HQs e mangás, que não são mais varridos
+São 90 consultas (29 gêneros mais o ranking geral, 3 faixas cada),
+até ~5.700 páginas, até ~4h40 por dia (dividido entre as execuções do dia); como um livro pode
+estar em mais de um gênero, o número de livros distintos fica bem abaixo de 90 mil. Os gêneros (inclusive HQs e mangás, que não são mais varridos
 à parte) estão em `GENEROS`, em `comparador/varredura.py`.
 
 ## Varredura de uma categoria inteira (disponível, mas não agendada)
@@ -93,8 +98,8 @@ Medido em out/2026 para HQs, Mangás e Graphic Novels (nó `7842710011`):
 | Ritmo | pausa de 1–3 s, ~20 páginas/min, sem bloqueios (testado também com 0,3–1 s: 36 páginas/min, sem bloqueio) |
 | Tempo por dia | ~1h40 num único servidor |
 
-O workflow `.github/workflows/varredura.yml` (hoje só com a linha `vendidos`) roda 4 vezes por dia. A primeira normalmente
-completa o dia; as outras só continuam o que faltou (o progresso é salvo a cada página) ou
+O workflow `.github/workflows/varredura.yml` (hoje só com a linha `vendidos`) roda 4 vezes por dia. Com as
+3 faixas de preço, as duas primeiras completam o dia; as outras só continuam o que faltou (o progresso é salvo a cada página) ou
 terminam em segundos. Uma passada que ficou pela metade ontem recomeça da página 1, para
 que todos os preços de um dia sejam daquele dia. A primeira execução de cada dia falha (e
 o GitHub avisa por e-mail) se o dia anterior ficou incompleto.
@@ -173,7 +178,7 @@ Um site estático (sem servidor, grátis no GitHub Pages) com:
   diferença para o preço mais comum dos últimos 90 dias e o mais barato do período, e pode ser
   ordenada por título, preço ou diferença. **A lista fica só no navegador de quem a cria** (não há
   conta nem servidor). Para levá-la a outro aparelho, use "Levar a lista para outro aparelho": copie
-  num e cole no outro. Só entram livros que o catálogo acompanha (os ~1.000 mais vendidos de cada categoria).
+  num e cole no outro. Só entram livros que o catálogo acompanha (os ~2.000 mais vendidos de cada categoria).
 
 ```bash
 python -m comparador site data/catalogo-vendidos.db --saida site

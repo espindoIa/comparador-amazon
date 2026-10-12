@@ -18,8 +18,8 @@ def main() -> None:
     v.add_argument("--no", default=varredura.NO_HQ_MANGA,
                    help="nó da categoria (padrão: %(default)s = HQs, Mangás e Graphic Novels)")
     v.add_argument("--vendidos", action="store_true",
-                   help="em vez da categoria --no, os ~1.000 livros mais vendidos (com preço) de cada "
-                        "gênero de Livros e do ranking geral (~2.000 páginas por dia)")
+                   help="em vez da categoria --no, os ~2.000 livros mais vendidos (com preço) de cada "
+                        "gênero de Livros e do ranking geral, em 3 faixas de preço (até ~5.700 páginas por dia)")
     v.add_argument("--minutos", type=float, default=150, help="orçamento de tempo (padrão: %(default)s)")
     v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
     v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
