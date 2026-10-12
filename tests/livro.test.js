@@ -68,12 +68,12 @@ t('dados do gráfico: evento distante fica de fora; histórico longo abre em 90 
 t('poucos dados: estatísticas e aviso dizem o que falta', () => {
   const um = L.fatos([tr(6165, '2026-10-11', '2026-10-11')], dia('2026-10-11'));
   const e1 = L.estatisticas(um, dia('2026-10-11'));
-  assert.match(e1, /precisa de 2 dias de coleta/);
+  assert.match(e1, /a partir de 2 dias/);
   assert.match(e1, /1 dia com preço/);
   assert.doesNotMatch(e1, /R\$ 61,65/);                // sem repetir o preço atual como mínimo e máximo
   assert.match(L.avisoDados(um), /1 dia de preço/);
   const dois = L.fatos([tr(6000, '2026-10-10', '2026-10-11')], dia('2026-10-11'));
-  assert.match(L.estatisticas(dois, dia('2026-10-10')), /Mais barato<\/span><b>R\$ 60,00/);
+  assert.match(L.estatisticas(dois, dia('2026-10-10')), /Menor preço<\/span><b>R\$ 60,00/);
   assert.match(L.avisoDados(dois), /2 dias com preço/);
   assert.doesNotMatch(L.comparacoes(dois), /preço mais comum/);   // sem preço mais comum, sem comparação
   const muitos = L.fatos([tr(6000, '2026-09-01', '2026-10-10'), tr(4500, '2026-10-11', '2026-10-11')], dia('2026-10-11'));
