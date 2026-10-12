@@ -32,6 +32,7 @@ from . import db
 from .busca import SEM_TETO, ItemBusca, LayoutDesconhecido, parse_busca, url_busca
 from .rede import PAUSA_APOS_BLOQUEIO, baixar, guardar_html
 
+COLUNAS_DETALHE = ("autor", "imagem", "publicado", "idioma", "obra")
 SCHEMA = Path(__file__).with_name("schema_catalogo.sql")
 
 NO_HQ_MANGA = "7842710011"  # Livros > HQs, Mangás e Graphic Novels
@@ -107,6 +108,11 @@ def criar_schema(conn: sqlite3.Connection) -> None:
     if "livros" not in {r[1] for r in conn.execute("PRAGMA table_info(fatias)")}:  # banco anterior a esta coluna
         conn.execute("ALTER TABLE fatias ADD COLUMN livros INTEGER NOT NULL DEFAULT 0")
         conn.commit()
+    existentes = {r[1] for r in conn.execute("PRAGMA table_info(catalogo)")}
+    for coluna in COLUNAS_DETALHE:                      # banco anterior aos detalhes do livro
+        if coluna not in existentes:
+            conn.execute(f"ALTER TABLE catalogo ADD COLUMN {coluna} TEXT")
+    conn.commit()
 
 
 def semear(conn: sqlite3.Connection, no: str) -> None:
@@ -188,11 +194,14 @@ def _instante(iso: str) -> datetime:
 
 def registrar(conn: sqlite3.Connection, item: ItemBusca, no: str, quando: str) -> None:
     conn.execute(
-        "INSERT INTO catalogo (asin, titulo, formato, no, primeiro_visto, ultimo_visto) "
-        "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (asin) DO UPDATE SET "
+        "INSERT INTO catalogo (asin, titulo, formato, autor, imagem, publicado, idioma, obra, no, "
+        "primeiro_visto, ultimo_visto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (asin) DO UPDATE SET "
         "titulo = COALESCE(excluded.titulo, titulo), formato = COALESCE(excluded.formato, formato), "
-        "ultimo_visto = excluded.ultimo_visto",
-        (item.asin, item.titulo, item.formato, no, quando, quando),
+        "autor = COALESCE(excluded.autor, autor), imagem = COALESCE(excluded.imagem, imagem), "
+        "publicado = COALESCE(excluded.publicado, publicado), idioma = COALESCE(excluded.idioma, idioma), "
+        "obra = COALESCE(excluded.obra, obra), ultimo_visto = excluded.ultimo_visto",
+        (item.asin, item.titulo, item.formato, item.autor, item.imagem, item.publicado, item.idioma,
+         item.obra, no, quando, quando),
     )
     ultimo = conn.execute(
         "SELECT id, preco_centavos, preco_capa_centavos, ate FROM historico "

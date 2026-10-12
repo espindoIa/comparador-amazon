@@ -6,8 +6,9 @@ lista de desejos rodam no navegador (a lista fica guardada só no navegador de q
 
 Dados gerados em `dados/`:
 - `indice.json`  uma linha por livro visível, para a busca (some o que não foi visto depois do filtro
-                 "vendido pela Amazon"; o histórico dele continua nos `h/`): [asin, título, formato, preço atual, preço de capa, último dia visto]
-- `h/XX.json`    histórico de ~1/256 dos livros (XX = hash de 1 byte do ASIN, em hexadecimal), carregado sob demanda
+                 "vendido pela Amazon"; o histórico dele continua nos `h/`): [asin, título, formato, preço atual, preço de capa, último dia visto,
+                 autor, código da capa, publicado (AAAA-MM-DD), idioma, obra (ASIN que agrupa os formatos)]
+- `h/XX.json`    (com autor, imagem, publicado, idioma e obra quando conhecidos) histórico de ~1/256 dos livros (XX = hash de 1 byte do ASIN, em hexadecimal), carregado sob demanda
 - `meta.json`    data da última coleta, totais e aviso (bancos simulados)
 - `eventos.json` promoções (de eventos.csv)
 """
@@ -23,6 +24,7 @@ from pathlib import Path
 from .db import dia_brasil
 from .relatorio import BURACO, WEB, aviso, ler_eventos
 
+DETALHES = ("autor", "imagem", "publicado", "idioma", "obra")
 ARQUIVOS_WEB = ("index.html", "livro.html", "app.js", "lista.js", "livro.js", "estilo.css")
 
 
@@ -71,10 +73,14 @@ def ler_banco(caminho: Path, livros: dict[str, dict]) -> str:
     conn.row_factory = sqlite3.Row
     try:
         corte = corte_amazon(conn)
-        for r in conn.execute("SELECT asin, titulo, formato, ultimo_visto FROM catalogo"):
+        colunas = {c[1] for c in conn.execute("PRAGMA table_info(catalogo)")}
+        detalhes = ", ".join(c if c in colunas else f"NULL AS {c}" for c in DETALHES)   # bancos antigos não têm
+        for r in conn.execute(f"SELECT asin, titulo, formato, ultimo_visto, {detalhes} FROM catalogo"):
             l = livros.setdefault(r["asin"], {"t": None, "f": None, "u": 0, "h": [], "v": False})
             l["t"] = l["t"] or r["titulo"]
             l["f"] = l["f"] or r["formato"]
+            for c in DETALHES:
+                l[c] = l.get(c) or r[c]
             u = dia_brasil(r["ultimo_visto"]).toordinal()
             l["u"] = max(l["u"], u)
             l["v"] = l["v"] or corte is None or u >= corte     # visível na busca
@@ -107,8 +113,9 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None) -> d
         ultimo = l["h"][-1]
         capa = next((t[3] for t in reversed(l["h"]) if t[3]), None)
         if l["v"]:
-            indice.append([asin, l["t"] or asin, l["f"], ultimo[2], capa, l["u"]])
-        fragmentos.setdefault(fragmento(asin), {})[asin] = {"t": l["t"], "f": l["f"], "h": l["h"]}
+            indice.append([asin, l["t"] or asin, l["f"], ultimo[2], capa, l["u"], *(l.get(c) for c in DETALHES)])
+        fragmentos.setdefault(fragmento(asin), {})[asin] = {"t": l["t"], "f": l["f"], "h": l["h"],
+                                                           **{c: l[c] for c in DETALHES if l.get(c)}}
     (saida / "dados" / "indice.json").write_text(_json({"v": 1, "itens": indice}), encoding="utf-8")
     for chave, conteudo in fragmentos.items():
         (saida / "dados" / "h" / f"{chave}.json").write_text(_json(conteudo), encoding="utf-8")
