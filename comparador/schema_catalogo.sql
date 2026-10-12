@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS fatias (
     total               INTEGER,                    -- "N resultados" da última visita
     proxima_pagina      INTEGER NOT NULL DEFAULT 1, -- progresso da passada atual
     livros              INTEGER NOT NULL DEFAULT 0, -- livros com preço lidos na passada atual (mais vendidos)
+    livros_ant          INTEGER,                    -- livros com preço lidos na passada anterior (para notar quedas)
     passada_iniciada_em TEXT,
     ultima_passada      TEXT,                       -- fim da última passada completa
     criada_em           TEXT NOT NULL,
@@ -60,6 +61,8 @@ CREATE TABLE IF NOT EXISTS execucoes (
     itens         INTEGER NOT NULL DEFAULT 0,
     bloqueios     INTEGER NOT NULL DEFAULT 0,
     erros         INTEGER NOT NULL DEFAULT 0,
+    curtas        INTEGER NOT NULL DEFAULT 0,   -- páginas que vieram com resultado ralo (200 com poucos cards)
+    ppm           REAL,                         -- páginas por minuto medidas na execução
     observacao    TEXT
 );
 

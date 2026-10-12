@@ -1,0 +1,52 @@
+# TEMPORÁRIO (sai antes do merge na main): mede até que ritmo a coleta passa limpa num servidor do
+# GitHub. Só lê (contents: read), não publica nada na release e tem o próprio grupo de concorrência,
+# para não atrasar a varredura de verdade.
+#
+# Sobe o ritmo aos poucos (100 páginas boas por degrau, +25%) a partir de 20 páginas/min e PARA no
+# primeiro sinal de falha: bloqueio, erro, ou página que veio curta com HTTP 200. O ritmo do
+# degrau em que parou é o limite; o ritmo de uso fica abaixo dele, com margem.
+# Roda a cada push que altera este arquivo (troque o número da execução abaixo para repetir).
+# execução: 1
+name: medir-ritmo
+
+on:
+  push:
+    branches: [coleta-rapida]
+    paths: [.github/workflows/medir-ritmo.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: medir-ritmo
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Rampa de ritmo
+        run: |
+          set -o pipefail
+          python -m comparador --db data/medicao.db varrer --vendidos --cliente navegador \
+            --minutos 45 --ritmo 20 --ritmo-max 120 --subir-a-cada 100 --parar-na-falha | tee log.txt
+
+      - name: Resumo
+        if: always()
+        run: |
+          { echo '### Rampa de ritmo'; echo '```'
+            grep -E "^ritmo:|^execução|^atenção|bloqueado|veio com|layout|HTTP|falha de rede" log.txt || true
+            echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
