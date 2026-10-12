@@ -58,8 +58,8 @@ páginas de busca não mostram a posição de vendas de cada livro. Mas cada **f
 `p_36`) tem o seu próprio ranking de 75 páginas, na mesma ordem. Por isso cada gênero é lido em
 3 faixas (até R$ 39,99; R$ 40 a R$ 79,99; R$ 80 ou mais, em `FAIXAS_VENDIDOS`), e cada faixa para ao
 completar **1.000 livros com preço de compra** (ou ao chegar à página 75). Juntas, as faixas contêm
-os ~2.000 mais vendidos do gênero, a não ser que uma faixa sozinha tenha mais de 1.000 deles (em
-média são ~670 por faixa); na prática a leitura passa de 2.000 (até ~3.000 por gênero). A faixa vale
+os ~2.000 mais vendidos do gênero (uma faixa só perderia algum se tivesse mais de 1.000 deles); na
+prática a leitura vai muito além, até ~9.000 livros por gênero nos grandes. A faixa vale
 para o card: um livro entra se algum formato dele estiver nela. Livros "fora de
 catálogo", isto é, sem preço de compra na busca (indisponíveis, ou e-books só do Kindle Unlimited,
 que aparecem como "R$ 0,00"), não entram na base e não contam nos 1.000 de cada faixa; a leitura segue um pouco
@@ -73,9 +73,9 @@ Brasil Ltda" (um 2º filtro, quase só e-books) não entra, porque a busca não 
 O site esconde da busca o que não foi visto desde que o filtro começou (livros de outros vendedores
 que entraram antes), assim que a primeira varredura completa com o filtro termina; o histórico deles
 continua guardado, e quem estiver na sua lista aparece com "sem coleta recente".
-São 90 consultas (29 gêneros mais o ranking geral, 3 faixas cada),
-até ~5.700 páginas, cerca de 2 h por dia no ritmo atual (dividido entre as execuções do dia; eram ~4h40 a
-21 páginas/min); como um livro pode
+São 270 consultas (29 gêneros mais o ranking geral, 9 faixas cada). Estimativa, a partir de 7 gêneros medidos
+(2.905 páginas): ~12 mil páginas por dia, ~4h30 no ritmo atual (dividido entre as execuções do dia); com 3
+faixas eram ~5.700 páginas. Como um livro pode
 estar em mais de um gênero, o número de livros distintos fica bem abaixo de 90 mil. Os gêneros (inclusive HQs e mangás, que não são mais varridos
 à parte) estão em `GENEROS`, em `comparador/varredura.py`.
 
@@ -142,7 +142,7 @@ Medido em out/2026 para HQs, Mangás e Graphic Novels (nó `7842710011`):
 | Tempo por dia | ~1h40 num único servidor |
 
 O workflow `.github/workflows/varredura.yml` (hoje só com a linha `vendidos`) roda 4 vezes por dia. Com as
-3 faixas de preço, as duas primeiras completam o dia; as outras só continuam o que faltou (o progresso é salvo a cada página) ou
+9 faixas de preço, as três primeiras costumam completar o dia; as outras só continuam o que faltou (o progresso é salvo a cada página) ou
 terminam em segundos. Uma passada que ficou pela metade ontem recomeça da página 1, para
 que todos os preços de um dia sejam daquele dia. A primeira execução de cada dia falha (e
 o GitHub avisa por e-mail) se o dia anterior ficou incompleto.
