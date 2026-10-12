@@ -65,6 +65,29 @@ t('dados do gráfico: evento distante fica de fora; histórico longo abre em 90 
   assert.equal(longo.def[1] - longo.def[0], 89);
 });
 
+t('poucos dados: um dia só não repete o mesmo número nem erra o plural', () => {
+  const um = L.fatos([tr(6165, '2026-10-11', '2026-10-11')], dia('2026-10-11'));
+  assert.equal((L.cartoesAtuais(um).match(/class="c"/g) || []).length, 1);
+  assert.match(L.cartoesAtuais(um), /Preço atual/);
+  assert.match(L.cartoesAtuais(um, false), /Último preço/);
+  assert.match(L.avisoDados(um), /1 dia de preço/);
+  const dois = L.fatos([tr(6000, '2026-10-10', '2026-10-11')], dia('2026-10-11'));
+  assert.equal((L.cartoesAtuais(dois).match(/class="c"/g) || []).length, 4);
+  assert.match(L.avisoDados(dois), /só 2 dias/);
+});
+
+t('gráfico curto não se estica até eventos distantes', () => {
+  const curto = L.dadosGrafico([tr(5000, '2026-10-11', '2026-10-11')], [BF]);
+  assert.equal(curto.ev.length, 0);
+  assert.equal(curto.full[1] - curto.full[0], 6);
+  const longo = L.dadosGrafico([tr(5000, '2026-09-01', '2026-10-11')], [BF]);
+  assert.equal(longo.ev.length, 1);
+});
+
+t('link da Amazon', () => {
+  assert.equal(L.linkAmazon('8556510841'), 'https://www.amazon.com.br/dp/8556510841');
+});
+
 t('formatação', () => {
   assert.equal(L.brl(123456), 'R$ 1.234,56');
   assert.equal(L.brl(3990), 'R$ 39,90');

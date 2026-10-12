@@ -73,16 +73,20 @@
   function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function pct(a, b) { var x = Math.round((a - b) / b * 100); return x === 0 ? '0%' : (x > 0 ? '+' : '') + x + '%'; }
   function comparar(v, ref) { var p = Math.round(Math.abs(v - ref) / ref * 100); return p === 0 ? 'igual a' : p + '% ' + (v > ref ? 'acima' : 'abaixo') + ' do'; }
+  function linkAmazon(asin) { return 'https://www.amazon.com.br/dp/' + encodeURIComponent(asin); }
   function cartao(rot, val, nota) { return '<div class="c"><span>' + esc(rot) + '</span><b>' + esc(val) + '</b>' + (nota ? '<small>' + esc(nota) + '</small>' : '') + '</div>'; }
 
-  function cartoesAtuais(f) {
-    var c = [cartao('Hoje', brl(f.preco), dl(f.ate))];
-    if (f.mediana !== null) c.push(cartao('Preço mais comum', brl(f.mediana), 'mediana dos últimos ' + f.diasJanela + ' dias'),
+  function cartoesAtuais(f, recente) {
+    var c = [cartao(recente === false ? 'Último preço' : 'Preço atual', brl(f.preco), dl(f.ate))];
+    // com um único dia de preço, mediana, mínimo e máximo seriam o mesmo número repetido
+    if (f.mediana !== null && f.diasObservados > 1) c.push(cartao('Preço mais comum', brl(f.mediana), 'mediana dos últimos ' + f.diasJanela + ' dias'),
       cartao('Mais barato', brl(f.minimo), dl(f.diaMinimo)), cartao('Mais caro', brl(f.maximo), dl(f.diaMaximo)));
     return c.join('');
   }
   function avisoDados(f) {
-    return f.diasObservados >= f.diasJanela * 0.5 ? '' : '<p class="mu">Ainda temos poucos dados: só ' + f.diasObservados + ' dias com preço registrado nos últimos ' + f.diasJanela + '.</p>';
+    if (f.diasObservados >= f.diasJanela * 0.5) return '';
+    if (f.diasObservados <= 1) return '<p class="mu">Começamos a acompanhar este livro há pouco: só temos 1 dia de preço. O histórico e a comparação aparecem conforme as coletas diárias se acumulam.</p>';
+    return '<p class="mu">Ainda temos poucos dados: só ' + f.diasObservados + ' dias com preço registrado nos últimos ' + f.diasJanela + '.</p>';
   }
   function resumoEvento(ev, f) {
     if (!f) return ev[0] + ': sem coleta durante o evento';
@@ -107,8 +111,10 @@
   // dados do gráfico: dias com faixa, trechos, eventos próximos e janela inicial
   function dadosGrafico(trechos, eventos) {
     var pd = porDia(trechos), mov = janelaMovel(pd), d0 = pd.dias[0], d1 = pd.dias[pd.dias.length - 1], ev = [];
+    // evento ainda distante só entra no gráfico quando já há histórico para ocupar o espaço; senão o gráfico fica quase todo vazio
+    var adiante = (d1 - d0) >= 30 ? 120 : 0;
     eventos.slice().sort(function (a, b) { return a[1] - b[1]; }).forEach(function (e) {
-      if (d0 - 30 <= e[2] && e[2] <= d1 + 120) {
+      if (d0 - 30 <= e[2] && e[2] <= d1 + adiante) {
         var menor = null, dm = null;
         pd.dias.forEach(function (d) { if (d >= e[1] && d <= e[2] && (menor === null || pd.preco[d] < menor)) { menor = pd.preco[d]; dm = d; } });
         ev.push([e[0], e[1], e[2], menor, dm]); d0 = Math.min(d0, e[1]); d1 = Math.max(d1, e[2]);
@@ -143,8 +149,8 @@
     var blocos = eventos.map(function (e) { return blocoEvento(e, fatosEvento(tr, e)); }).join('');
     raiz.innerHTML = (D.aviso ? '<p><b>' + esc(D.aviso) + '</b></p>' : '') +
       '<h1>' + esc(D.titulo || D.asin) + (D.formato ? ' <small>[' + esc(D.formato) + ']</small>' : '') + '</h1>' +
-      '<small>ASIN ' + esc(D.asin) + ' · preços de ' + dl(tr[0][0]) + ' a ' + dl(ult) + '</small>' +
-      '<div class="cs" style="margin:12px 0">' + cartoesAtuais(atual) + '</div>' + avisoDados(atual) +
+      '<small>ASIN ' + esc(D.asin) + ' · ' + (tr[0][0] === ult ? 'preço de ' + dl(ult) : 'preços de ' + dl(tr[0][0]) + ' a ' + dl(ult)) + '</small>' +
+      '<div class="cs" style="margin:12px 0">' + cartoesAtuais(atual, D.ultimaColeta == null ? null : ult >= D.ultimaColeta) + '</div>' + avisoDados(atual) +
       '<div class="graf-box"></div><div class="tip"></div>' + controles(G) +
       (blocos ? '<h2>Black Friday e outras promoções</h2>' + blocos : '');
     grafico(raiz, G);
@@ -171,7 +177,7 @@
       out.push('<svg class="graf" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Histórico de preço"><defs><clipPath id="rec"><rect x="' + ML + '" y="' + MT + '" width="' + (W - ML - MR) + '" height="' + (BASE - MT) + '"/></clipPath>' +
         '<pattern id="lac" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" class="lacl"/></pattern></defs>');
       for (i = 0; i < 5; i++) { var c = lo + (hi - lo) * i / 4; out.push('<line x1="' + ML + '" x2="' + (W - MR) + '" y1="' + n1(Y(c)) + '" y2="' + n1(Y(c)) + '" class="g"/><text x="' + (ML - 8) + '" y="' + n1(Y(c) + 4) + '" text-anchor="end">' + brl(Math.round(c)) + '</text>'); }
-      for (i = 0; i < 5; i++) { var o = Math.round(v.a + (v.b - v.a) * i / 4); out.push('<text x="' + n1(X(o)) + '" y="' + (H - 14) + '" text-anchor="' + (i === 0 ? 'start' : i === 4 ? 'end' : 'middle') + '">' + dc(o) + '</text>'); }
+      for (i = 0; i < 5; i++) { if (v.b - v.a < 12 && i % 4) continue; var o = Math.round(v.a + (v.b - v.a) * i / 4); out.push('<text x="' + n1(X(o)) + '" y="' + (H - 14) + '" text-anchor="' + (i === 0 ? 'start' : i === 4 ? 'end' : 'middle') + '">' + dc(o) + '</text>'); }
       out.push('<g clip-path="url(#rec)">');
       if (opt.lac) for (i = 1; i < D.tr.length; i++) { var a = D.tr[i - 1], b = D.tr[i]; if (b[0] - a[1] > BURACO) out.push('<rect x="' + n1(X(a[1])) + '" y="' + MT + '" width="' + n1(X(b[0]) - X(a[1])) + '" height="' + (BASE - MT) + '" fill="url(#lac)"><title>Sem coleta de ' + dc(a[1]) + ' a ' + dc(b[0]) + '</title></rect>'); }
       if (opt.ev) D.ev.forEach(function (e) {
@@ -232,6 +238,6 @@
   }
 
   var API = { porDia: porDia, quartis: quartis, janelaMovel: janelaMovel, fatos: fatos, fatosEvento: fatosEvento, resumoEvento: resumoEvento,
-    dadosGrafico: dadosGrafico, montar: montar, brl: brl, dl: dl, esc: esc, pct: pct, comparar: comparar };
+    dadosGrafico: dadosGrafico, avisoDados: avisoDados, cartoesAtuais: cartoesAtuais, linkAmazon: linkAmazon, montar: montar, brl: brl, dl: dl, esc: esc, pct: pct, comparar: comparar };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Livro = API;
 })(typeof window !== 'undefined' ? window : globalThis);

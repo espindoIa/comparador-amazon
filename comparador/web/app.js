@@ -61,9 +61,10 @@
     return '<b>' + L.brl(it.preco) + '</b>' + (velho ? '<small>visto em ' + dc(it.ultimo) + '</small>' : '') +
       (it.capa && it.capa > it.preco ? '<small>capa ' + L.brl(it.capa) + '</small>' : '');
   }
-  function botaoLista(asin) {
+  function botaoLista(asin, comLink) {
     var na = Lista.tem(asin);
-    return '<button type="button" class="fav" data-asin="' + asin + '" aria-pressed="' + na + '">' + (na ? '★ Na lista' : '☆ Adicionar') + '</button>';
+    return '<span class="acs"><button type="button" class="fav" data-asin="' + asin + '" aria-pressed="' + na + '">' + (na ? '★ Na lista' : '☆ Adicionar') + '</button>' +
+      (comLink ? '<a class="amz" href="' + L.linkAmazon(asin) + '" target="_blank" rel="noopener noreferrer">Ver na Amazon ↗</a>' : '') + '</span>';
   }
   function desenharResultados() {
     var q = $('#q').value, el = $('#res'), r = ultimaBusca;
@@ -72,7 +73,7 @@
     el.innerHTML = '<p class="mu">' + r.length.toLocaleString('pt-BR') + ' resultado' + (r.length > 1 ? 's' : '') + '</p><ul class="lst">' +
       r.slice(0, mostrados).map(function (it) {
         return '<li class="it"><div class="tt"><a href="livro.html?asin=' + it.asin + '">' + L.esc(it.titulo) + '</a>' + (it.formato ? '<span class="tag">' + L.esc(it.formato) + '</span>' : '') +
-          '</div><div class="pr">' + linhaPreco(it) + '</div>' + botaoLista(it.asin) + '</li>';
+          '</div><div class="pr">' + linhaPreco(it) + '</div>' + botaoLista(it.asin, true) + '</li>';
       }).join('') + '</ul>' + (r.length > mostrados ? '<p><button type="button" id="mais" class="bt">Mostrar mais</button></p>' : '');
   }
   var timer = null;

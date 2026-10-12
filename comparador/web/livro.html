@@ -17,7 +17,8 @@
   if (!/^[A-Z0-9]{10}$/.test(asin)) return nada('Livro não informado.');
   function botao() {
     var na = Lista.tem(asin), b = document.getElementById('acoes');
-    b.innerHTML = '<button type="button" class="bt" aria-pressed="' + na + '">' + (na ? '★ Na minha lista (remover)' : '☆ Adicionar à minha lista') + '</button>';
+    b.innerHTML = '<button type="button" class="bt" aria-pressed="' + na + '">' + (na ? '★ Na minha lista (remover)' : '☆ Adicionar à minha lista') + '</button> ' +
+      '<a class="bt amz" href="' + Livro.linkAmazon(asin) + '" target="_blank" rel="noopener noreferrer">Ver na Amazon ↗</a>';
     b.firstChild.onclick = function () { Lista.alternar(asin); botao(); };
   }
   Promise.all([fetch('dados/h/' + fragmento(asin) + '.json').then(function (r) { return r.status === 404 ? {} : r.ok ? r.json() : Promise.reject(r.status); }),
@@ -26,7 +27,7 @@
       var l = rs[0][asin]; if (!l) return nada('Esse livro não está no catálogo.');
       document.title = (l.t || asin) + ' · histórico de preço';
       botao();
-      Livro.montar(raiz, { asin: asin, titulo: l.t, formato: l.f, aviso: rs[2].aviso, trechos: l.h, eventos: rs[1] });
+      Livro.montar(raiz, { asin: asin, titulo: l.t, formato: l.f, aviso: rs[2].aviso, ultimaColeta: rs[2].ultima_coleta, trechos: l.h, eventos: rs[1] });
     }).catch(function () { nada('Não consegui carregar os dados desse livro.'); });
 })();
 </script>
