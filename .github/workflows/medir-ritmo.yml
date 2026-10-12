@@ -1,12 +1,15 @@
-# TEMPORÁRIO (sai antes do merge na main): mede até que ritmo a coleta passa limpa num servidor do
-# GitHub. Só lê (contents: read), não publica nada na release e tem o próprio grupo de concorrência,
-# para não atrasar a varredura de verdade.
+# TEMPORÁRIO (sai antes do merge na main): mede o comportamento da coleta num servidor do GitHub.
+# Só lê (contents: read), não publica nada na release e tem o próprio grupo de concorrência, para
+# não atrasar a varredura de verdade.
 #
-# Sobe o ritmo aos poucos (100 páginas boas por degrau, +25%) a partir de 20 páginas/min e PARA no
-# primeiro sinal de falha: bloqueio, erro, ou página que veio curta com HTTP 200. O ritmo do
-# degrau em que parou é o limite; o ritmo de uso fica abaixo dele, com margem.
+# Dois servidores ao mesmo tempo, cada um com o seu IP:
+# - controle: o ritmo de hoje (21 páginas/min), sem subir. Mostra se páginas curtas (HTTP 200 com
+#   poucos resultados) aparecem mesmo no ritmo já em uso.
+# - rampa: começa em 20 páginas/min e sobe 25% a cada 100 páginas boas, até 120. Uma falha faz o
+#   ritmo recuar e baixa o teto; 3 lotes seguidos com falha encerram a execução.
+# O HTML de cada página curta é guardado como artefato, para ver o que a Amazon devolveu.
 # Roda a cada push que altera este arquivo (troque o número da execução abaixo para repetir).
-# execução: 1
+# execução: 2
 name: medir-ritmo
 
 on:
@@ -26,6 +29,15 @@ env:
 
 jobs:
   medir:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nome: controle
+            args: "--ritmo 21 --ritmo-max 21 --max-paginas 600 --minutos 40"
+          - nome: rampa
+            args: "--ritmo 20 --ritmo-max 120 --subir-a-cada 100 --max-paginas 1500 --minutos 40"
+    name: medir (${{ matrix.nome }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -38,15 +50,22 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Rampa de ritmo
+      - name: Varre (${{ matrix.nome }})
         run: |
           set -o pipefail
           python -m comparador --db data/medicao.db varrer --vendidos --cliente navegador \
-            --minutos 45 --ritmo 20 --ritmo-max 120 --subir-a-cada 100 --parar-na-falha | tee log.txt
+            ${{ matrix.args }} | tee log.txt
 
       - name: Resumo
         if: always()
         run: |
-          { echo '### Rampa de ritmo'; echo '```'
-            grep -E "^ritmo:|^execução|^atenção|bloqueado|veio com|layout|HTTP|falha de rede" log.txt || true
+          { echo '### ${{ matrix.nome }}'; echo '```'
+            grep -E "^ritmo:|^execução|^atenção|bloqueado|veio com|layout|HTTP|falha de rede|confirmado" log.txt || true
             echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: html-${{ matrix.nome }}
+          path: data/html
+          if-no-files-found: ignore

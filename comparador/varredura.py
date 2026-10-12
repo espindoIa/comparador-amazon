@@ -21,6 +21,7 @@ bloqueios, então um servidor por dia basta.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -338,7 +339,11 @@ def varrer(
         if curta and curtas_vistas.get((f.id, pag)) != pagina.cards:
             curtas_vistas[(f.id, pag)] = pagina.cards
             pl.curtas += 1
-            print(f"{rotulo} veio com {pagina.cards} resultados (esperava ~16); relendo depois de uma pausa")
+            arq = guardar_html(pasta_html, f"curta-{f.id}-{pag}", html)
+            titulo = re.search(r"<title[^>]*>([^<]*)", html)
+            print(f"{rotulo} veio com {pagina.cards} resultados (esperava ~16); relendo depois de uma pausa "
+                  f"[título: {titulo.group(1).strip()[:80] if titulo else '?'}; {len(html)} bytes"
+                  + (f"; HTML em {arq}" if arq else "") + "]")
             return False
         if curta:
             pl.avisos.append(f"{rotulo} tem só {pagina.cards} resultados, confirmado em duas leituras")
