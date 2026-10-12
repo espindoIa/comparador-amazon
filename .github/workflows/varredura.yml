@@ -1,14 +1,15 @@
-# Varredura DIÁRIA dos mais vendidos ("vendidos"): os ~1.000 livros mais vendidos (com preço de
+# Varredura DIÁRIA dos mais vendidos ("vendidos"): os ~2.000 livros mais vendidos (com preço de
 # compra) de cada um dos 29 gêneros de Livros e do ranking geral. A Amazon só mostra 75 páginas
-# na ordem "mais vendidos", então a leitura de cada categoria para ao completar 1.000 livros
+# na ordem "mais vendidos", mas cada faixa de preço tem o seu ranking: cada categoria é lida em
+# 3 faixas (até R$ 39,99 / R$ 40–79,99 / R$ 80+), e cada faixa para ao completar 1.000 livros
 # disponíveis ou ao chegar à página 75. Livros sem preço (indisponíveis, só Kindle Unlimited)
 # não entram; se voltarem a aparecer com preço em outro dia, entram na base nesse dia.
 # A categoria inteira de HQs e mangás NÃO é mais varrida à parte (os HQs mais vendidos
 # continuam entrando como um dos gêneros).
-# Medido em out/2026: ~20 páginas/min, sem bloqueios.
+# Medido em out/2026: ~20 páginas/min, sem bloqueios. São até ~5.700 páginas por dia (~4h40).
 #
 # Robustez:
-# - 4 horários por dia. O primeiro normalmente completa o dia; os outros só continuam o
+# - 4 horários por dia. Os dois primeiros normalmente completam o dia; os outros só continuam o
 #   que faltou (o progresso é salvo a cada página) ou terminam em segundos.
 # - Cada categoria roda num servidor separado (matrix), com IP diferente.
 # - O banco fica em assets da release "catalogo" (não no git): cada execução publica uma

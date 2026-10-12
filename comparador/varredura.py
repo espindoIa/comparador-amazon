@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import db
-from .busca import ItemBusca, LayoutDesconhecido, parse_busca, url_busca
+from .busca import SEM_TETO, ItemBusca, LayoutDesconhecido, parse_busca, url_busca
 from .rede import PAUSA_APOS_BLOQUEIO, baixar, guardar_html
 
 SCHEMA = Path(__file__).with_name("schema_catalogo.sql")
@@ -38,12 +38,18 @@ NO_HQ_MANGA = "7842710011"  # Livros > HQs, Mangás e Graphic Novels
 MAX_PAGINAS_FATIA = 100       # bem abaixo do limite de 400 da Amazon
 LIMITE_PAGINAS_AMAZON = 400
 # Na ordem "mais vendidos" a Amazon só mostra 75 páginas (1.200 cards), embora a paginação
-# anuncie 400 (medido em out/2026, igual na categoria Livros e em cada gênero).
+# anuncie 400 (medido em out/2026, igual na categoria Livros e em cada gênero). Mas cada faixa de
+# preço (filtro p_36) tem o seu próprio ranking de 75 páginas, na mesma ordem relativa.
 LIMITE_PAGINAS_VENDIDOS = 75
-# Quantos livros disponíveis (com preço de compra) lemos por categoria na ordem "mais vendidos".
+# Por isso cada categoria é lida em faixas de preço (centavos, inclusive), cada uma até
+# LIVROS_POR_FAIXA livros. Os 2.000 mais vendidos da categoria estão todos na união das faixas
+# desde que nenhuma faixa tenha mais de LIVROS_POR_FAIXA deles (com 3 faixas, ~670 cada em média).
+# Lê até ~3.000 por categoria. A faixa vale para o card: entra se algum formato está nela.
+FAIXAS_VENDIDOS = [(0, 3999), (4000, 7999), (8000, SEM_TETO)]
+# Quantos livros disponíveis (com preço de compra) lemos por faixa na ordem "mais vendidos".
 # Livros sem preço (indisponíveis, só Kindle Unlimited) não contam: a leitura segue até completar
 # esta quantidade ou até o limite de páginas acima.
-LIVROS_POR_CATEGORIA = 1000
+LIVROS_POR_FAIXA = 1000
 GRUPO_VENDIDOS = "vendidos"
 NO_LIVROS = "6740748011"
 # Gêneros de Livros (subcategorias diretas), lidos da página da Amazon em out/2026.
@@ -62,7 +68,7 @@ GENEROS = {
     "7882554011": "Turismo e Guias de Viagem", "7882627011": "Livros Internacionais",
     "7841279011": "Jovens e Adolescentes",
 }
-PRECO_MAXIMO = 99_999_999     # centavos: teto da última fatia
+PRECO_MAXIMO = SEM_TETO       # centavos: teto da última fatia
 FAIXAS_INICIAIS = [0, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 6000, 8000,
                    10000, 15000, 20000, 50000]
 BURACO = timedelta(days=10)   # sem observação por mais que isso: novo intervalo no histórico
@@ -117,13 +123,18 @@ def semear(conn: sqlite3.Connection, no: str) -> None:
 
 
 def semear_vendidos(conn: sqlite3.Connection, nos) -> None:
-    """Uma fatia "mais vendidos" por categoria; acrescenta as que faltarem."""
+    """Uma fatia "mais vendidos" por categoria e faixa de FAIXAS_VENDIDOS; acrescenta as que
+    faltarem e desativa as de faixas que não estão mais na lista (o histórico fica)."""
     agora = db.agora()
     conn.executemany(
         "INSERT OR IGNORE INTO fatias (grupo, no, ordem, preco_min, preco_max, criada_em) "
-        "VALUES (?, ?, 'vendidos', 0, ?, ?)",
-        [(GRUPO_VENDIDOS, no, PRECO_MAXIMO, agora) for no in nos],
+        "VALUES (?, ?, 'vendidos', ?, ?, ?)",
+        [(GRUPO_VENDIDOS, no, a, b, agora) for no in nos for a, b in FAIXAS_VENDIDOS],
     )
+    atual = "(" + " OR ".join(["(preco_min = ? AND preco_max = ?)"] * len(FAIXAS_VENDIDOS)) + ")"
+    faixas = [v for f in FAIXAS_VENDIDOS for v in f]
+    conn.execute(f"UPDATE fatias SET ativa = {atual} WHERE grupo = ? AND ordem = 'vendidos'",
+                 (*faixas, GRUPO_VENDIDOS))
     conn.commit()
 
 
@@ -163,6 +174,12 @@ def dividir(conn: sqlite3.Connection, f: Fatia) -> None:
             (f.grupo, f.no, a, b, db.agora()),
         )
     conn.commit()
+
+
+def _faixa(f: Fatia) -> str:
+    if f.preco_max >= PRECO_MAXIMO:
+        return f"R$ {f.preco_min / 100:.0f}+"
+    return f"R$ {f.preco_min / 100:.0f}–{f.preco_max / 100:.2f}"
 
 
 def _instante(iso: str) -> datetime:
@@ -217,7 +234,8 @@ def varrer(
     """Lê as fatias que faltam hoje até completar o dia ou acabar o tempo (ou `max_paginas`).
 
     Por padrão, a categoria `no` inteira, fatiada por preço. Com `vendidos` (lista de nós),
-    os ~1.000 livros mais vendidos de cada um desses nós, sem contar os que não têm preço de compra.
+    os mais vendidos de cada um desses nós (até LIVROS_POR_FAIXA por faixa de preço), sem contar os
+    que não têm preço de compra.
     Devolve o id da execução, ou None se o dia já estava completo (nada a fazer).
     """
     criar_schema(conn)
@@ -255,7 +273,7 @@ def varrer(
 
         pag = f.proxima_pagina
         url = url_busca(f.no, f.preco_min, f.preco_max, pag, f.ordem)
-        rotulo = (f"[{GENEROS.get(f.no, f.no)} p{pag}]" if f.ordem == "vendidos"
+        rotulo = (f"[{GENEROS.get(f.no, f.no)} {_faixa(f)} p{pag}]" if f.ordem == "vendidos"
                   else f"[fatia {f.id} R$ {f.preco_min / 100:.2f}–{f.preco_max / 100:.2f} p{pag}]")
         _, html, erro = baixar(sessao, url)
         pagina = erro_txt = None
@@ -305,7 +323,7 @@ def varrer(
         ultima = min(pagina.ultima_pagina or pag, limite)
         conn.execute("UPDATE fatias SET livros = livros + ? WHERE id = ?", (pagina.livros, f.id))
         lidos = conn.execute("SELECT livros FROM fatias WHERE id = ?", (f.id,)).fetchone()[0]
-        completou = f.ordem == "vendidos" and lidos >= LIVROS_POR_CATEGORIA
+        completou = f.ordem == "vendidos" and lidos >= LIVROS_POR_FAIXA
         fim = pagina.cards == 0 or pag >= ultima or completou
         if fim:
             conn.execute("UPDATE fatias SET proxima_pagina = 1, ultima_passada = ? WHERE id = ?", (quando, f.id))

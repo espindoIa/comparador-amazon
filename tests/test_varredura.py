@@ -73,10 +73,13 @@ class TestParseBusca(unittest.TestCase):
         self.assertEqual({i.asin for i in p.itens}, {"AAAAAAAAAA", "DDDDDDDDDD"})
 
     def test_url_mais_vendidos(self):
-        self.assertEqual(url_busca("6740748011", 0, 1, 2, "vendidos"),
+        self.assertEqual(url_busca("6740748011", 4000, 7999, 2, "vendidos"),
+                         "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A6740748011%2Cp_36%3A4000-7999"
+                         "%2Cp_6%3AA1ZZFT5FULY4LN&s=exact-aware-popularity-rank&page=2")
+        self.assertEqual(url_busca("6740748011", 0, 99_999_999, 2, "vendidos"),
                          "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A6740748011%2Cp_6%3AA1ZZFT5FULY4LN"
                          "&s=exact-aware-popularity-rank&page=2")
-        self.assertEqual(url_busca("6740748011", 0, 1, 2, "vendidos", so_amazon=False),
+        self.assertEqual(url_busca("6740748011", 0, 99_999_999, 2, "vendidos", so_amazon=False),
                          "https://www.amazon.com.br/s?i=stripbooks&rh=n%3A6740748011&s=exact-aware-popularity-rank&page=2")
 
     def test_url_da_fatia(self):
@@ -140,17 +143,22 @@ class AmazonFalsa:
 
 
 class AmazonFalsaVendidos(AmazonFalsa):
-    """Ordem "mais vendidos": por nó, na ordem dada; só 75 páginas, mas anuncia 400."""
+    """Ordem "mais vendidos": por nó, na ordem dada, filtrado pela faixa p_36 se houver (livro
+    sem preço não passa no filtro de preço); só 75 páginas (por faixa), mas anuncia 400."""
 
     def __init__(self, por_no: dict[str, list[tuple[str, int]]], falhas=None):
         super().__init__({}, falhas)
         self.por_no = por_no
 
     def mais_vendidos(self, q):
-        no = re.search(r"n:(\d+)", unquote(q["rh"][0])).group(1)
+        rh = unquote(q["rh"][0])
+        no = re.search(r"n:(\d+)", rh).group(1)
+        faixa = re.search(r"p_36:(\d+)-(\d+)", rh)
+        lo, hi = map(int, faixa.groups()) if faixa else (0, 10**12)
+        lista = [(a, p) for a, p in self.por_no.get(no, []) if (p is None and not faixa) or (p is not None and lo <= p <= hi)]
         pag = int(q["page"][0])
         ini = (pag - 1) * self.POR_PAGINA
-        itens = self.por_no.get(no, [])[ini:ini + self.POR_PAGINA] if pag <= 75 else []
+        itens = lista[ini:ini + self.POR_PAGINA] if pag <= 75 else []
         return Resposta(pagina_busca(itens, ultima=400, total=90000, primeiro=ini + 1))
 
 
@@ -257,7 +265,7 @@ class TestMaisVendidos(unittest.TestCase):
         self.conn = db.conectar(":memory:")
         self.addCleanup(self.conn.close)
 
-    def test_le_ate_1000_livros_por_genero_sem_dividir(self):
+    def test_le_ate_1000_livros_por_faixa_sem_dividir(self):
         # Gênero 1: 1.300 livros (só os 1.200 primeiros aparecem); gênero 2: 50 livros,
         # 10 deles também no gênero 1.
         g1 = [(f"G1{i:08d}", 1000 + i) for i in range(1300)]
@@ -267,10 +275,10 @@ class TestMaisVendidos(unittest.TestCase):
         eid = varredura.varrer(self.conn, amazon, vendidos=["1", "2"], minutos=10_000, dormir=lambda s: None)
         vistos = {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
         self.assertEqual(vistos, {a for a, _ in g1[:1008]} | {a for a, _ in g2})   # 63 páginas de 16 = 1.008
-        self.assertEqual(len([u for u in amazon.chamadas if "n%3A1%2Cp_6" in u]), 63)  # para ao completar 1.000 livros
+        self.assertEqual(len([u for u in amazon.chamadas if "n%3A1%2Cp_36%3A0-" in u]), 63)  # para ao completar 1.000 livros
         self.assertTrue(all("p_6%3AA1ZZFT5FULY4LN" in u for u in amazon.chamadas))    # só vendidos pela Amazon
         self.assertIsNotNone(self.conn.execute("SELECT valor FROM config WHERE chave = 'so_amazon_desde'").fetchone())
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias").fetchone()[0], 2)  # sem divisão
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias").fetchone()[0], 6)  # 3 faixas por gênero, sem divisão
         self.assertTrue(varredura.cobertura(self.conn, varredura.GRUPO_VENDIDOS).dia_completo)
         e = self.conn.execute("SELECT observacao FROM execucoes WHERE id = ?", (eid,)).fetchone()[0]
         self.assertIn("dia completo", e)
@@ -289,8 +297,8 @@ class TestMaisVendidos(unittest.TestCase):
         com_preco = [a for a, p in g if p is not None]
         self.assertGreaterEqual(len(vistos), 1000)
         self.assertLess(len(vistos), 1000 + 16)                           # lê até completar 1.000 com preço, não 75 páginas
-        self.assertEqual(self.conn.execute("SELECT livros FROM fatias").fetchone()[0], len(vistos))
-        self.assertLess(len([u for u in amazon.chamadas]), 75)
+        self.assertEqual(self.conn.execute("SELECT SUM(livros) FROM fatias").fetchone()[0], len(vistos))
+        self.assertLess(len([u for u in amazon.chamadas]), 75 + 2)          # + 1 página vazia em cada outra faixa
         # no dia seguinte, alguns voltam a ter preço (e outros saem do topo): quem voltou entra na base
         indisponiveis = [a for a, p in g if p is None][:5]
         amazon.por_no["1"] = [(a, 1500 if a in indisponiveis else p) for a, p in g]
@@ -300,6 +308,28 @@ class TestMaisVendidos(unittest.TestCase):
         vistos2 = {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
         self.assertTrue(set(indisponiveis) <= vistos2)
         self.assertTrue(vistos <= vistos2)                                # o que já estava na base continua lá
+
+    def test_faixas_de_preco_cobrem_os_2000_mais_vendidos(self):
+        # 3.000 livros com preços alternando entre as 3 faixas: o ranking inteiro só mostraria
+        # 1.200; por faixa, os 1.000 primeiros de cada uma juntos são os 3.000 mais vendidos.
+        precos = (1990, 5990, 12990)
+        g = [(f"G{i:09d}", precos[i % 3]) for i in range(3000)]
+        amazon = AmazonFalsaVendidos({"1": g})
+        varredura.varrer(self.conn, amazon, vendidos=["1"], minutos=10_000, dormir=lambda s: None)
+        vistos = {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}
+        self.assertTrue({a for a, _ in g[:2000]} <= vistos)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias WHERE ultima_passada IS NOT NULL").fetchone()[0], 3)
+
+    def test_banco_antigo_troca_a_fatia_inteira_pelas_faixas(self):
+        varredura.criar_schema(self.conn)
+        self.conn.execute("INSERT INTO fatias (grupo, no, ordem, preco_min, preco_max, criada_em, ultima_passada) "
+                          "VALUES ('vendidos', '1', 'vendidos', 0, 99999999, 'x', '2999-01-01T00:00:00+00:00')")
+        amazon = AmazonFalsaVendidos({"1": [("G000000001", 2500), ("G000000002", 9000)]})
+        varredura.varrer(self.conn, amazon, vendidos=["1"], minutos=10_000, dormir=lambda s: None)
+        ativas = self.conn.execute("SELECT preco_min, preco_max FROM fatias WHERE ativa = 1 ORDER BY preco_min").fetchall()
+        self.assertEqual([tuple(r) for r in ativas], varredura.FAIXAS_VENDIDOS)
+        self.assertEqual({r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}, {"G000000001", "G000000002"})
+        self.assertTrue(all("p_36" in u for u in amazon.chamadas))
 
     def test_migra_banco_da_varredura_antiga(self):
         self.conn.executescript(

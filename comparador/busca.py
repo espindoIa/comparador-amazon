@@ -28,6 +28,7 @@ from .rede import parse_preco
 VENDEDOR_AMAZON = "A1ZZFT5FULY4LN"
 URL_BUSCA = "https://www.amazon.com.br/s?i=stripbooks&rh={rh}&s={ordem}&page={pagina}"
 ORDENS = {"preco": "price-asc-rank", "vendidos": "exact-aware-popularity-rank"}
+SEM_TETO = 99_999_999   # centavos: teto da última faixa de preço (= sem limite)
 _ASIN_LINK_RE = re.compile(r"/dp/([A-Z0-9]{10})")
 _TOTAL_RE = re.compile(r"de\s+(mais de\s+)?([\d.]+)\s+resultados")
 _FORMATOS = {
@@ -65,12 +66,15 @@ def url_busca(no: str, preco_min: int, preco_max: int, pagina: int, ordem: str =
     """URL de uma fatia.
 
     ordem "preco": categoria `no`, preços em centavos (inclusive), do menor para o maior.
-    ordem "vendidos": categoria `no` inteira, dos mais vendidos para os menos (sem filtro de
-    preço; a Amazon só mostra as 75 primeiras páginas nessa ordem).
+    ordem "vendidos": categoria `no`, dos mais vendidos para os menos (a Amazon só mostra as 75
+    primeiras páginas nessa ordem); a faixa de preço só entra na URL se não for a faixa inteira
+    (0 a `SEM_TETO`). Cada faixa tem o seu próprio ranking de 75 páginas.
     `so_amazon`: filtro "Vendido por Amazon.com.br" da própria busca. Ele vale para o livro (o card),
-    não para cada formato: um card passa se alguma oferta dele é da Amazon.
+    não para cada formato: um card passa se alguma oferta dele é da Amazon. O mesmo vale para o
+    filtro de preço: um card passa se algum formato dele está na faixa.
     """
-    rh = f"n:{no}" if ordem == "vendidos" else f"n:{no},p_36:{preco_min}-{preco_max}"
+    faixa_inteira = ordem == "vendidos" and preco_min <= 0 and preco_max >= SEM_TETO
+    rh = f"n:{no}" if faixa_inteira else f"n:{no},p_36:{preco_min}-{preco_max}"
     if so_amazon:
         rh += f",p_6:{VENDEDOR_AMAZON}"
     return URL_BUSCA.format(rh=quote(rh, safe=""), ordem=ORDENS[ordem], pagina=pagina)
