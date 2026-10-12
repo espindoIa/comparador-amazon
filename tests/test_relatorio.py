@@ -123,9 +123,12 @@ class TestPaginaNoNavegador(unittest.TestCase):
                 pg.on("pageerror", lambda e: erros.append(str(e)))
                 pg.goto(f"file://{d}/p.html")
                 self.assertIn("Livro Teste", pg.inner_text("h1"))
-                for sel in ('[data-op="faixa"]', '[data-op="capa"]', '[data-z="1"]', '[data-pan="-1"]', '[data-ev="0"]', '[data-per="0"]'):
-                    pg.click(sel)
-                pg.mouse.move(500, 300)
+                for sel in ('[data-op="capa"]', '[data-ev="0"]', '[data-per="0"]'):
+                    if sel != '[data-ev="0"]' or pg.locator(sel).count():
+                        pg.click(sel)
+                self.assertEqual(pg.get_attribute('[data-per="0"]', "aria-pressed"), "true")
+                r = pg.locator(".graf svg").bounding_box()
+                pg.mouse.move(r["x"] + r["width"] / 2, r["y"] + r["height"] / 2)
                 self.assertIn("R$", pg.inner_text(".tip"))
                 texto = pg.inner_text("body")
                 for palavra in ("NÃO é desconto", "desconto real", "inflado"):

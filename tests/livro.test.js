@@ -65,15 +65,40 @@ t('dados do gráfico: evento distante fica de fora; histórico longo abre em 90 
   assert.equal(longo.def[1] - longo.def[0], 89);
 });
 
-t('poucos dados: um dia só não repete o mesmo número nem erra o plural', () => {
+t('poucos dados: estatísticas e aviso dizem o que falta', () => {
   const um = L.fatos([tr(6165, '2026-10-11', '2026-10-11')], dia('2026-10-11'));
-  assert.equal((L.cartoesAtuais(um).match(/class="c"/g) || []).length, 1);
-  assert.match(L.cartoesAtuais(um), /Preço atual/);
-  assert.match(L.cartoesAtuais(um, false), /Último preço/);
+  const e1 = L.estatisticas(um, dia('2026-10-11'));
+  assert.match(e1, /precisa de 2 dias de coleta/);
+  assert.match(e1, /1 dia com preço/);
+  assert.doesNotMatch(e1, /R\$ 61,65/);                // sem repetir o preço atual como mínimo e máximo
   assert.match(L.avisoDados(um), /1 dia de preço/);
   const dois = L.fatos([tr(6000, '2026-10-10', '2026-10-11')], dia('2026-10-11'));
-  assert.equal((L.cartoesAtuais(dois).match(/class="c"/g) || []).length, 4);
-  assert.match(L.avisoDados(dois), /só 2 dias/);
+  assert.match(L.estatisticas(dois, dia('2026-10-10')), /Mais barato<\/span><b>R\$ 60,00/);
+  assert.match(L.avisoDados(dois), /2 dias com preço/);
+  assert.doesNotMatch(L.comparacoes(dois), /preço mais comum/);   // sem preço mais comum, sem comparação
+  const muitos = L.fatos([tr(6000, '2026-09-01', '2026-10-10'), tr(4500, '2026-10-11', '2026-10-11')], dia('2026-10-11'));
+  assert.equal(L.avisoDados(muitos), '');
+  assert.match(L.comparacoes(muitos), /25% abaixo do preço mais comum/);
+});
+
+t('título sem "(English Edition)"', () => {
+  assert.deepEqual(L.limpar('Atomic Habits (English Edition)'), { t: 'Atomic Habits', idioma: 'Inglês' });
+  assert.deepEqual(L.limpar('Livro (Portuguese Edition)'), { t: 'Livro', idioma: '' });
+  assert.deepEqual(L.limpar('Box (Edição 2)'), { t: 'Box (Edição 2)', idioma: '' });
+});
+
+t('ASIN a partir de link ou ISBN', () => {
+  assert.equal(L.asinDe('https://www.amazon.com.br/Habitos-Atomicos/dp/8550807567/ref=sr_1_1'), '8550807567');
+  assert.equal(L.asinDe('978-85-5080-756-6'), '8550807567');
+  assert.equal(L.asinDe('b08xyz1234'), 'B08XYZ1234');
+  assert.equal(L.asinDe('harry potter'), null);
+  assert.equal(L.asinDe('9791234567896'), null);
+});
+
+t('marcas do eixo ficam dentro dos dados', () => {
+  assert.deepEqual(L.marcas(4210, 6130), [4500, 5000, 5500, 6000]);
+  assert.deepEqual(L.marcas(5000, 5000), [5000]);
+  for (const m of L.marcas(1234, 98765)) assert.ok(m >= 1234 && m <= 98765);
 });
 
 t('gráfico curto não se estica até eventos distantes', () => {
