@@ -467,7 +467,7 @@ class TestRitmoNaVarredura(unittest.TestCase):
         self.assertEqual(self.vistos(), {a for a, _ in g})           # nada se perdeu
         self.assertEqual((e["curtas"], e["bloqueios"], e["erros"]), (1, 0, 0))
         self.assertEqual(len([u for u in amazon.chamadas if "p_36%3A0-3999" in u and u.endswith("page=3")]), 2)
-        self.assertEqual((ritmo.falhas, ritmo.ppm <= 40), (1, True))
+        self.assertEqual((ritmo.falhas, ritmo.ppm, ritmo.teto), (1, 20.0, 40))   # leve e isolada: metade, e o teto fica
         self.assertTrue(any(p >= varredura.PAUSA_APOS_BLOQUEIO for p in self.pausas))      # pausa longa antes de reler
         self.assertEqual(e["observacao"], "dia completo")
 
@@ -512,6 +512,7 @@ class TestRitmoNaVarredura(unittest.TestCase):
         self.assertEqual(e["bloqueios"], 5)                          # lote de 3, depois 1 e 1: 3 lotes com falha
         self.assertIn("interrompida após 3 falhas seguidas", e["observacao"])
         self.assertEqual((ritmo.falhas, ritmo.ppm, ritmo.pistas), (3, PPM_RECUO, 1))
+        self.assertLess(ritmo.teto, 100)                             # bloqueio é grave: o teto desce
 
     def test_queda_de_livros_entre_passadas_e_avisada(self):
         amazon = AmazonRealista({"1": self.livros(300)})
@@ -523,6 +524,31 @@ class TestRitmoNaVarredura(unittest.TestCase):
         self.novo_dia()
         e = self.varrer(amazon)                                      # igual à anterior: sem aviso
         self.assertNotIn("passada anterior", e["observacao"] or "")
+
+    def test_faixas_de_preco_configuraveis(self):
+        faixas = varredura.faixas_de_precos([0, 20, 50])
+        self.assertEqual(faixas, [(0, 1999), (2000, 4999), (5000, varredura.SEM_TETO)])
+        g = [(f"G{i:09d}", 500 + 700 * i) for i in range(10)]          # R$ 5, 12, 19, 26, 33, 40, 47, 54, 61, 68
+        amazon = AmazonRealista({"1": g})
+        self.varrer(amazon, faixas=faixas)
+        ativas = [tuple(r) for r in self.conn.execute(
+            "SELECT preco_min, preco_max FROM fatias WHERE ativa = 1 ORDER BY preco_min")]
+        self.assertEqual(ativas, faixas)
+        self.assertEqual(self.vistos(), {a for a, _ in g})
+        self.varrer(amazon, faixas=[(0, 3999), (4000, varredura.SEM_TETO)])                    # outras faixas: troca as ativas
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias WHERE ativa = 1").fetchone()[0], 2)
+
+    def test_faixas_invalidas(self):
+        for ruim in ([], [10, 20], [0, 20, 20], [0, 30, 20]):
+            with self.assertRaises(ValueError, msg=ruim):
+                varredura.faixas_de_precos(ruim)
+
+    def test_nos_vendidos(self):
+        todos = varredura.nos_vendidos()
+        self.assertEqual((todos[0], len(todos)), (varredura.NO_LIVROS, 1 + len(varredura.GENEROS)))
+        self.assertEqual(varredura.nos_vendidos(" 7841720011, 7844001011 "), ["7841720011", "7844001011"])
+        with self.assertRaises(ValueError):
+            varredura.nos_vendidos("7841720011,000")
 
     def test_migra_banco_sem_as_colunas_de_medicao(self):
         self.conn.executescript(

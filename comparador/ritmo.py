@@ -2,9 +2,17 @@
 
 O ritmo que a Amazon enxerga é o programado aqui (espaçamento uniforme entre as requisições, com um
 pouco de variação), não uma rajada. Ele sobe aos poucos enquanto tudo dá certo, até um teto, e
-recua no primeiro sinal de falha: bloqueio, erro, ou página que veio curta demais (ver
-`varredura.CARDS_MIN_PAGINA`). Depois de uma falha, o teto passa a ser 70% do ritmo em que ela
-aconteceu e a subida recomeça devagar, a partir do ritmo de recuo.
+recua ao primeiro sinal de falha: bloqueio, erro, ou página que veio curta demais (ver
+`varredura.CARDS_MIN_PAGINA`).
+
+Dois tipos de recuo, porque falhas isoladas acontecem (1 página curta em ~2.200 medidas, que voltou
+inteira na leitura seguinte) e não devem corroer o ritmo do dia:
+- falha leve e isolada (página curta, erro de rede, layout): o ritmo cai pela metade e volta a subir;
+- bloqueio (captcha, HTTP 500/503) ou falha leve repetida (outra em menos de `JANELA_REPETIDA` páginas
+  boas): o ritmo cai para o mínimo e o teto passa a ser 70% do ritmo em que ela aconteceu.
+
+O ritmo é "programado": com 2 ou 3 requisições por lote, o ritmo real fica ~20% abaixo (cada lote
+espera a mais lenta). Medido: 120 programadas = ~80 reais; 61 programadas = ~46 reais.
 """
 
 from __future__ import annotations
@@ -13,13 +21,15 @@ import math
 import random
 
 PPM_BASE = 21.0          # medido em out/2026 com pausa de 1–3 s: 0 bloqueios em ~11 mil páginas
-PPM_RECUO = 8.0          # depois de uma falha: parecido com a pausa 3x maior que existia antes
+PPM_RECUO = 8.0          # depois de um bloqueio: parecido com a pausa 3x maior que existia antes
+PPM_TETO_PADRAO = 60.0   # ~46 páginas/min reais; o limpo medido foi 120 programadas (~80 reais) por ~9 min
 PPM_POR_PISTA = 45.0     # uma requisição por vez dá até ~45 páginas/min (cada uma leva ~0,9 s)
 PISTAS_MAX = 4
 PPM_MAXIMO = 120.0       # limite absoluto, qualquer que seja a configuração
 SUBIDA = 1.25            # a cada `a_cada` páginas boas seguidas, o ritmo sobe 25%
 A_CADA = 100
 FATOR_TETO_APOS_FALHA = 0.7
+JANELA_REPETIDA = 500    # outra falha leve em menos de tantas páginas boas conta como repetida
 VARIACAO = 0.3           # cada intervalo varia ±30% (a média é a programada)
 
 
@@ -30,6 +40,7 @@ class Ritmo:
         self.ppm = min(ppm, self.teto)
         self.subida, self.a_cada, self._sorteio = subida, a_cada, sorteio
         self.boas = 0          # páginas boas desde a última mudança de ritmo
+        self.boas_desde_falha = 0
         self.falhas = 0
 
     @property
@@ -61,12 +72,19 @@ class Ritmo:
 
     def pagina_boa(self) -> None:
         self.boas += 1
+        self.boas_desde_falha += 1
         if self.boas >= self.a_cada and self.ppm < self.teto:
             self.ppm = min(self.teto, self.ppm * self.subida)
             self.boas = 0
 
-    def falha(self) -> None:
+    def falha(self, grave: bool = False) -> None:
+        """`grave`: bloqueio (captcha, 500/503). Uma falha leve só é tratada como grave se for repetida."""
+        repetida = self.falhas > 0 and self.boas_desde_falha < JANELA_REPETIDA
         self.falhas += 1
-        self.teto = max(PPM_RECUO, min(self.teto, self.ppm * FATOR_TETO_APOS_FALHA))
-        self.ppm = min(self.ppm, PPM_RECUO)
+        self.boas_desde_falha = 0
         self.boas = 0
+        if grave or repetida:
+            self.teto = max(PPM_RECUO, min(self.teto, self.ppm * FATOR_TETO_APOS_FALHA))
+            self.ppm = min(self.ppm, PPM_RECUO)
+        else:
+            self.ppm = max(PPM_RECUO, self.ppm / 2)

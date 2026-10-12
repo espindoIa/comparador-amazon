@@ -142,19 +142,41 @@ def semear(conn: sqlite3.Connection, no: str) -> None:
     conn.commit()
 
 
-def semear_vendidos(conn: sqlite3.Connection, nos) -> None:
-    """Uma fatia "mais vendidos" por categoria e faixa de FAIXAS_VENDIDOS; acrescenta as que
-    faltarem e desativa as de faixas que não estão mais na lista (o histórico fica)."""
+def faixas_de_precos(bordas_em_reais) -> list[tuple[int, int]]:
+    """[0, 20, 30, 40] -> [(0, 1999), (2000, 2999), (3000, 3999), (4000, SEM_TETO)] (centavos, inclusive)."""
+    b = [round(float(x) * 100) for x in bordas_em_reais]
+    if not b or b[0] != 0 or any(y <= x for x, y in zip(b, b[1:])):
+        raise ValueError("as bordas das faixas começam em 0 e crescem: 0,20,30,40")
+    return [(x, y - 1) for x, y in zip(b, b[1:])] + [(b[-1], SEM_TETO)]
+
+
+def nos_vendidos(generos: str | None = None) -> list[str]:
+    """Nós lidos na varredura dos mais vendidos: o ranking geral e todos os gêneros, ou só os de `generos`
+    (códigos separados por vírgula)."""
+    todos = [NO_LIVROS, *GENEROS]
+    if not generos:
+        return todos
+    pedidos = [g.strip() for g in generos.split(",") if g.strip()]
+    desconhecidos = [g for g in pedidos if g not in todos]
+    if desconhecidos:
+        raise ValueError(f"gênero desconhecido: {', '.join(desconhecidos)}")
+    return pedidos
+
+
+def semear_vendidos(conn: sqlite3.Connection, nos, faixas=None) -> None:
+    """Uma fatia "mais vendidos" por categoria e faixa de `faixas` (padrão FAIXAS_VENDIDOS); acrescenta
+    as que faltarem e desativa as de faixas que não estão mais na lista (o histórico fica)."""
+    faixas = list(faixas or FAIXAS_VENDIDOS)
     agora = db.agora()
     conn.executemany(
         "INSERT OR IGNORE INTO fatias (grupo, no, ordem, preco_min, preco_max, criada_em) "
         "VALUES (?, ?, 'vendidos', ?, ?, ?)",
-        [(GRUPO_VENDIDOS, no, a, b, agora) for no in nos for a, b in FAIXAS_VENDIDOS],
+        [(GRUPO_VENDIDOS, no, a, b, agora) for no in nos for a, b in faixas],
     )
-    atual = "(" + " OR ".join(["(preco_min = ? AND preco_max = ?)"] * len(FAIXAS_VENDIDOS)) + ")"
-    faixas = [v for f in FAIXAS_VENDIDOS for v in f]
+    atual = "(" + " OR ".join(["(preco_min = ? AND preco_max = ?)"] * len(faixas)) + ")"
+    valores = [v for f in faixas for v in f]
     conn.execute(f"UPDATE fatias SET ativa = {atual} WHERE grupo = ? AND ordem = 'vendidos'",
-                 (*faixas, GRUPO_VENDIDOS))
+                 (*valores, GRUPO_VENDIDOS))
     conn.commit()
 
 
@@ -269,6 +291,7 @@ def varrer(
     vendidos=None,
     minutos: float = 60,
     max_paginas: int | None = None,
+    faixas=None,
     ritmo: Ritmo | None = None,
     parar_na_falha: bool = False,
     dormir=time.sleep,
@@ -280,6 +303,7 @@ def varrer(
     Por padrão, a categoria `no` inteira, fatiada por preço. Com `vendidos` (lista de nós),
     os mais vendidos de cada um desses nós (até LIVROS_POR_FAIXA por faixa de preço), sem contar os
     que não têm preço de compra.
+    `faixas`: faixas de preço dos mais vendidos (padrão FAIXAS_VENDIDOS), ver `faixas_de_precos`.
     `ritmo` define páginas por minuto e quantas fatias são lidas ao mesmo tempo (uma página por fatia
     de cada vez); ele recua sozinho a cada falha. Com `parar_na_falha`, a execução termina na primeira
     falha (para medir o ritmo máximo sem insistir).
@@ -288,7 +312,7 @@ def varrer(
     criar_schema(conn)
     if vendidos is not None:
         grupo = GRUPO_VENDIDOS
-        semear_vendidos(conn, vendidos)
+        semear_vendidos(conn, vendidos, faixas)
     else:
         grupo = no
         semear(conn, no)
@@ -310,8 +334,9 @@ def varrer(
     pl = Placar()
     curtas_vistas: dict[tuple[int, int], int] = {}   # (fatia, página) -> resultados da página curta já vista
 
-    def ler(f: Fatia, url: str, html: str | None, erro) -> bool:
-        """Processa uma resposta. Devolve False se foi uma falha (a mesma página será tentada de novo)."""
+    def ler(f: Fatia, url: str, html: str | None, erro) -> str:
+        """Processa uma resposta. Devolve "ok", "leve" ou "grave" (bloqueio). Numa falha, a mesma página
+        será tentada de novo."""
         pag = f.proxima_pagina
         rotulo = (f"[{GENEROS.get(f.no, f.no)} {_faixa(f)} p{pag}]" if f.ordem == "vendidos"
                   else f"[fatia {f.id} R$ {f.preco_min / 100:.2f}–{f.preco_max / 100:.2f} p{pag}]")
@@ -326,12 +351,12 @@ def varrer(
             if erro is not None and erro.status == "bloqueado":
                 pl.bloqueios += 1
                 print(f"{rotulo} bloqueado; diminuindo o ritmo")
-            else:
-                pl.erros += 1
-                print(f"{rotulo} {erro.detalhe if erro else erro_txt}")
-                if erro is None:
-                    pl.avisos.append(erro_txt)
-            return False
+                return "grave"
+            pl.erros += 1
+            print(f"{rotulo} {erro.detalhe if erro else erro_txt}")
+            if erro is None:
+                pl.avisos.append(erro_txt)
+            return "leve"
 
         esperada = f.paginas or 0     # páginas da fatia (a passada anterior, se esta é a página 1)
         curta = ((pag == 1 and pagina.cards == 0 and esperada >= PAGINAS_MIN_VAZIA)
@@ -344,7 +369,7 @@ def varrer(
             print(f"{rotulo} veio com {pagina.cards} resultados (esperava ~16); relendo depois de uma pausa "
                   f"[título: {titulo.group(1).strip()[:80] if titulo else '?'}; {len(html)} bytes"
                   + (f"; HTML em {arq}" if arq else "") + "]")
-            return False
+            return "leve"
         if curta:
             pl.avisos.append(f"{rotulo} tem só {pagina.cards} resultados, confirmado em duas leituras")
 
@@ -356,7 +381,7 @@ def varrer(
                       f"{n_pag} páginas, dividindo")
                 dividir(conn, f)
                 pl.paginas += 1
-                return True
+                return "ok"
             if f.ordem == "preco" and n_pag > MAX_PAGINAS_FATIA:
                 pl.avisos.append(f"fatia {f.id} (preço único) tem {n_pag} páginas; parte pode ficar de fora")
             conn.execute("UPDATE fatias SET paginas = ?, total = ?, passada_iniciada_em = ?, livros = 0 WHERE id = ?",
@@ -386,7 +411,7 @@ def varrer(
         print(f"{rotulo[:-1]}/{ultima}] {len(pagina.itens)} preços"
               + (f", {lidos} livros" if f.ordem == "vendidos" else "")
               + (" (fim)" if fim else ""))
-        return True
+        return "ok"
 
     marco = 0
     while relogio() - inicio < minutos * 60:
@@ -403,14 +428,14 @@ def varrer(
         t0 = relogio()
         respostas = baixar_lote(sessao, urls, ritmo.atrasos(len(lote)), dormir)
         resultados = [ler(f, url, html, erro) for f, url, (_, html, erro) in zip(lote, urls, respostas)]
-        if all(resultados):
+        if all(r == "ok" for r in resultados):
             pl.falhas_seguidas = 0
             for _ in resultados:
                 ritmo.pagina_boa()
         else:
             pl.falhas_seguidas += 1
             ppm_da_falha = ritmo.ppm
-            ritmo.falha()
+            ritmo.falha(grave="grave" in resultados)
             if parar_na_falha:
                 pl.avisos.append(f"parada na primeira falha, programada a {ppm_da_falha:.0f} páginas/min")
                 break

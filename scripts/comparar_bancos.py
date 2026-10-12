@@ -31,6 +31,17 @@ def main() -> None:
         d = por.setdefault(novo[a], [0, 0])
         d[0] += 1
         d[1] += a in antigo
+    conn = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+    try:
+        paginas, minutos = conn.execute(
+            "SELECT SUM(paginas), SUM((julianday(finalizada_em) - julianday(iniciada_em)) * 1440) FROM execucoes").fetchone()
+    except sqlite3.DatabaseError:
+        paginas = minutos = None
+    finally:
+        conn.close()
+    if paginas:
+        print(f"{paginas} páginas em {minutos:.0f} min ({paginas / max(minutos, 1e-9):.0f} páginas/min reais); "
+              f"{len(novo) / paginas:.1f} livros por página; {len(so_novo) / paginas:.1f} livros novos (fora do anterior) por página")
     print("por categoria (nó): lidos / já conhecidos")
     for no, (n, k) in sorted(por.items(), key=lambda x: -x[1][0]):
         print(f"  {no}: {n} / {k}")

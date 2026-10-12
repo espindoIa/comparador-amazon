@@ -25,9 +25,13 @@ def main() -> None:
     v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
     v.add_argument("--ritmo", type=float, default=ritmo.PPM_BASE,
                    help="páginas por minuto no começo (padrão: %(default)s, o ritmo medido sem bloqueios)")
-    v.add_argument("--ritmo-max", type=float,
-                   help="teto de páginas por minuto: o ritmo sobe aos poucos até ele enquanto não há falha "
-                        "e recua na primeira (padrão: o mesmo de --ritmo, ou seja, sem subir)")
+    v.add_argument("--ritmo-max", type=float, default=ritmo.PPM_TETO_PADRAO,
+                   help="teto de páginas por minuto programadas (o real fica ~20%% abaixo com 2 ou 3 requisições "
+                        "ao mesmo tempo): o ritmo sobe aos poucos até ele enquanto não há falha e recua nas falhas "
+                        "(padrão: %(default)s)")
+    v.add_argument("--faixas", help="com --vendidos: bordas das faixas de preço em reais, ex.: 0,20,30,40,50,60,80,120,200 "
+                                    "(padrão: " + ",".join(f"{a / 100:g}" for a, _ in varredura.FAIXAS_VENDIDOS) + ")")
+    v.add_argument("--generos", help="com --vendidos: só estes nós, separados por vírgula (padrão: o ranking geral e os 29 gêneros)")
     v.add_argument("--subir-a-cada", type=int, default=ritmo.A_CADA,
                    help="páginas boas seguidas para cada subida de 25%% do ritmo (padrão: %(default)s)")
     v.add_argument("--parar-na-falha", action="store_true",
@@ -79,10 +83,14 @@ def main() -> None:
         saida.write_text(relatorio.pagina(titulo or asin, asin, trechos, eventos, relatorio.aviso(conn)), encoding="utf-8")
         print(f"gráfico em {saida}")
     elif args.cmd == "varrer":
+        try:
+            vendidos = varredura.nos_vendidos(args.generos) if args.vendidos else None
+            faixas = varredura.faixas_de_precos(args.faixas.split(",")) if args.faixas else None
+        except ValueError as e:
+            raise SystemExit(f"opção inválida: {e}")
         sessao = rede.nova_sessao(args.cliente)
         try:
-            vendidos = [varredura.NO_LIVROS, *varredura.GENEROS] if args.vendidos else None
-            eid = varredura.varrer(conn, sessao, no=args.no, vendidos=vendidos, minutos=args.minutos,
+            eid = varredura.varrer(conn, sessao, no=args.no, vendidos=vendidos, minutos=args.minutos, faixas=faixas,
                                    max_paginas=args.max_paginas, pasta_html=Path("data/html"),
                                    ritmo=ritmo.Ritmo(args.ritmo, args.ritmo_max, a_cada=args.subir_a_cada),
                                    parar_na_falha=args.parar_na_falha)

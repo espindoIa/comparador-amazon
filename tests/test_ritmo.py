@@ -34,30 +34,65 @@ class TestRitmo(unittest.TestCase):
         # acima de PPM_MAXIMO (120) o ritmo é cortado, então 3 é o máximo na prática
         self.assertEqual([Ritmo(p).pistas for p in (8, 21, 45, 46, 90, 91, 135, 400)], [1, 1, 1, 2, 2, 3, 3, 3])
 
-    def test_falha_recua_e_baixa_o_teto(self):
+    def test_bloqueio_recua_para_o_minimo_e_baixa_o_teto(self):
         x = Ritmo(60, teto=100)
-        x.falha()
+        x.falha(grave=True)
         self.assertEqual((x.ppm, x.teto, x.pistas, x.falhas), (r.PPM_RECUO, 42.0, 1, 1))
         for _ in range(300):                            # a subida recomeça devagar, de baixo, e para no teto novo
             x.pagina_boa()
         self.assertLess(x.ppm, 42.0 + 1e-9)
         self.assertGreater(x.ppm, r.PPM_RECUO)
-        x.falha()                                       # nova falha: teto cai de novo (70% do ritmo em que falhou)
+        x.falha(grave=True)                             # novo bloqueio: teto cai de novo (70% do ritmo em que falhou)
         self.assertLess(x.teto, 42.0)
+
+    def test_falha_leve_isolada_so_corta_o_ritmo_pela_metade(self):
+        x = Ritmo(60, teto=60, a_cada=100)
+        x.falha()
+        self.assertEqual((x.ppm, x.teto), (30.0, 60))   # o teto fica: uma página curta ao acaso não corrói o dia
+        for _ in range(400):
+            x.pagina_boa()
+        self.assertEqual(x.ppm, 60)                     # e o ritmo volta ao teto em 4 degraus (400 páginas)
+
+    def test_falhas_leves_isoladas_pelo_dia_nao_corroem_o_teto(self):
+        x = Ritmo(60, teto=60, a_cada=100)
+        for _ in range(8):                              # uma a cada 600 páginas boas
+            for _ in range(600):
+                x.pagina_boa()
+            x.falha()
+            self.assertEqual(x.teto, 60)
+        self.assertEqual(x.falhas, 8)
+
+    def test_falha_leve_repetida_baixa_o_teto(self):
+        x = Ritmo(60, teto=60, a_cada=100)
+        x.falha()                                       # 60 -> 30
+        for _ in range(150):                            # menos de JANELA_REPETIDA páginas boas depois: repetida
+            x.pagina_boa()
+        ppm = x.ppm
+        x.falha()
+        self.assertEqual((x.ppm, x.teto), (r.PPM_RECUO, ppm * 0.7))
+
+    def test_a_primeira_falha_nunca_e_repetida(self):
+        x = Ritmo(60, teto=60)
+        x.falha()
+        self.assertEqual(x.teto, 60)
 
     def test_falha_nunca_leva_o_teto_abaixo_do_recuo(self):
         x = Ritmo(10)
         for _ in range(5):
-            x.falha()
+            x.falha(grave=True)
         self.assertEqual((x.ppm, x.teto), (r.PPM_RECUO, r.PPM_RECUO))
+        y = Ritmo(10)
+        y.falha()
+        self.assertEqual(y.ppm, r.PPM_RECUO)            # a metade de 10 seria 5: não passa do mínimo
 
     def test_falha_zera_a_contagem_de_paginas_boas(self):
         x = Ritmo(20, teto=60, a_cada=100)
         for _ in range(99):
             x.pagina_boa()
         x.falha()
+        ppm = x.ppm
         x.pagina_boa()
-        self.assertEqual(x.ppm, r.PPM_RECUO)            # a página 100 "boa" não conta: contou de novo do zero
+        self.assertEqual(x.ppm, ppm)                    # a página 100 "boa" não conta: contou de novo do zero
 
     def test_atrasos_escalonados_no_intervalo_do_ritmo(self):
         x = Ritmo(60, sorteio=EXATO)
