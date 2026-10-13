@@ -117,14 +117,16 @@
   }
 
   // ---------- peças de interface ----------
-  function matiz(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) % 360; return h; }
+  // cor da capa gerada: um dos tons de pano de encadernação (couro, vinho, verde, azul, ocre, ameixa), fixo por título
+  var PANOS = [20, 355, 150, 212, 36, 320];
+  function matiz(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) % 360; return PANOS[h % PANOS.length]; }
   function capa(o, cls, alt) {
     cls = 'cv' + (cls ? ' ' + cls : '');
     var tam = /\bg\b/.test(cls) ? 654 : /\bm\b/.test(cls) ? 436 : 218;   // altura da imagem (2x o tamanho na tela)
     if (o.img) return '<div class="' + cls + '" data-t="' + esc(o.t) + '"><img src="' + CAPA + encodeURIComponent(o.img) + '._AC_UY' + tam + '_.jpg" alt="' + (alt ? esc('Capa de ' + o.t) : '') + '" loading="lazy" decoding="async"></div>';
     return placeholder(o.t, cls);
   }
-  function placeholder(t, cls) { return '<div class="' + cls + ' ph" style="--h:' + matiz(t || '') + '" aria-hidden="true"><span>' + esc(t) + '</span></div>'; }
+  function placeholder(t, cls) { return '<div class="' + cls + ' ph" style="--h:' + matiz(t || '') + '" data-i="' + esc((t || '?').charAt(0).toUpperCase()) + '" aria-hidden="true"><span>' + esc(t) + '</span></div>'; }
   // capa que não carrega vira a capa gerada
   document.addEventListener('error', function (e) {
     var img = e.target; if (img.tagName !== 'IMG' || !img.parentNode || !img.parentNode.classList.contains('cv')) return;
@@ -264,7 +266,8 @@
     Promise.all([destaques(), META, EVENTOS]).then(function (rs) {
       if (!aindaEm(r)) return;
       var x = rs[0], m = rs[1], ev = rs[2], out = [];
-      out.push('<section class="boas sec"><h1>Histórico de preço de livros</h1><p>' + m.itens.toLocaleString('pt-BR') +
+      var lido = m.lido_ate ? leitura(m.lido_ate) : '';
+      out.push('<section class="boas sec">' + (lido ? '<p class="sobre-t">Preços lidos até ' + lido + '</p>' : '') + '<h1>Histórico de preço de livros</h1><p>' + m.itens.toLocaleString('pt-BR') +
         ' livros da Amazon.com.br, com o preço lido todo dia.</p>' + (m.aviso ? '<p class="aviso">' + esc(m.aviso) + '</p>' : '') + '</section>');
       if (Lista.ler().length) out.push('<section class="sec" id="sua-lista"></section>');
       var rec = Lista.recentes();

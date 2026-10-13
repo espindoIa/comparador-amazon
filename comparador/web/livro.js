@@ -158,7 +158,7 @@
       else if (e[1] > hoje && (!prox || e[1] < prox[1])) prox = e;
     });
     if (prox) blocos.push('<div class="ev-b ev-prox"><h3>' + esc(prox[0]) + '</h3><span>' + dl(prox[1]) + ' · daqui a ' + plural(prox[1] - hoje, 'dia', 'dias') + '</span></div>');
-    return blocos.length ? '<section class="card pad sec"><h2 style="font-size:var(--fs-7);margin-bottom:10px">Datas de promoção</h2>' + blocos.join('') + '</section>' : '';
+    return blocos.length ? '<section class="card pad sec"><h2 class="t2">Datas de promoção</h2>' + blocos.join('') + '</section>' : '';
   }
 
   // dados do gráfico: dias com faixa, trechos, eventos próximos e janela inicial
