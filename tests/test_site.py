@@ -229,6 +229,20 @@ class TestSite(unittest.TestCase):
         self.assertNotIn("eds", historico(self.d / "out", "B000000003"))
         self.assertEqual(historico(self.d / "out", "B000000003")["outras"][0][0], "B000000001")
 
+    def test_mais_do_mesmo_autor_vai_para_o_historico(self):
+        h = [("2026-10-01", "2026-10-05", 1000, None)]
+        livros = [(f"B00000000{i}", f"Livro {i}", "Capa comum", h) for i in range(1, 6)]
+        banco(self.d / "a.db", livros)
+        for asin, autor, av in (("B000000001", "Machado de Assis", 50), ("B000000002", "Machado de Assis, Fulano e outros.", 900),
+                                ("B000000003", "MACHADO DE ASSIS", 10), ("B000000004", "Outra Pessoa", 5), ("B000000005", "Não informado", 1)):
+            self._detalhar("a.db", "UPDATE catalogo SET autor = ?, avaliacoes = ? WHERE asin = ?", autor, av, asin)
+        site.construir([self.d / "a.db"], self.d / "out")
+        um = historico(self.d / "out", "B000000001")
+        self.assertEqual(um["autor1"], "Machado de Assis")
+        self.assertEqual([x[0] for x in um["mesmo_autor"]], ["B000000002", "B000000003"])   # mais avaliados primeiro
+        self.assertNotIn("mesmo_autor", historico(self.d / "out", "B000000004"))
+        self.assertNotIn("mesmo_autor", historico(self.d / "out", "B000000005"))             # autor genérico não junta
+
     def test_baixaram_de_preco_por_familia_e_menor_preco_registrado(self):
         h = lambda a, b: [("2026-09-20", "2026-10-08", a, None), ("2026-10-09", "2026-10-09", b, None)]
         banco(self.d / "a.db", [("B000000001", "Físico 1", "Capa comum", h(5000, 2500)), ("B000000002", "Físico 2", "Capa comum", h(5000, 4000)),
@@ -278,10 +292,15 @@ class TestSite(unittest.TestCase):
 
 @unittest.skipUnless(navegador(), "navegador não instalado")
 class TestSiteNoNavegador(unittest.TestCase):
-    def _servir(self, itens, aviso=None, avaliacoes=None):
+    def _servir(self, itens, aviso=None, avaliacoes=None, generos=None):
         d = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, d, True)
         banco(d / "a.db", itens, aviso)
+        if generos:
+            c = sqlite3.connect(d / "a.db")
+            c.executemany("INSERT INTO generos VALUES (?, ?)", list(generos.items()))
+            c.commit()
+            c.close()
         if avaliacoes:
             c = sqlite3.connect(d / "a.db")
             c.executemany("UPDATE catalogo SET avaliacoes = ? WHERE asin = ?", [(n, a) for a, n in avaliacoes.items()])
@@ -451,6 +470,46 @@ class TestSiteNoNavegador(unittest.TestCase):
                     self.assertEqual(visiveis, 10)                                      # no celular a estante rola
                 pg.close()
             b.close()
+
+    def test_genero_vistos_recentemente_e_preco_alvo(self):
+        from playwright.sync_api import sync_playwright
+        h = lambda p: [("2026-10-01", "2026-10-20", p, None)]
+        base = self._servir([("A000000001", "Romance Um", "Capa comum", h(4000)), ("A000000002", "Romance Dois", "Capa comum", h(2500)),
+                             ("A000000003", "Outro Gênero", "Kindle", h(900))], generos={"A000000001": "7882388011", "A000000002": "7882388011"})
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            pg = b.new_page()
+            erros = []
+            pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.goto(f"{base}/")
+            pg.evaluate("localStorage.clear()")
+            pg.goto(f"{base}/")
+            pg.click(".gens a:has-text('Romance')")                                      # explorar um gênero
+            pg.wait_for_selector("#res .row")
+            self.assertEqual(pg.inner_text("#bh"), "Romance")
+            self.assertEqual(sorted(pg.eval_on_selector_all("#res .tt", "e => e.map(x => x.textContent)")), ["Romance Dois", "Romance Um"])
+            pg.click("#res .row:has-text('Romance Um')")
+            pg.wait_for_selector("#graf svg")
+            self.assertIn("Romance", pg.inner_text(".l-gens"))
+            pg.click("[data-salvar]")
+            pg.goto(f"{base}/")                                                         # vistos recentemente, no início
+            pg.wait_for_selector(".cartao")
+            self.assertIn("Vistos recentemente", pg.inner_text("main"))
+            pg.goto(f"{base}/?lista")                                                   # preço-alvo na lista
+            pg.wait_for_selector("#lst .row b")
+            pg.click("[data-alvo]")
+            pg.fill("#alvo-v", "35")
+            pg.click(".alvo-f [type=submit]")
+            pg.wait_for_selector(".alvo .mu")
+            self.assertIn("Seu preço: R$ 35,00", pg.inner_text("#lst"))
+            self.assertIn("faltam R$ 5,00", pg.inner_text("#lst"))
+            pg.click("[data-alvo]")
+            pg.fill("#alvo-v", "40")
+            pg.press("#alvo-v", "Enter")
+            pg.wait_for_selector(".alvo .pill.dn")
+            self.assertIn("chegou no seu preço", pg.inner_text(".resumo"))
+            b.close()
+        self.assertEqual(erros, [])
 
     def test_buscar_salvar_na_lista_e_abrir_historico(self):
         from playwright.sync_api import sync_playwright
