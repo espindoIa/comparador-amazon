@@ -1,7 +1,7 @@
 """Decide quando começa a próxima leitura de uma sequência de coleta (o "anel" de execuções de varredura.yml).
 
 Uso: python scripts/proximo_ciclo.py BANCO --alvo vendidos --inicio-run INSTANTE_UTC
-Escreve duas linhas: o instante (UTC, ISO) em que a próxima leitura deve começar e o motivo.
+Escreve duas linhas: o instante (UTC, ISO) em que a próxima leitura deve começar e o motivo (ou, com --json, um objeto com os dois).
 
 O catálogo é lido por inteiro uma vez por ciclo (3, 6, 12 ou 24 h; ver comparador/ritmo.py). Cada ciclo é uma janela
 que parte da meia-noite de Brasília, e a leitura de cada sequência começa um pouco depois do início da janela (10 min
@@ -13,6 +13,7 @@ a próxima leitura espera também algumas horas (senão a Amazon seria consultad
 """
 
 import argparse
+import json
 import random
 import sqlite3
 import sys
@@ -67,6 +68,7 @@ def main() -> None:
     p.add_argument("--alvo", required=True)
     p.add_argument("--inicio-run", required=True, help="instante (UTC, ISO) em que esta execução começou")
     p.add_argument("--publicacao-falhou", action="store_true", help="a publicação do banco desta execução falhou")
+    p.add_argument("--json", action="store_true", help='escreve {"quando": ..., "motivo": ...} em vez das duas linhas')
     a = p.parse_args()
     conn = db.abrir_leitura(a.banco, "catálogo")
     conn.row_factory = sqlite3.Row
@@ -75,8 +77,12 @@ def main() -> None:
                                   publicacao_falhou=a.publicacao_falhou)
     finally:
         conn.close()
-    print(quando.astimezone(timezone.utc).isoformat(timespec="seconds"))
-    print(motivo)
+    quando_utc = quando.astimezone(timezone.utc).isoformat(timespec="seconds")
+    if a.json:
+        print(json.dumps({"quando": quando_utc, "motivo": motivo}, ensure_ascii=False))
+    else:
+        print(quando_utc)
+        print(motivo)
 
 
 if __name__ == "__main__":
