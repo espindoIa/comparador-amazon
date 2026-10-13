@@ -204,18 +204,30 @@ def inicio_do_dia(dia=None) -> str:
         timespec="seconds")
 
 
+# Uma fatia só conta como lida no dia se a passada COMEÇOU e terminou nele: uma passada que atravessa a
+# meia-noite tem as primeiras páginas (as dos livros mais vendidos) no dia anterior.
+_FEITA_NO_DIA = "ultima_passada >= :d AND (passada_iniciada_em IS NULL OR passada_iniciada_em >= :d)"
+
+
 def proximas_fatias(conn: sqlite3.Connection, grupo: str, desde: str, n: int = 1) -> list[Fatia]:
     """Até `n` fatias distintas que ainda não foram lidas inteiras desde `desde` (passadas em andamento primeiro)."""
     return [Fatia.de(r) for r in conn.execute(
-        "SELECT * FROM fatias WHERE grupo = ? AND ativa = 1 AND (ultima_passada IS NULL OR ultima_passada < ?) "
-        "ORDER BY proxima_pagina = 1, preco_min, id LIMIT ?",
-        (grupo, desde, n),
+        f"SELECT * FROM fatias WHERE grupo = :g AND ativa = 1 AND (ultima_passada IS NULL OR NOT ({_FEITA_NO_DIA})) "
+        "ORDER BY proxima_pagina = 1, preco_min, id LIMIT :n",
+        {"g": grupo, "d": desde, "n": n},
     )]
 
 
 def proxima_fatia(conn: sqlite3.Connection, grupo: str, desde: str) -> Fatia | None:
     """Próxima fatia que ainda não foi lida inteira desde `desde` (passada em andamento primeiro)."""
     return next(iter(proximas_fatias(conn, grupo, desde, 1)), None)
+
+
+def _recomecar_passadas_antigas(conn: sqlite3.Connection, grupo: str, desde: str) -> None:
+    """Passada que começou antes do dia recomeça da página 1: todos os preços do dia precisam ser do dia."""
+    conn.execute("UPDATE fatias SET proxima_pagina = 1 WHERE grupo = ? AND proxima_pagina > 1 "
+                 "AND passada_iniciada_em < ?", (grupo, desde))
+    conn.commit()
 
 
 def _fechar_dia_se_completo(conn: sqlite3.Connection, grupo: str, desde: str) -> bool:
@@ -344,10 +356,7 @@ def varrer(
     desde = inicio_do_dia()
     if _fechar_dia_se_completo(conn, grupo, desde):
         return None
-    # Passada que começou antes de hoje recomeça da página 1: todos os preços do dia
-    # precisam ser do dia.
-    conn.execute("UPDATE fatias SET proxima_pagina = 1 WHERE grupo = ? AND proxima_pagina > 1 "
-                 "AND passada_iniciada_em < ?", (grupo, desde))
+    _recomecar_passadas_antigas(conn, grupo, desde)
     exec_id = conn.execute("INSERT INTO execucoes (iniciada_em) VALUES (?)", (db.agora(),)).lastrowid
     conn.commit()
     ritmo = ritmo or Ritmo()
@@ -438,6 +447,12 @@ def varrer(
 
     marco = 0
     while relogio() - inicio < minutos * 60:
+        hoje = inicio_do_dia()
+        if hoje != desde:            # a execução atravessou a meia-noite (Brasília): começa o dia novo
+            _fechar_dia_se_completo(conn, grupo, desde)   # o que ficou completo antes da virada vale para o dia que acabou
+            desde = hoje
+            _recomecar_passadas_antigas(conn, grupo, desde)
+            pl.avisos.append("a execução atravessou a meia-noite; as passadas em andamento recomeçaram")
         pistas = ritmo.pistas
         if max_paginas is not None:
             if pl.tentativas >= max_paginas:
@@ -540,8 +555,8 @@ def cobertura(conn: sqlite3.Connection, grupo: str = NO_HQ_MANGA) -> Cobertura:
         itens=um("SELECT COUNT(*) FROM catalogo"),
         vistos_hoje=um("SELECT COUNT(*) FROM catalogo WHERE ultimo_visto >= ?", desde),
         fatias=um("SELECT COUNT(*) FROM fatias WHERE grupo = ? AND ativa = 1", grupo),
-        fatias_hoje=um("SELECT COUNT(*) FROM fatias WHERE grupo = ? AND ativa = 1 AND ultima_passada >= ?",
-                       grupo, desde),
+        fatias_hoje=conn.execute(f"SELECT COUNT(*) FROM fatias WHERE grupo = :g AND ativa = 1 AND {_FEITA_NO_DIA}",
+                                 {"g": grupo, "d": desde}).fetchone()[0],
         dia_completo=db.hoje_brasil() in completos,
         lacunas=lacunas,
     )

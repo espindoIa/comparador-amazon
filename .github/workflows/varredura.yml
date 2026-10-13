@@ -18,6 +18,9 @@
 # - O banco fica em assets da release "catalogo" (não no git): cada execução publica uma
 #   cópia nova com data no nome e só então apaga as antigas. Ficam as 14 mais recentes e a
 #   última de cada um dos 30 dias anteriores (scripts/podar_copias.py; ~10–20 MB cada).
+# - Orçamento de 165 min por execução (o job tem 180): download e publicação levam segundos.
+# - O download usa a cópia mais recente que passa nas conferências (gzip inteiro, SQLite íntegro) e a publicação
+#   confere o tamanho no GitHub e repete o envio cortado (scripts/catalogo_release.py).
 # - A primeira execução do dia falha (e o GitHub avisa por e-mail) se ONTEM ficou incompleto.
 # - Qualquer execução falha se os cards vierem sem capa ou autor (sinal de layout novo da Amazon).
 name: varredura
@@ -32,7 +35,7 @@ on:
     inputs:
       minutos:
         description: "Orçamento de tempo, em minutos"
-        default: "150"
+        default: "165"
 
 permissions:
   contents: write
@@ -68,32 +71,17 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # scripts/catalogo_release.py: tenta de novo o download e, se a cópia mais nova estiver quebrada
+      # (upload cortado), usa a anterior. Só começa do zero se a release comprovadamente não tem banco.
       - name: Baixa o catálogo (release catalogo)
         run: |
           mkdir -p data
-          # Só começa do zero se a release comprovadamente não existir; qualquer outro
-          # erro interrompe, para não publicar depois um banco vazio por engano.
-          if ! nomes=$(gh release view catalogo --json assets --jq '.assets[].name' 2>"$RUNNER_TEMP/erro"); then
-            if grep -qi "not found" "$RUNNER_TEMP/erro"; then
-              echo "release catalogo ainda não existe; começando do zero"
-              exit 0
-            fi
-            cat "$RUNNER_TEMP/erro" >&2
-            exit 1
-          fi
-          ultimo=$(printf '%s\n' "$nomes" | grep -E "^catalogo-${ALVO}-[0-9-]+\.db\.gz$" | sort | tail -n 1 || true)
-          if [ -z "$ultimo" ]; then
-            echo "release sem banco desta categoria; começando do zero"
-            exit 0
-          fi
-          gh release download catalogo --pattern "$ultimo" --dir "$RUNNER_TEMP"
-          gunzip -c "$RUNNER_TEMP/$ultimo" > "$DB"
-          cp "$DB" "$RUNNER_TEMP/antes.db"
-          echo "baixado: $ultimo"
+          python scripts/catalogo_release.py baixar "$ALVO" "$DB"
+          if [ -f "$DB" ]; then cp "$DB" "$RUNNER_TEMP/antes.db"; fi
 
       - name: Varre
         env:
-          MINUTOS: ${{ inputs.minutos || '150' }}
+          MINUTOS: ${{ inputs.minutos || '165' }}
         run: |
           if [ "$ALVO" = vendidos ]; then QUAL=(--vendidos); else QUAL=(--no "$ALVO"); fi
           python -m comparador --db "$DB" varrer "${QUAL[@]}" --minutos "$MINUTOS" --cliente navegador
@@ -109,12 +97,8 @@ jobs:
           fi
           ANTES=""; [ -f "$RUNNER_TEMP/antes.db" ] && ANTES="$RUNNER_TEMP/antes.db"
           python scripts/verificar_banco.py "$DB" $ANTES --tabela catalogo --tabela historico --tabela dias --tabela generos
-          nome="catalogo-${ALVO}-$(date -u +%Y-%m-%d-%H%M).db.gz"
-          gzip -c "$DB" > "$RUNNER_TEMP/$nome"
-          gh release view catalogo >/dev/null 2>&1 || gh release create catalogo --latest=false \
-            --title "Catálogo (dados da varredura)" \
-            --notes "Bancos SQLite gerados pelo workflow varredura, um por categoria. Baixe o mais recente."
-          gh release upload catalogo "$RUNNER_TEMP/$nome"
+          # Envia, confere no GitHub (estado e tamanho) e repete se veio cortado; só então apaga as cópias antigas.
+          python scripts/catalogo_release.py publicar "$ALVO" "$DB"
           # Só depois do upload: apaga as cópias desta categoria que não precisam ficar
           # (e as de testes antigos, sem a categoria no nome).
           gh release view catalogo --json assets --jq '.assets[].name' \

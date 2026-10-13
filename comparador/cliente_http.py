@@ -137,17 +137,41 @@ class ClienteNavegador:
         except Exception:
             self._pw.stop()
             raise
+        self._contexto = None
+        self._criar_pagina()
+        self.reaberturas = 0
+        self._final = weakref.finalize(self, _fechar_playwright, self._navegador, self._pw)
+
+    def _criar_pagina(self) -> None:
+        """Contexto e página novos; a próxima requisição é uma navegação de verdade (cria a sessão)."""
         proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-        contexto = self._navegador.new_context(
+        self._contexto = self._navegador.new_context(
             locale="pt-BR",
             user_agent=None,  # o do próprio navegador
             # Só para ambientes com proxy que intercepta TLS (ex.: sandbox de testes).
             ignore_https_errors=os.environ.get("COMPARADOR_IGNORAR_TLS") == "1",
             **({"proxy": _proxy(proxy)} if proxy else {}),
         )
-        self._pagina = contexto.new_page()
+        self._pagina = self._contexto.new_page()
         self._aberta = False
-        weakref.finalize(self, _fechar_playwright, self._navegador, self._pw)
+
+    def _reabrir(self) -> None:
+        """Recuperação de queda do navegador ou da página (não de bloqueio: isso continua parando a execução).
+        Abre contexto e página novos, e o navegador de novo se ele morreu."""
+        self.reaberturas += 1
+        try:
+            self._contexto.close()
+        except Exception:
+            pass
+        try:
+            if not self._navegador.is_connected():
+                self._final.detach()
+                _fechar_playwright(self._navegador, None)
+                self._navegador = self._abrir_navegador()
+                self._final = weakref.finalize(self, _fechar_playwright, self._navegador, self._pw)
+            self._criar_pagina()
+        except Exception:
+            pass   # a próxima requisição falha de novo e a execução para depois de 3 lotes com falha
 
     def _abrir_navegador(self):
         tipo = self._pw.chromium
@@ -178,6 +202,7 @@ class ClienteNavegador:
         except Exception as e:
             if "Timeout" in type(e).__name__:
                 raise requests.Timeout(str(e)) from e
+            self._reabrir()
             raise requests.ConnectionError(f"navegador: {e}") from e
 
     def get_lote(self, urls: list[str], atrasos: list[float], timeout: float = 30) -> list[Resposta]:
@@ -195,6 +220,7 @@ class ClienteNavegador:
         except Exception as e:
             if "Timeout" in type(e).__name__:
                 raise requests.Timeout(str(e)) from e
+            self._reabrir()
             raise requests.ConnectionError(f"navegador: {e}") from e
         return [Resposta(int(st), txt, u or url, ms) for (st, txt, u, ms), url in zip(brutas, urls)]
 
@@ -210,7 +236,7 @@ def _proxy(servidor: str) -> dict:
 
 
 def _fechar_playwright(navegador, pw) -> None:
-    for acao in (navegador.close, pw.stop):
+    for acao in [navegador.close] + ([pw.stop] if pw else []):
         try:
             acao()
         except Exception:
