@@ -5,7 +5,7 @@ import importlib.util
 import sqlite3
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 PASTA = Path(__file__).resolve().parent.parent / "scripts"
@@ -21,7 +21,9 @@ def carregar(nome):
 podar_copias = carregar("podar_copias")
 catalogo_release = carregar("catalogo_release")
 verificar_precos = carregar("verificar_precos")
-encadear = carregar("encadear")
+proximo_ciclo = carregar("proximo_ciclo")
+espera = carregar("espera")
+vigia = carregar("vigia")
 conferir_site = carregar("conferir_site")
 
 
@@ -223,7 +225,9 @@ class TestVerificarPrecos(unittest.TestCase):
         self.assertIn("fora de", verificar_precos.problema({**pequeno, "fora_da_faixa": 0.5}))
 
 
-class TestEncadear(unittest.TestCase):
+class TestProximoCiclo(unittest.TestCase):
+    """Janelas de 12 h de Brasília: 00:00–12:00 e 12:00–24:00 (03:00–15:00 e 15:00–03:00 em UTC)."""
+
     def setUp(self):
         from comparador import db, varredura
         self.tmp = tempfile.TemporaryDirectory()
@@ -233,42 +237,95 @@ class TestEncadear(unittest.TestCase):
         self.addCleanup(self.conn.close)
         varredura.criar_schema(self.conn)
         varredura.semear_vendidos(self.conn, ["1"], [(0, 3999), (4000, varredura.SEM_TETO)])
-        self.dia = varredura.inicio_do_dia()
-        self.desde = "2000-01-01T00:00:00+00:00"          # o instante em que esta execução começou
+        self.inicio = datetime(2026, 10, 14, 10, 0, tzinfo=timezone.utc)      # a execução começou às 07:00 de Brasília
+        self.agora = datetime(2026, 10, 14, 13, 0, tzinfo=timezone.utc)       # e acaba às 10:00 de Brasília
+
+    def decidir(self, alvo="vendidos", agora=None, inicio=None):
+        return proximo_ciclo.decidir(self.conn, alvo, inicio or self.inicio, agora or self.agora, sorteio=lambda a, b: 0)
 
     def execucao(self, paginas=3000, bloqueios=0, obs=None, quando=None):
         self.conn.execute("INSERT INTO execucoes (iniciada_em, paginas, bloqueios, observacao) VALUES (?, ?, ?, ?)",
-                          (quando or "2030-01-01T00:00:00+00:00", paginas, bloqueios, obs))
+                          (quando or "2026-10-14T10:00:00+00:00", paginas, bloqueios, obs))
 
-    def completar_o_dia(self):
-        self.conn.execute("UPDATE fatias SET ultima_passada = ?, passada_iniciada_em = ?", (self.dia, self.dia))
+    def completar_a_janela(self, inicio="2026-10-14T05:00:00+00:00", fim="2026-10-14T06:00:00+00:00"):
+        self.conn.execute("UPDATE fatias SET ultima_passada = ?, passada_iniciada_em = ?", (fim, inicio))
 
-    def test_encadeia_quando_o_dia_esta_incompleto_e_a_execucao_foi_limpa(self):
+    def config(self, **kw):
+        for k, v in kw.items():
+            self.conn.execute("INSERT OR REPLACE INTO config (chave, valor) VALUES (?, ?)", (k, v))
+
+    def test_continua_agora_se_a_janela_nao_fechou_e_a_execucao_foi_limpa(self):
         self.execucao()
-        self.assertIsNone(encadear.decidir(self.conn, self.desde))
+        quando, motivo = self.decidir()
+        self.assertEqual(quando, self.agora)
+        self.assertIn("não fechou", motivo)
 
-    def test_nao_encadeia_com_o_dia_completo(self):
+    def test_com_a_janela_completa_espera_a_proxima_com_a_defasagem_de_cada_sequencia(self):
         self.execucao()
-        self.completar_o_dia()
-        self.assertIn("completo", encadear.decidir(self.conn, self.desde))
+        self.completar_a_janela()
+        fim = datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)                 # 12:00 de Brasília
+        for alvo, minutos in (("vendidos", 0), ("vendidos-b", 10), ("vendidos-c", 20)):
+            self.assertEqual(self.decidir(alvo)[0], fim + timedelta(minutes=minutos), alvo)
 
-    def test_nao_encadeia_depois_de_bloqueio_aviso_de_layout_ou_execucao_curta(self):
-        self.execucao(bloqueios=1)
-        self.assertIn("bloqueios", encadear.decidir(self.conn, self.desde))
-        self.conn.execute("DELETE FROM execucoes")
-        self.execucao(obs="interrompida após 3 falhas seguidas")
-        self.assertIn("avisou", encadear.decidir(self.conn, self.desde))
-        self.conn.execute("DELETE FROM execucoes")
-        self.execucao(obs=f"poucos itens com capa: {self.varredura.AVISO_LAYOUT}")
-        self.assertIn("avisou", encadear.decidir(self.conn, self.desde))
-        self.conn.execute("DELETE FROM execucoes")
-        self.execucao(paginas=120)
-        self.assertIn("só 120", encadear.decidir(self.conn, self.desde))
+    def test_o_sorteio_so_atrasa_a_leitura_da_janela_nunca_antecipa(self):
+        self.execucao()
+        self.completar_a_janela()
+        quando, _ = proximo_ciclo.decidir(self.conn, "vendidos", self.inicio, self.agora, sorteio=lambda a, b: b)
+        self.assertEqual(quando, datetime(2026, 10, 14, 15, 10, tzinfo=timezone.utc))
+
+    def test_depois_de_bloqueio_aviso_de_layout_ou_execucao_curta_espera_a_proxima_janela(self):
+        proxima = datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)
+        for kw in (dict(bloqueios=1), dict(obs="interrompida após 3 falhas seguidas"),
+                   dict(obs=f"poucos itens com capa: {self.varredura.AVISO_LAYOUT}"), dict(paginas=120)):
+            self.conn.execute("DELETE FROM execucoes")
+            self.execucao(**kw)
+            self.assertEqual(self.decidir()[0], proxima, kw)
+
+    def test_a_pausa_depois_de_bloqueio_vale_mesmo_depois_da_proxima_janela(self):
+        self.execucao(bloqueios=2)
+        self.config(ritmo_pausa_ate="2026-10-14T21:00:00+00:00")
+        quando, motivo = self.decidir()
+        self.assertEqual(quando, datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc))
+        self.assertIn("pausa", motivo)
+        self.config(ritmo_pausa_ate="2026-10-14T14:00:00+00:00")             # pausa que acaba antes da janela: a janela manda
+        self.assertEqual(self.decidir()[0], datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc))
+
+    def test_nunca_menos_de_10_minutos_depois_do_comeco_da_execucao(self):
+        self.execucao(quando="2026-10-14T14:55:00+00:00")
+        self.completar_a_janela()
+        quando, _ = self.decidir(agora=datetime(2026, 10, 14, 14, 56, tzinfo=timezone.utc),
+                                 inicio=datetime(2026, 10, 14, 14, 55, tzinfo=timezone.utc))
+        self.assertEqual(quando, datetime(2026, 10, 14, 15, 5, tzinfo=timezone.utc))      # a janela seria às 15:00
+
+    def test_sobrando_pouco_tempo_na_janela_nao_continua_ja(self):
+        self.execucao()
+        quando, _ = self.decidir(agora=datetime(2026, 10, 14, 14, 50, tzinfo=timezone.utc))
+        self.assertEqual(quando, datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc))
 
     def test_so_conta_a_execucao_desta_rodada(self):
-        self.execucao(quando="1999-01-01T00:00:00+00:00")             # uma execução antiga e limpa não vale
-        self.assertIn("não leu nada", encadear.decidir(self.conn, self.desde))
-        self.assertIsNone(encadear.decidir(self.conn, "1998-01-01T00:00:00+00:00"))
+        self.execucao(quando="2026-10-14T05:00:00+00:00")                       # uma execução antiga e limpa não vale
+        self.assertEqual(self.decidir()[0], datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc))
+
+    def test_publicacao_que_falhou_espera_horas_em_vez_de_ler_de_novo_logo(self):
+        self.execucao()                                                       # janela incompleta, execução limpa: continuaria já
+        quando, motivo = proximo_ciclo.decidir(self.conn, "vendidos", self.inicio, self.agora, sorteio=lambda a, b: 0,
+                                               publicacao_falhou=True)
+        self.assertEqual(quando, self.agora + timedelta(hours=3))
+        self.assertIn("publicação falhou", motivo)
+        self.completar_a_janela()                                             # janela completa: a próxima janela já é mais tarde
+        quando, _ = proximo_ciclo.decidir(self.conn, "vendidos", self.inicio, self.agora, sorteio=lambda a, b: 0,
+                                          publicacao_falhou=True)
+        self.assertEqual(quando, datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc))
+
+    def test_o_ciclo_guardado_define_a_janela(self):
+        self.config(ciclo_horas="3")
+        self.execucao()
+        self.completar_a_janela("2026-10-14T15:30:00+00:00", "2026-10-14T15:55:00+00:00")
+        agora = datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc)            # 13:00 de Brasília: janela das 12:00 às 15:00
+        self.assertEqual(self.decidir(agora=agora)[0], datetime(2026, 10, 14, 18, 0, tzinfo=timezone.utc))
+        self.config(ciclo_horas="24")                                         # janela do dia inteiro: a de 12 h acima não vale
+        self.completar_a_janela("2026-10-14T05:00:00+00:00", "2026-10-14T15:55:00+00:00")
+        self.assertEqual(self.decidir(agora=agora)[0], datetime(2026, 10, 15, 3, 0, tzinfo=timezone.utc))
 
     def test_linha_de_comando_com_um_banco_de_verdade(self):
         import subprocess
@@ -277,22 +334,70 @@ class TestEncadear(unittest.TestCase):
         disco = sqlite3.connect(arquivo)
         self.conn.backup(disco)
         disco.close()
-        self.execucao()                                    # (na memória: o arquivo ainda não tem a execução)
-        c = sqlite3.connect(arquivo)
-        c.execute("INSERT INTO execucoes (iniciada_em, paginas, bloqueios) VALUES ('2030-01-01T00:00:00+00:00', 3000, 0)")
-        c.commit()
-        c.close()
-        r = subprocess.run([sys.executable, str(PASTA / "encadear.py"), str(arquivo), "--desde", "2000-01-01T00:00:00+00:00"],
-                           capture_output=True, text=True)
-        self.assertEqual((r.returncode, r.stdout.strip()), (0, "sim"), r.stderr)
-        r = subprocess.run([sys.executable, str(PASTA / "encadear.py"), str(arquivo), "--desde", "2000-01-01T00:00:00+00:00",
-                            "--encadeadas", "5"], capture_output=True, text=True)
-        self.assertEqual(r.returncode, 10)
+        r = subprocess.run([sys.executable, str(PASTA / "proximo_ciclo.py"), str(arquivo), "--alvo", "vendidos-b",
+                            "--inicio-run", "2000-01-01T00:00:00+00:00"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        quando, motivo = r.stdout.splitlines()
+        self.assertTrue(datetime.fromisoformat(quando) > datetime.now(timezone.utc))
+        self.assertIn("ciclo", motivo)
 
-    def test_limite_de_execucoes_encadeadas(self):
-        self.execucao()
-        self.assertIsNone(encadear.decidir(self.conn, self.desde, encadeadas=encadear.MAX_ENCADEADAS - 1))
-        self.assertIn("seguidas", encadear.decidir(self.conn, self.desde, encadeadas=encadear.MAX_ENCADEADAS))
+
+class TestEspera(unittest.TestCase):
+    def test_dorme_ate_a_hora_e_dispara(self):
+        agora = datetime(2026, 10, 14, 10, 0, tzinfo=timezone.utc)
+        self.assertEqual(espera.plano(agora + timedelta(minutes=90), agora), ("disparar", 5400))
+        self.assertEqual(espera.plano(agora - timedelta(minutes=5), agora), ("disparar", 0))      # já passou da hora
+
+    def test_espera_longa_vira_saltos_que_se_reencadeiam(self):
+        agora = datetime(2026, 10, 14, 10, 0, tzinfo=timezone.utc)
+        quando = agora + timedelta(hours=24)
+        passos = 0
+        while True:
+            acao, dorme = espera.plano(quando, agora)
+            self.assertLessEqual(dorme, espera.SALTO_MAX_S)
+            self.assertLess(dorme, 6 * 3600)                                 # cabe num job do GitHub
+            agora += timedelta(seconds=dorme + 30)                           # + o tempo de disparar a espera seguinte
+            passos += 1
+            if acao == "disparar":
+                break
+        self.assertGreaterEqual(passos, 5)
+        self.assertLessEqual(passos, 6)
+        self.assertGreaterEqual(agora, quando)
+
+
+class TestVigia(unittest.TestCase):
+    AGORA = datetime(2026, 10, 14, 10, 0, tzinfo=timezone.utc)
+    ALVOS = ["vendidos", "vendidos-b", "vendidos-c"]
+
+    def run_(self, titulo, status="in_progress", minutos=300):
+        criada = (self.AGORA - timedelta(minutes=minutos)).isoformat().replace("+00:00", "Z")
+        return {"displayTitle": titulo, "status": status, "createdAt": criada}
+
+    def test_sequencia_com_execucao_em_andamento_ou_esperando_nao_e_reiniciada(self):
+        execs = [self.run_("varredura vendidos"), self.run_("espera vendidos-b até 2026-10-14T13:00:00+00:00", "queued"),
+                 self.run_("varredura vendidos-c", "completed", minutos=5)]
+        self.assertEqual(vigia.sem_anel(self.ALVOS, execs, self.AGORA), [])
+
+    def test_sequencia_sem_nada_em_andamento_e_reiniciada_sem_confundir_nomes_parecidos(self):
+        execs = [self.run_("varredura vendidos-b"), self.run_("varredura vendidos-c", "completed", minutos=300)]
+        self.assertEqual(vigia.sem_anel(self.ALVOS, execs, self.AGORA), ["vendidos", "vendidos-c"])
+
+    def test_execucao_das_tres_cobre_todas_e_execucao_recem_criada_ainda_vale(self):
+        self.assertEqual(vigia.sem_anel(self.ALVOS, [self.run_("varredura todas")], self.AGORA), [])
+        self.assertEqual(vigia.sem_anel(self.ALVOS, [self.run_("varredura todas", "completed")], self.AGORA), self.ALVOS)
+        self.assertEqual(vigia.sem_anel(["vendidos"], [self.run_("varredura vendidos", "completed", minutos=10)], self.AGORA), [])
+
+    def test_linha_de_comando(self):
+        import json
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as d:
+            arq = Path(d) / "r.json"
+            arq.write_text(json.dumps([{"displayTitle": "varredura vendidos", "status": "in_progress",
+                                        "createdAt": "2026-10-14T06:00:00Z"}]), encoding="utf-8")
+            r = subprocess.run([sys.executable, str(PASTA / "vigia.py"), str(arq), "--alvos", *self.ALVOS],
+                               capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["vendidos-b", "vendidos-c"]), r.stderr)
 
 
 if __name__ == "__main__":

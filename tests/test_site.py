@@ -126,6 +126,28 @@ class TestSite(unittest.TestCase):
         self.assertEqual([b[0] for b in destaques["baixa"]], ["B000000001"])     # e a queda aparece uma vez
         self.assertEqual(edicoes(self.d / "out")["B000000001"][1][2], 4000)
 
+    def test_varias_leituras_por_dia_oscilacao_no_mesmo_dia_nao_e_queda_nem_menor_registrado(self):
+        # R$ 50 por 20 dias; no último dia o preço foi a R$ 40 de manhã, voltou a R$ 50 à tarde e fechou em R$ 50
+        base = [("2026-10-01", "2026-10-20", 5000, None), ("2026-10-21", "2026-10-21", 4000, None), ("2026-10-21", "2026-10-21", 5000, None)]
+        # outro livro: R$ 50 por 20 dias; no último dia, R$ 50 → R$ 40 de manhã e continuou em R$ 40: queda de verdade
+        queda = [("2026-10-01", "2026-10-20", 5000, None), ("2026-10-21", "2026-10-21", 4000, None)]
+        banco(self.d / "a.db", [("B000000001", "Oscila", "Capa comum", base), ("B000000002", "Cai", "Capa comum", queda)])
+        site.construir([self.d / "a.db"], self.d / "out", Path(RAIZ) / "eventos.csv")
+        ed = edicoes(self.d / "out")
+        self.assertEqual([ed["B000000001"][1][2], ed["B000000001"][1][6]], [5000, 5000])     # o de R$ 40 de algumas horas não conta
+        self.assertEqual([ed["B000000002"][1][2], ed["B000000002"][1][6]], [4000, 4000])
+        destaques = json.loads((self.d / "out/dados/destaques.json").read_text(encoding="utf-8"))
+        self.assertEqual([b[0] for b in destaques["baixa"]], ["B000000002"])
+        self.assertEqual(site.queda([[1, 20, 5000, None], [21, 21, 4000, None], [21, 21, 5000, None]], 21), None)
+        self.assertEqual(site.queda([[1, 20, 5000, None], [21, 21, 4000, None]], 21), (5000, 21))
+
+    def test_meta_traz_ate_quando_os_precos_foram_lidos_pelo_banco_mais_atrasado(self):
+        banco(self.d / "a.db", [("B000000001", "Um", "Capa comum", [("2026-10-01", "2026-10-13", 5000, None)])])
+        banco(self.d / "b.db", [("B000000002", "Dois", "Capa comum", [("2026-10-01", "2026-10-12", 5000, None)])])
+        meta = site.construir([self.d / "a.db", self.d / "b.db"], self.d / "out", Path(RAIZ) / "eventos.csv")
+        self.assertEqual(meta["lido_ate"], "2026-10-12T12:00:00+00:00")        # o banco que parou antes
+        self.assertEqual(json.loads((self.d / "out/dados/meta.json").read_text(encoding="utf-8"))["lido_ate"], meta["lido_ate"])
+
     def test_detalhes_do_livro_vao_para_o_indice_e_o_historico(self):
         banco(self.d / "a.db", [("B000000001", "Livro Um", "Capa dura", [("2026-10-01", "2026-10-05", 5000, None)]),
                                 ("B000000002", "Livro Dois", "Kindle", [("2026-10-01", "2026-10-05", 900, None)])])
@@ -514,6 +536,22 @@ class TestSiteNoNavegador(unittest.TestCase):
                 else:
                     self.assertEqual(visiveis, 10)                                      # no celular a estante rola
                 pg.close()
+            b.close()
+
+    def test_pagina_como_funciona_mostra_ate_quando_os_precos_foram_lidos_e_o_preco_do_dia(self):
+        from playwright.sync_api import sync_playwright
+        base = self._servir([("A000000001", "Livro", "Capa comum", [("2026-10-01", "2026-10-09", 5000, None)])])
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            pg = b.new_page()
+            erros = []
+            pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.goto(f"{base}/?sobre")
+            pg.wait_for_selector(".prosa h1")
+            texto = pg.inner_text(".prosa")
+            self.assertRegex(texto, r"preços lidos até 09/10 às 09:00")          # 12:00 UTC, no horário de Brasília
+            self.assertIn("Preço de cada dia", texto)
+            self.assertEqual(erros, [])
             b.close()
 
     def test_genero_vistos_recentemente_e_preco_alvo(self):

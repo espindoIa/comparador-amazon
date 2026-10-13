@@ -6,8 +6,8 @@ nos meses anteriores, e a Amazon não mostra isso.
 
 São duas partes:
 
-- um coletor, que lê todo dia as páginas de mais vendidos de cada categoria de livros e anota o
-  preço de cada formato (capa comum, capa dura, Kindle, audiolivro);
+- um coletor, que lê as páginas de mais vendidos de cada gênero de livros várias vezes por dia (a meta é a
+  cada 3 horas) e anota o preço de cada formato (capa comum, capa dura, Kindle, audiolivro);
 - um site estático, que mostra quanto cada livro custa hoje e quanto já custou.
 
 Tudo roda no GitHub: o coletor no Actions, o banco nos arquivos de uma release e o site no Pages.
@@ -56,9 +56,9 @@ node tests/busca.test.js                 # só a busca
 A Amazon só mostra 75 páginas (1.200 livros) de cada lista de mais vendidos, mas cada faixa de
 preço tem a própria lista. Por isso cada um dos 29 gêneros de Livros é lido em 9 faixas de preço,
 até juntar 1.000 livros com preço em cada faixa. Isso cobre com folga os ~2.000 mais vendidos de
-cada gênero. São cerca de 13 mil páginas por passada completa (medido em 13/10: 13.795). O ranking geral de Livros
-não é lido: custava 675 páginas por passada (4,9%) para uns 565 livros que não estão em nenhum gênero (0,29% do
-catálogo).
+cada gênero. São cerca de 13 mil páginas por passada completa (medido em 13/10: 13.795), e cada passada é um ciclo (ver abaixo). O
+ranking geral de Livros não é lido: custava 675 páginas por passada (4,9%) para uns 565 livros que não estão em nenhum
+gênero (0,29% do catálogo).
 
 Algumas decisões que vieram de medir as páginas reais:
 
@@ -70,34 +70,71 @@ Algumas decisões que vieram de medir as páginas reais:
   para o card, então um formato secundário pode vir de outro vendedor. Medimos isso em cerca de
   1,5% dos itens.
 - O ritmo começa em 21 páginas por minuto e sobe aos poucos até o teto. O teto fica guardado no banco: começa em
-  60 e sobe 25% por dia de coleta limpa (sem bloqueio e quase sem página curta), até o limite de cada sequência
-  (60 programadas, uns 55 reais por minuto, no GitHub). Depois de um bloqueio ele cai e fica parado por 3 dias.
-  Quando a Amazon bloqueia ou devolve uma página com poucos resultados, o ritmo cai na hora. Para fixar o
-  teto, `--ritmo-max`; para mudar o limite da subida, `--teto-auto-max`.
+  60 e sobe 25% por dia de coleta limpa (sem bloqueio e quase sem página curta). No GitHub cada sequência fica
+  limitada a 45 programadas (uns 40 reais por minuto), abaixo dos 60 medidos sem bloqueio, porque o volume por dia é
+  bem maior. Depois de um bloqueio o teto cai e fica parado por 3 dias. Quando a Amazon bloqueia ou devolve uma página
+  com poucos resultados, o ritmo cai na hora. Para fixar o teto, `--ritmo-max`; para mudar o limite da subida,
+  `--teto-auto-max`.
 - A coleta roda em três sequências ao mesmo tempo, cada uma num servidor do GitHub e, portanto, com IP próprio.
   Os 29 gêneros estão divididos em três grupos de ~4,4 mil páginas (`PARTICOES_VENDIDOS`), e cada grupo tem o
-  seu banco e o seu teto. Pela conta (4,4 mil páginas a uns 55 por minuto), o dia fecha em cerca de 1h20 em vez de
-  uns 4h30, mas a Amazon passa a receber três vezes mais requisições por minuto do que recebia. Cada sequência lê no mesmo ritmo de antes e
-  o total de páginas por dia é o mesmo; o que encolhe é a janela. Não há rodízio de IP: um bloqueio não
-  troca de servidor nem de IP. Faz aquela sequência desacelerar e, se as falhas continuarem (3 seguidas), parar, e
-  baixa o teto guardado dela. As outras duas não ficam sabendo. Também não há disfarce de navegador nem resolução de captcha.
+  seu banco, o seu teto e o seu ciclo. Isso triplica as requisições por minuto que a Amazon recebe, em
+  comparação com uma sequência só.
+- **Ciclo**: o tempo entre duas passadas completas do catálogo. A meta é 3 horas (8 passadas por dia, cerca de 105
+  mil páginas por dia). O maior volume que se mediu sem bloqueio foi de 12,6 mil por dia (13/10), então o ciclo é um degrau
+  guardado no banco: começa em 12 horas, desce um degrau (12, 6, 3) por dia limpo e chega a 3 horas no terceiro
+  dia. Sobe um degrau a cada bloqueio, ou quando passa de 2 por mil o número de páginas curtas e erros (a limitação
+  costuma aparecer assim antes do bloqueio), ou quando uma janela acaba com fatias sem ler (a sequência não dá conta de
+  uma passada no tempo do ciclo), e vai direto ao ciclo diário depois de 3 bloqueios seguidos. Só desce quando o dia no
+  degrau passou sem nenhum sinal de alerta (mais de 0,5 falha leve por mil páginas) e depois de 3 dias de espera, se
+  o degrau subiu. Dentro da janela, as fatias são lidas das mais velhas para as mais novas, para uma sequência lenta
+  não repetir só as faixas baratas. Para fixar o ciclo, `--ciclo-horas`.
+  A janela de 3 horas é apertada: no ritmo de 45 programadas (uns 40 reais por minuto) cada sequência leva uns 110
+  minutos para ler as ~4,4 mil páginas dela, e sobram uns 70 de folga. Se a Amazon desacelerar a resposta ou o ritmo recuar,
+  a passada não cabe e o ciclo sobe sozinho para 6 horas: o piso real pode acabar sendo 6 horas.
+- **Depois de um bloqueio a coleta espera horas, não minutos**: 3 horas, dobrando a cada bloqueio seguido, até 24.
+  Cada execução do GitHub roda num servidor novo, com outro IP, então tentar de novo meia hora depois seria, na
+  prática, trocar de IP por causa do bloqueio. Não há rodízio de IP, disfarce de navegador nem resolução de captcha.
+  Durante a pausa nenhuma execução pede nada à Amazon, nem a que o vigia reinicia (`--ignorar-pausa` existe, para
+  quem roda à mão). As três sequências não trocam sinais: um bloqueio pausa só a sequência que o recebeu.
 - Uma página com resultado ralo, mesmo com HTTP 200, conta como falha e é lida de novo.
-- O histórico guarda intervalos ("R$ 39,90 de 2 a 15 de outubro"). Ele só cresce quando o preço muda.
+- O histórico guarda intervalos ("R$ 39,90 de 2 a 15 de outubro"). Ele só cresce quando o preço muda, e com leituras
+  de 3 em 3 horas muda mais vezes (estimativa a partir de 13% de preços mudando por dia e de até 30% com as oscilações: de 1,5 a 4 MB por dia no banco, antes de compactar). O site mostra um preço
+  por dia, o último lido nele: uma oscilação de poucas horas não vira "queda" nem "menor preço registrado".
 
 Cada card também traz nota, número de avaliações, autor, capa, data e idioma. As avaliações
 ordenam a busca e decidem quais livros vêm primeiro no índice do site.
 
 ## Agendamento e cópias
 
-`varredura.yml` roda às 00:41, 06:41, 12:41 e 18:41 (horário de Brasília), com 165 minutos de coleta por
-execução. O GitHub atrasa as execuções agendadas em horas, então nada depende do horário: cada execução
-continua de onde a anterior parou, e uma que atravessa a meia-noite recomeça as passadas em andamento,
-porque os preços de um dia precisam ser lidos no dia.
+O cron do GitHub atrasa em horas, então a coleta não depende dele. Ao fim de cada execução, `varredura.yml` marca o
+instante da próxima leitura (`scripts/proximo_ciclo.py`) e dispara `espera.yml`, que dorme até lá em saltos de ~5 horas
+(um job vive no máximo 6) e dispara `varredura.yml` de novo: é um anel por sequência, e o grupo de concorrência
+cancela uma espera quando outra chega, então não há dois anéis. A próxima leitura é:
 
-Uma sequência que termina limpa com o dia incompleto dispara a próxima, só dela (`scripts/encadear.py`, até 5
-seguidas), depois de confirmar a publicação do banco. Assim o dia fecha sem esperar o horário agendado. Depois
-de um bloqueio, de um aviso de layout ou de uma execução curta, ela não encadeia, e quem continua é o
-próximo horário. Os horários agendados terminam em segundos quando o dia já está completo.
+- agora, se a janela do ciclo não fechou e a execução terminou limpa depois de ler pelo menos 500 páginas (o orçamento
+  de 165 minutos acabou);
+- senão, o início da janela seguinte, com 10 minutos de defasagem por sequência e um sorteio de até 10 minutos, para
+  as três não baterem juntas;
+- nunca antes do fim da pausa que segue um bloqueio, nem menos de 10 minutos depois do começo da execução;
+- se a publicação do banco falhou (por exemplo, a trava de preços recusou), pelo menos 3 horas depois: o que foi lido se
+  perdeu, e ler de novo logo só repetiria o pedido à Amazon.
+
+As janelas partem da meia-noite de Brasília (com ciclo de 3 horas: 00:00, 03:00, 06:00...). Uma fatia só conta como lida
+na janela se a passada dela começou e terminou nela; uma que atravessa o fim da janela recomeça, porque o preço de um
+ciclo precisa ser lido no ciclo. O dia fecha quando cada fatia teve uma passada completa dentro dele.
+
+Como o anel depende do disparo de workflows pelo próprio workflow (`gh workflow run` com o token do GitHub, que a
+documentação diz que funciona para `workflow_dispatch`), `varredura.yml` mantém um cron diário (00:41 de Brasília) como
+rede de segurança: se o anel não funcionar, é a coleta diária de antes.
+
+`vigia.yml` roda a cada 30 minutos e reinicia uma sequência que ficou sem execução em andamento nem criada há pouco (um
+job cancelado, um disparo que não saiu). Para começar a coleta pela primeira vez, ou depois de pará-la, basta rodá-lo à
+mão. A variável de repositório `COLETA_PAUSADA=true` desliga o anel e o vigia.
+
+Depois de cada publicação confirmada, `varredura.yml` pede o site a `site.yml`. Em horas de servidor do GitHub, a
+coleta passa de umas 4 por dia para umas 45 lendo quando o ciclo chega a 3 horas (3 sequências × 8 passadas × ~110
+minutos), mais os jobs de espera, que ficam dormindo entre uma leitura e outra: com o anel inteiro, há quase sempre um
+job vivo por sequência.
 
 Cada sequência tem o seu banco na release `catalogo`: `catalogo-vendidos-<data>.db.gz`,
 `catalogo-vendidos-b-<data>.db.gz` e `catalogo-vendidos-c-<data>.db.gz`. O site junta os três pelo ASIN. O
@@ -111,14 +148,18 @@ estiver quebrada, usando a anterior) e confere no GitHub o tamanho do que foi en
 cópias mais recentes e a última de cada um dos 30 dias anteriores.
 
 Se o navegador ou a página cair no meio da coleta, o cliente abre outro e a execução continua. Bloqueio
-continua parando a execução, como antes.
+continua parando a execução (depois de 3 lotes seguidos com falha).
 
 Avisos por e-mail (falha do workflow):
 
-- o dia anterior ficou incompleto;
+- o dia anterior ficou incompleto (verificado na primeira execução do dia);
+- alguma fatia está sem passada completa há mais de 2 ciclos e 2 horas (`catalogo --exigir-frescor`): a coleta parou ou
+  não dá conta do ciclo;
 - os cards pararam de trazer capa e autor, o que costuma indicar que a Amazon mudou o layout.
 
-`site.yml` gera o site depois de cada coleta. Ele se recusa a publicar se o site novo tiver menos de
+`catalogo` mostra o frescor: o ciclo atual, a idade da passada completa mais velha e se há pausa em vigor.
+
+`site.yml` gera o site com os bancos mais recentes. Ele se recusa a publicar se o site novo tiver menos de
 70% dos livros do site no ar. Para publicar mesmo assim, rode-o à mão com a opção `forcar`.
 
 Para ativar o site, uma vez só: *Settings → Pages → Source: GitHub Actions*.
@@ -158,8 +199,14 @@ antes da data e leva um aviso em todas as páginas.
 - O preço de capa só aparece quando há desconto.
 - Ler as páginas da Amazon por programa vai contra os termos de uso dela. A coleta espaça as
   requisições, desacelera ou para quando é bloqueada, e não tenta contornar bloqueios. Ler em três servidores
-  ao mesmo tempo triplica a carga em cada instante, e foi uma escolha de quem mantém este repositório. Para ler uma
-  sequência de cada vez, dispare `varredura.yml` à mão com a opção `alvo`.
-- O GitHub Actions é feito para o software do próprio repositório, e horas diárias de coleta
-  podem ser vistas como uso indevido. O mesmo comando roda em qualquer máquina com `cron`.
+  ao mesmo tempo triplica a carga em cada instante, e uma passada a cada 3 horas multiplica por oito o volume
+  por dia que se mediu. Foram escolhas de quem mantém este repositório. Não há garantia de que não haverá
+  bloqueios: o que há é uma rampa de 3 dias, pausa de horas e ciclo mais longo quando eles aparecem. Para ler uma
+  sequência de cada vez, dispare `varredura.yml` à mão com a opção `alvo`; para parar, `COLETA_PAUSADA=true`.
+- O GitHub Actions é feito para o software do próprio repositório, e umas 45 horas diárias de servidor lendo (fora as de espera)
+  podem ser vistas como uso indevido. O mesmo comando roda em qualquer máquina
+  com `cron`.
+- A frescura dos preços é a do ciclo, não a de cada segundo: com ciclo de 3 horas, um preço pode ter até umas 3 horas
+  (mais a duração da passada) quando o site o mostra. Livros que a Amazon deixa de listar nos mais vendidos deixam de ser
+  lidos.
 - `data/` não vai para o git.

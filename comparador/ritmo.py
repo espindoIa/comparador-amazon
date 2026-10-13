@@ -148,3 +148,102 @@ def aprender(config: dict, hoje: str, ritmo: "Ritmo", teto_inicial: float, pagin
 def _somar_dias(dia: str, n: int) -> str:
     from datetime import date, timedelta
     return (date.fromisoformat(dia) + timedelta(days=n)).isoformat()
+
+
+# ---------- frequência das passadas (ciclo) ----------
+# Quantas vezes por dia o catálogo inteiro é lido. O objetivo é CICLOS[0] (uma passada a cada 3 h, 8 por dia, ~105 mil
+# páginas por dia no total), mas nunca se mediu esse volume: o mais alto sem bloqueio foi 12,6 mil páginas por dia. Por
+# isso o ciclo é um degrau que se guarda no banco, como o teto de ritmo: começa em CICLO_INICIAL e desce UM degrau por dia
+# limpo (12 → 6 → 3 h), sobe um degrau a cada bloqueio ou sinal de aperto e, depois de bloqueios seguidos, volta ao diário.
+#
+# Depois de um bloqueio a pausa é de HORAS, nunca de minutos: cada execução cai num servidor novo do GitHub, com outro IP,
+# então tentar de novo meia hora depois seria, na prática, trocar de IP por causa do bloqueio. A pausa dura pelo menos
+# PAUSA_BASE_H (o ciclo mínimo) e dobra a cada bloqueio seguido; junto com ela o ciclo sobe, que é o que reduz o volume.
+CICLOS = (3, 6, 12, 24)
+CICLO_INICIAL = 12
+PAUSA_BASE_H = 3
+PAUSA_MAX_H = 24
+BLOQUEIOS_PARA_DIARIO = 3        # bloqueios seguidos que levam direto ao ciclo de 24 h
+LEVES_POR_MIL_RUIM = 2.0         # acima disto (páginas curtas e erros por mil) o ciclo sobe: a limitação costuma aparecer assim antes do bloqueio
+
+
+def _numero(config: dict, chave: str, padrao: int) -> int:
+    try:
+        return int(config[chave])
+    except (KeyError, ValueError):
+        return padrao
+
+
+def ciclo_guardado(config: dict) -> int:
+    """Horas entre passadas completas, a partir de `config` (chave -> texto); sem valor válido, CICLO_INICIAL."""
+    c = _numero(config, "ciclo_horas", CICLO_INICIAL)
+    return c if c in CICLOS else CICLO_INICIAL
+
+
+def pausa_ate(config: dict):
+    """Instante (aware) até o qual não se lê depois de um bloqueio, ou None."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(config["ritmo_pausa_ate"])
+    except (KeyError, ValueError):
+        return None
+
+
+def saude(paginas: int, bloqueios: int, leves: int) -> str:
+    """"ruim" (bloqueio ou aperto), "limpa" (evidência suficiente e quase nenhuma falha), "alerta" (evidência suficiente e
+    mais falhas que o limpo, menos que o ruim) ou "neutra" (pouca evidência)."""
+    if bloqueios or (paginas >= PAGINAS_MIN_EVIDENCIA // 2 and leves * 1000 > LEVES_POR_MIL_RUIM * paginas):
+        return "ruim"
+    if paginas >= PAGINAS_MIN_EVIDENCIA:
+        return "limpa" if leves * 1000 <= FALHAS_LEVES_POR_MIL * paginas else "alerta"
+    return "neutra"
+
+
+def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int, interrompida: bool,
+                   completou: bool, estourou: bool = False) -> dict:
+    """Novos valores de config para o ciclo e a pausa depois de uma execução. `agora`: datetime com fuso. Só devolve o
+    que mudou.
+
+    - bloqueio: o ciclo sobe um degrau (ao diário depois de BLOQUEIOS_PARA_DIARIO seguidos), o degrau fica parado por
+      DIAS_DE_ESPERA dias e a pausa é de PAUSA_BASE_H horas, dobrando a cada bloqueio seguido, até PAUSA_MAX_H;
+    - falhas seguidas sem bloqueio (execução interrompida): só a pausa de PAUSA_BASE_H horas;
+    - aperto (muitas páginas curtas) ou janela que acabou com fatias sem ler (`estourou`: a sequência não dá conta de
+      uma passada no tempo do ciclo): o ciclo sobe um degrau e fica parado, sem pausa;
+    - alerta (mais falhas leves que o limpo, menos que o aperto): o ciclo fica onde está e o dia no degrau recomeça;
+    - passada completa e limpa, depois de um dia inteiro no degrau e do fim da espera: o ciclo desce um degrau.
+    """
+    from datetime import timedelta
+    from .db import BRASILIA
+    hoje = agora.astimezone(BRASILIA).date().isoformat()
+    ciclo = ciclo_guardado(config)
+    nivel = CICLOS.index(ciclo)
+    seguidos = _numero(config, "bloqueios_seguidos", 0)
+    novo: dict = {}
+    if "ciclo_horas" not in config:
+        novo["ciclo_horas"] = str(ciclo)
+    if "ciclo_desde" not in config:
+        novo["ciclo_desde"] = hoje
+    if bloqueios:
+        seguidos += 1
+        novo["bloqueios_seguidos"] = str(seguidos)
+        horas = min(PAUSA_MAX_H, PAUSA_BASE_H * 2 ** (seguidos - 1))
+        novo["ritmo_pausa_ate"] = (agora + timedelta(hours=horas)).isoformat(timespec="seconds")
+    elif interrompida:
+        novo["ritmo_pausa_ate"] = (agora + timedelta(hours=PAUSA_BASE_H)).isoformat(timespec="seconds")
+    situacao = saude(paginas, bloqueios, leves)
+    if situacao == "ruim" or estourou:
+        degrau = len(CICLOS) - 1 if seguidos >= BLOQUEIOS_PARA_DIARIO else min(nivel + 1, len(CICLOS) - 1)
+        if degrau != nivel:
+            novo["ciclo_horas"] = str(CICLOS[degrau])
+            novo["ciclo_desde"] = hoje
+        novo["ciclo_espera_ate"] = _somar_dias(hoje, DIAS_DE_ESPERA)
+    elif situacao == "alerta":
+        novo["ciclo_desde"] = hoje
+    elif completou and situacao == "limpa":
+        if seguidos:
+            novo["bloqueios_seguidos"] = "0"
+        desde = novo.get("ciclo_desde", config.get("ciclo_desde", hoje))
+        if nivel > 0 and desde < hoje and config.get("ciclo_espera_ate", "") <= hoje:
+            novo["ciclo_horas"] = str(CICLOS[nivel - 1])
+            novo["ciclo_desde"] = hoje
+    return novo

@@ -1,15 +1,13 @@
 # Publica o site (busca por título, histórico de cada livro e lista de desejos) no GitHub Pages.
 # Os dados vêm dos bancos mais recentes na release "catalogo": um por sequência de coleta (vendidos,
-# vendidos-b e vendidos-c), que o site junta pelo ASIN. Roda depois de cada varredura e
-# uma vez por dia, para o site nunca ficar muito atrás dos preços.
+# vendidos-b e vendidos-c), que o site junta pelo ASIN. É disparado por varredura.yml depois de cada publicação confirmada
+# (um pedido explícito, em vez de esperar o gatilho workflow_run) e roda também uma vez por dia, para o site nunca ficar
+# muito atrás dos preços. O grupo de concorrência "pages" junta pedidos repetidos: no máximo um está esperando.
 #
 # Configuração, uma vez só: Settings → Pages → Build and deployment → Source: "GitHub Actions".
 name: site
 
 on:
-  workflow_run:
-    workflows: [varredura]
-    types: [completed]
   schedule:
     - cron: "17 10 * * *"     # 07:17 em Brasília
   workflow_dispatch:

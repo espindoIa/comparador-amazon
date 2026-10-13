@@ -1,6 +1,7 @@
 """Testes do controlador de ritmo da coleta. Rodar: python -m unittest discover -s tests"""
 
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from comparador import ritmo as r
 from comparador.ritmo import Ritmo
@@ -177,6 +178,104 @@ class TestTetoQueSeAjusta(unittest.TestCase):
         x.falha(grave=True)
         n = r.aprender({}, "2026-10-13", x, 60.0, 3000, 1, 0, 60.0)
         self.assertEqual((n["ritmo_teto"], n["ritmo_espera_ate"], n["ritmo_ultimo_limpo"]), ("42.0", "2026-10-16", ""))
+
+
+class TestCiclo(unittest.TestCase):
+    """O ciclo (horas entre passadas completas) é um degrau guardado no banco: rampa para baixo, recuo para cima."""
+
+    def t(self, dia, hora=12):
+        return datetime(2026, 10, dia, hora, 0, tzinfo=timezone.utc)
+
+    def aprende(self, cfg, dia, **kw):
+        a = dict(paginas=3000, bloqueios=0, leves=1, interrompida=False, completou=True)
+        a.update(kw)
+        novo = r.aprender_ciclo(cfg, self.t(dia), a["paginas"], a["bloqueios"], a["leves"], a["interrompida"], a["completou"])
+        return {**cfg, **novo}, novo
+
+    def test_sem_nada_guardado_comeca_em_12_h_e_valor_invalido_tambem(self):
+        self.assertEqual(r.ciclo_guardado({}), 12)
+        self.assertEqual((r.ciclo_guardado({"ciclo_horas": "lixo"}), r.ciclo_guardado({"ciclo_horas": "5"})), (12, 12))
+        self.assertEqual(r.ciclo_guardado({"ciclo_horas": "3"}), 3)
+
+    def test_saude_da_execucao(self):
+        self.assertEqual(r.saude(3000, 0, 1), "limpa")
+        self.assertEqual(r.saude(3000, 0, 4), "alerta")            # 1,3 por mil: mais que o limpo, menos que o aperto
+        self.assertEqual(r.saude(3000, 0, 7), "ruim")              # 2,3 por mil: aperto
+        self.assertEqual(r.saude(300, 1, 0), "ruim")               # bloqueio, com qualquer número de páginas
+        self.assertEqual(r.saude(500, 0, 0), "neutra")             # pouca evidência
+        self.assertEqual(r.saude(1200, 0, 5), "ruim")              # com metade da evidência, o aperto já conta
+
+    def test_rampa_desce_um_degrau_por_dia_limpo_ate_3_h(self):
+        cfg, novo = self.aprende({}, 14)                           # 1ª execução: só guarda o ponto de partida
+        self.assertEqual((cfg["ciclo_horas"], cfg["ciclo_desde"]), ("12", "2026-10-14"))
+        cfg, novo = self.aprende(cfg, 14)                          # mesmo dia: segura
+        self.assertNotIn("ciclo_horas", novo)
+        cfg, novo = self.aprende(cfg, 15)                          # um dia inteiro limpo em 12 h: desce
+        self.assertEqual((novo["ciclo_horas"], novo["ciclo_desde"]), ("6", "2026-10-15"))
+        cfg, novo = self.aprende(cfg, 15)                          # no mesmo dia não desce de novo
+        self.assertNotIn("ciclo_horas", novo)
+        cfg, novo = self.aprende(cfg, 16)
+        self.assertEqual(novo["ciclo_horas"], "3")
+        cfg, novo = self.aprende(cfg, 17)                          # 3 h é o piso
+        self.assertNotIn("ciclo_horas", novo)
+
+    def test_so_desce_com_passada_completa_e_limpa(self):
+        cfg = {"ciclo_horas": "12", "ciclo_desde": "2026-10-14"}
+        self.assertNotIn("ciclo_horas", self.aprende(cfg, 15, completou=False)[1])
+        self.assertNotIn("ciclo_horas", self.aprende(cfg, 15, leves=4)[1])           # neutra
+        self.assertNotIn("ciclo_horas", self.aprende(cfg, 15, paginas=1500, leves=0)[1])   # pouca evidência
+
+    def test_alerta_recomeca_o_dia_no_degrau_e_janela_estourada_sobe_o_ciclo(self):
+        cfg = {"ciclo_horas": "6", "ciclo_desde": "2026-10-14"}
+        _, novo = self.aprende(cfg, 15, leves=4)                           # manhã com sinal de alerta: não desce e recomeça o dia
+        self.assertEqual(novo, {"ciclo_desde": "2026-10-15"})
+        cfg2 = {**cfg, **novo}
+        self.assertNotIn("ciclo_horas", self.aprende(cfg2, 15)[1])         # e a passada limpa da tarde não desce no mesmo dia
+        self.assertEqual(self.aprende(cfg2, 16)[1]["ciclo_horas"], "3")    # no dia seguinte, limpo, desce
+        # a sequência não deu conta da passada no tempo do ciclo: sobe um degrau, sem pausa, e segura a descida
+        novo = r.aprender_ciclo(cfg, self.t(15), 3000, 0, 0, False, False, True)
+        self.assertEqual((novo["ciclo_horas"], novo["ciclo_espera_ate"]), ("12", "2026-10-18"))
+        self.assertNotIn("ritmo_pausa_ate", novo)
+
+    def test_bloqueio_sobe_um_degrau_segura_e_pausa_por_horas_dobrando(self):
+        cfg = {"ciclo_horas": "3", "ciclo_desde": "2026-10-10"}
+        cfg, novo = self.aprende(cfg, 15, paginas=800, bloqueios=2, completou=False)
+        self.assertEqual((novo["ciclo_horas"], novo["bloqueios_seguidos"], novo["ciclo_espera_ate"]), ("6", "1", "2026-10-18"))
+        self.assertEqual(r.pausa_ate(cfg), self.t(15, 15))                                # 3 h
+        cfg, novo = self.aprende(cfg, 15, paginas=400, bloqueios=1, completou=False)
+        self.assertEqual((novo["ciclo_horas"], r.pausa_ate(cfg)), ("12", self.t(15, 18)))  # 6 h
+        cfg, novo = self.aprende(cfg, 15, paginas=400, bloqueios=1, completou=False)
+        self.assertEqual((novo["ciclo_horas"], novo["bloqueios_seguidos"], r.pausa_ate(cfg)),
+                         ("24", "3", self.t(16, 0)))                                      # 12 h, e direto ao diário
+        for _ in range(3):
+            cfg, novo = self.aprende(cfg, 15, paginas=400, bloqueios=1, completou=False)
+        self.assertEqual(r.pausa_ate(cfg), self.t(15, 12) + timedelta(hours=r.PAUSA_MAX_H))   # nunca passa de 24 h
+        self.assertEqual(cfg["ciclo_horas"], "24")
+
+    def test_tres_bloqueios_seguidos_vao_direto_ao_diario_mesmo_vindo_de_3_h(self):
+        cfg = {"ciclo_horas": "3", "ciclo_desde": "2026-10-10", "bloqueios_seguidos": "2"}
+        self.assertEqual(self.aprende(cfg, 15, paginas=100, bloqueios=1, completou=False)[1]["ciclo_horas"], "24")
+
+    def test_execucao_limpa_zera_os_bloqueios_seguidos_mas_a_subida_espera_a_pausa_de_3_dias(self):
+        cfg = {"ciclo_horas": "24", "ciclo_desde": "2026-10-15", "bloqueios_seguidos": "2", "ciclo_espera_ate": "2026-10-18"}
+        cfg, novo = self.aprende(cfg, 16)
+        self.assertEqual(novo, {"bloqueios_seguidos": "0"})                               # ainda esperando
+        self.assertEqual(self.aprende(cfg, 17)[1], {})
+        self.assertEqual(self.aprende(cfg, 18)[1]["ciclo_horas"], "12")                  # acabou a espera: desce um degrau
+
+    def test_aperto_sobe_o_ciclo_sem_pausa_e_execucao_interrompida_so_pausa(self):
+        cfg = {"ciclo_horas": "6", "ciclo_desde": "2026-10-10"}
+        cfg2, novo = self.aprende(cfg, 15, leves=9)
+        self.assertEqual(novo["ciclo_horas"], "12")
+        self.assertNotIn("ritmo_pausa_ate", novo)
+        self.assertNotIn("bloqueios_seguidos", novo)
+        cfg3, novo = self.aprende(cfg, 15, paginas=900, interrompida=True, completou=False)
+        self.assertNotIn("ciclo_horas", novo)
+        self.assertEqual(r.pausa_ate(cfg3), self.t(15, 15))
+
+    def test_ritmo_pausa_ate_invalido_ou_ausente(self):
+        self.assertIsNone(r.pausa_ate({}))
+        self.assertIsNone(r.pausa_ate({"ritmo_pausa_ate": "ontem"}))
 
 
 if __name__ == "__main__":

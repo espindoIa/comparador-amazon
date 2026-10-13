@@ -428,6 +428,18 @@ class TestMaisVendidos(unittest.TestCase):
         varredura.semear_vendidos(self.conn, ["1", "2"])
         self.assertEqual(ativos(), {"1", "2"})
 
+    def test_fatias_que_nunca_foram_lidas_ou_estao_ha_mais_tempo_sem_passada_vem_primeiro(self):
+        varredura.criar_schema(self.conn)
+        varredura.semear_vendidos(self.conn, ["1"])                            # 3 faixas de teste
+        self.conn.execute("UPDATE fatias SET ultima_passada = '2026-10-14T01:00:00+00:00' WHERE preco_min = 0")
+        self.conn.execute("UPDATE fatias SET ultima_passada = '2026-10-14T00:30:00+00:00' WHERE preco_min = 4000")
+        # a faixa mais cara nunca foi lida: vem antes; depois, a de passada mais velha, e não a mais barata
+        ordem = [f.preco_min for f in varredura.proximas_fatias(self.conn, varredura.GRUPO_VENDIDOS, "2026-10-14T03:00:00+00:00", 3)]
+        self.assertEqual(ordem, [8000, 4000, 0])
+        # passada em andamento continua na frente de tudo
+        self.conn.execute("UPDATE fatias SET proxima_pagina = 3 WHERE preco_min = 0")
+        self.assertEqual(varredura.proxima_fatia(self.conn, varredura.GRUPO_VENDIDOS, "2026-10-14T03:00:00+00:00").preco_min, 0)
+
     def test_o_ranking_geral_nao_entra_na_leitura_padrao_mas_entra_se_pedido(self):
         varredura.criar_schema(self.conn)
         varredura.semear_vendidos(self.conn, [varredura.NO_LIVROS])        # banco antigo: lia o ranking geral

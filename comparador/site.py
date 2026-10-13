@@ -51,6 +51,7 @@ JANELA = 90            # dias do "preço mais comum" (mesma janela de livro.js)
 MIN_DIAS_COMUM = 14    # com menos dias de coleta na janela, o preço mais comum não é mostrado
 QUEDA_MIN = 0.05       # "baixaram de preço": queda de pelo menos 5%...
 QUEDA_DIAS = 2         # ...que começou na última coleta ou na anterior
+JANELA_QUEDA = 30      # dias para trás que a comparação de queda olha
 MAX_BAIXA = 60         # por família (físico, Kindle, audiolivro): sem isso, as ofertas do dia do Kindle tomam tudo
 MAX_MENOR = 60
 SUMIR_DIAS = 14        # sem aparecer há tantos dias: sai da busca (continua na lista de quem salvou)
@@ -82,13 +83,26 @@ def familia(formato: str | None) -> str | None:
     return "f"
 
 
-def por_dia(trechos: list[list]) -> dict[int, int]:
-    """Preço de cada dia com coleta (o mesmo que porDia em livro.js)."""
+def por_dia(trechos: list[list], desde: int | None = None) -> dict[int, int]:
+    """Preço de cada dia com coleta (o mesmo que porDia em livro.js): o último lido no dia, se o preço mudou mais de
+    uma vez nele. `desde`: só os dias a partir deste."""
     m: dict[int, int] = {}
     for t in trechos:
-        for d in range(t[0], t[1] + 1):
+        for d in range(t[0] if desde is None else max(t[0], desde), t[1] + 1):
             m[d] = t[2]
     return m
+
+
+def _trechos_do_dia(trechos: list[list], desde: int) -> list[list]:
+    """Os trechos como o site os mostra: um preço por dia, com os dias seguidos de mesmo preço juntos."""
+    dias = por_dia(trechos, desde)
+    out: list[list] = []
+    for d in sorted(dias):
+        if out and out[-1][2] == dias[d] and d - out[-1][1] <= BURACO:
+            out[-1][1] = d
+        else:
+            out.append([d, d, dias[d]])
+    return out
 
 
 def mais_comum(trechos: list[list], ate: int) -> int | None:
@@ -98,7 +112,10 @@ def mais_comum(trechos: list[list], ate: int) -> int | None:
 
 
 def queda(trechos: list[list], hoje: int) -> tuple[int, int] | None:
-    """(preço anterior, dia da mudança) se o preço atual é uma queda recente; senão None."""
+    """(preço anterior, dia da mudança) se o preço de hoje é uma queda recente em relação ao dia anterior; senão None.
+    Compara preços por dia (o último lido em cada um): com várias leituras por dia, uma oscilação dentro do mesmo dia
+    (R$ 40 → R$ 50 → R$ 40) não é queda."""
+    trechos = _trechos_do_dia(trechos, hoje - JANELA_QUEDA)
     if len(trechos) < 2:
         return None
     ant, atual = trechos[-2], trechos[-1]
@@ -230,6 +247,16 @@ AUTORES_GENERICOS = frozenset({"", "nao informado", "varios autores", "diversos"
                                "desconhecido", "various", "various authors", "anonimo"})
 
 
+def ultima_leitura(caminho: Path) -> str | None:
+    """Instante (ISO) da leitura mais recente do banco. O site mostra a mais antiga entre os bancos: todos os grupos
+    de gêneros foram lidos pelo menos até ali."""
+    conn = sqlite3.connect(f"file:{caminho}?mode=ro", uri=True)
+    try:
+        return conn.execute("SELECT MAX(ultimo_visto) FROM catalogo").fetchone()[0]
+    finally:
+        conn.close()
+
+
 def ler_banco(caminho: Path, livros: dict[str, dict]) -> str:
     """Soma os livros de um banco em `livros`. Devolve o aviso do banco (vazio se não houver)."""
     conn = sqlite3.connect(f"file:{caminho}?mode=ro", uri=True)
@@ -267,10 +294,12 @@ def ler_banco(caminho: Path, livros: dict[str, dict]) -> str:
 
 
 def menor_registrado(trechos: list[list]) -> int | None:
-    """Menor preço já registrado, se o livro tem pelo menos MIN_DIAS_COMUM dias de coleta; senão None."""
-    if len(por_dia(trechos)) < MIN_DIAS_COMUM:
+    """Menor preço já registrado (o do fim de cada dia, como no gráfico), se o livro tem pelo menos MIN_DIAS_COMUM dias
+    de coleta; senão None."""
+    dias = por_dia(trechos)
+    if len(dias) < MIN_DIAS_COMUM:
         return None
-    return min(t[2] for t in trechos)
+    return min(dias.values())
 
 
 class Tabela:
@@ -446,6 +475,7 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None) -> d
 
     meta = {"gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "itens": sum(len(o["eds"]) for o in obras), "obras": len(obras), "ultima_coleta": hoje,
+            "lido_ate": min((u for u in (ultima_leitura(Path(b)) for b in bancos) if u), default=None),
             "aviso": " / ".join(dict.fromkeys(avisos))}
     (saida / "dados" / "meta.json").write_text(_json(meta), encoding="utf-8")
     (saida / "dados" / "eventos.json").write_text(_json(ler_eventos(eventos) if eventos else []), encoding="utf-8")
