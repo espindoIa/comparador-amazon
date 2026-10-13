@@ -410,7 +410,7 @@ class TestFolhaDeEstilo(unittest.TestCase):
         return set(re.findall(r"(--[a-z0-9]+):", bloco))
 
     def test_toda_cor_do_tema_claro_e_redefinida_no_escuro(self):
-        cores = {t for t in self.tokens(self.claro) if t not in ("--r2", "--r3", "--f", "--serif")}
+        cores = {t for t in self.tokens(self.claro) if not t.startswith(("--fs-", "--r")) and t not in ("--f", "--serif")}
         self.assertEqual(cores - self.tokens(self.escuro), set(), "token de cor sem versão escura")
 
     def test_todo_var_usado_existe_e_todo_token_definido_e_usado(self):
@@ -441,6 +441,24 @@ class TestFolhaDeEstilo(unittest.TestCase):
         for regra in re.findall(r"(?:^|\})\s*([^{}@]*:hover[^{}]*)\{", "".join(fora)):
             self.fail(f"regra de :hover fora de @media(hover:hover): {regra.strip()}")
         self.assertIn("@media(hover:hover){", self.css)
+
+    def test_tamanho_de_fonte_e_raio_vem_da_escala(self):
+        sem_capa = "\n".join(l for l in self.css.splitlines() if ".cv.ph span" not in l and ".cv.p.ph span" not in l)
+        self.assertEqual(re.findall(r"font-size:[\d.]+px", sem_capa), [], "font-size em px fora da escala (--fs-N)")
+        self.assertEqual(re.findall(r"font:[^;}]*[\d.]px", sem_capa), [], "font: com px fora da escala (--fs-N)")
+        raios = [r for r in re.findall(r"border-radius:\d+px(?=[;}])", self.css) if r != "border-radius:999px"]       # 999px = pílula
+        self.assertEqual(raios, [], "raio em px fora dos tokens --r0..--r3")
+        passos = self.re_tokens("--fs-")
+        self.assertEqual(len(passos), 12)                                       # eram 27 tamanhos soltos
+        self.assertEqual(passos, sorted(passos))                                # a escala só cresce
+
+    def re_tokens(self, prefixo):
+        return [int(v) for v in re.findall(prefixo + r"\d+:(\d+)px", self.claro)]
+
+    def test_estilos_inline_dos_modelos_nao_escrevem_tamanho_de_fonte_em_px(self):
+        for nome in ("app.js", "livro.js", "lista.js", "busca.js"):
+            texto = (site.WEB / nome).read_text(encoding="utf-8")
+            self.assertEqual(re.findall(r"style=\\?[\"'][^\"']*font-size:\d+px", texto), [], nome)
 
     def test_botao_ao_lado_de_campo_tem_a_altura_do_campo_no_toque(self):
         toque = self.css[self.css.index("@media(pointer:coarse){"):].split("\n}", 1)[0]

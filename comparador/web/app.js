@@ -617,7 +617,7 @@
     META.then(function (m) {
       if (rotaAtual.v !== 'sobre') return;
       app.innerHTML = '<article class="prosa"><h1>Como funciona</h1>' +
-        '<p class="mu" style="font-size:17px;margin-top:10px">Preços dos livros mais vendidos da Amazon.com.br, lidos todo dia' +
+        '<p class="mu" style="font-size:var(--fs-6);margin-top:10px">Preços dos livros mais vendidos da Amazon.com.br, lidos todo dia' +
         (m.lido_ate ? ' (preços lidos até ' + leitura(m.lido_ate) + ')' : m.ultima_coleta ? ' (última leitura em ' + L.dl(m.ultima_coleta) + ')' : '') +
         '. O site mostra os números; a decisão é sua.</p>' +
         '<h2>Os números</h2><dl>' +
