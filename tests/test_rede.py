@@ -13,6 +13,7 @@ import unittest
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 from comparador import cliente_http, db, rede
 from comparador.rede import parece_bloqueio, parse_preco
@@ -158,6 +159,61 @@ class TestBaixarLote(unittest.TestCase):
 
         saida = rede.baixar_lote(Quebrada(), ["a", "b"], [0.0, 1.0])
         self.assertEqual([e.status for _, _, e in saida], ["erro_http", "erro_http"])
+
+
+class TestEscolhaDoCliente(unittest.TestCase):
+    """`--cliente auto` só usa o navegador: sem ele, para dizendo por quê, em vez de cair em silêncio no curl ou no requests."""
+
+    def test_auto_sem_o_modulo_playwright_para_e_diz_como_contornar(self):
+        with mock.patch.object(cliente_http, "_playwright_instalado", return_value=False), \
+                mock.patch.object(cliente_http, "ClienteCurl") as curl, mock.patch.object(cliente_http, "sessao_requests") as req:
+            with self.assertRaises(SystemExit) as e:
+                cliente_http.nova_sessao("auto")
+        msg = str(e.exception)
+        self.assertIn("playwright", msg)
+        self.assertIn("pip install -r requirements.txt", msg)
+        self.assertIn("--cliente curl", msg)
+        self.assertIn("--cliente requests", msg)
+        curl.assert_not_called()
+        req.assert_not_called()
+
+    def test_auto_com_navegador_que_nao_abre_para_com_o_motivo(self):
+        with mock.patch.object(cliente_http, "_playwright_instalado", return_value=True), \
+                mock.patch.object(cliente_http, "ClienteNavegador", side_effect=RuntimeError("nenhum navegador encontrado")), \
+                mock.patch.object(cliente_http, "ClienteCurl") as curl:
+            with self.assertRaises(SystemExit) as e:
+                cliente_http.nova_sessao("auto")
+        self.assertIn("nenhum navegador encontrado", str(e.exception))
+        self.assertIn("--cliente curl", str(e.exception))
+        curl.assert_not_called()
+
+    def test_navegador_explicito_nao_sugere_curl(self):
+        with mock.patch.object(cliente_http, "_playwright_instalado", return_value=False):
+            with self.assertRaises(SystemExit) as e:
+                cliente_http.nova_sessao("navegador")
+        self.assertIn("playwright", str(e.exception))
+        self.assertNotIn("--cliente curl", str(e.exception))
+
+    def test_auto_com_navegador_devolve_o_navegador(self):
+        with mock.patch.object(cliente_http, "_playwright_instalado", return_value=True), \
+                mock.patch.object(cliente_http, "ClienteNavegador", return_value="navegador") as nav:
+            self.assertEqual(cliente_http.nova_sessao("auto"), "navegador")
+        nav.assert_called_once_with()
+
+    def test_curl_e_requests_so_quando_pedidos(self):
+        self.assertIsInstance(cliente_http.nova_sessao("requests"), cliente_http.requests.Session)
+        with mock.patch.object(cliente_http.shutil, "which", return_value=None):
+            with self.assertRaises(SystemExit) as e:
+                cliente_http.nova_sessao("curl")
+            self.assertIn("curl não encontrado", cliente_http.problema_do_cliente("curl"))
+        self.assertIn("curl não encontrado", str(e.exception))
+
+    def test_problema_do_cliente_nao_abre_nada(self):
+        with mock.patch.object(cliente_http, "_playwright_instalado", return_value=True), \
+                mock.patch.object(cliente_http, "ClienteNavegador") as nav:
+            self.assertIsNone(cliente_http.problema_do_cliente("auto"))
+            self.assertIsNone(cliente_http.problema_do_cliente("requests"))
+        nav.assert_not_called()
 
 
 def _navegador_disponivel() -> bool:

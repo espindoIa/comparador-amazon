@@ -7,6 +7,10 @@
 2. curl do sistema: passou onde o requests falhava (2 de 3 contra 0 de 3), mas a
    paginação da lista recebeu 503 em todas as tentativas.
 3. requests: alternativa final, com cabeçalhos mínimos.
+
+`--cliente auto` usa só o navegador: se ele não abre, a coleta para e diz por quê, em vez de cair em silêncio no curl ou
+no requests (que a Amazon bloqueia, e um bloqueio grava no banco uma pausa de horas). Eles só valem se pedidos
+(`--cliente curl`, `--cliente requests`).
 """
 
 from __future__ import annotations
@@ -251,19 +255,34 @@ def _playwright_instalado() -> bool:
     return True
 
 
+def problema_do_cliente(cliente: str) -> str | None:
+    """Por que `nova_sessao(cliente)` nem chega a tentar o cliente (módulo ou programa ausente), ou None. Não abre
+    nada: o navegador ainda pode falhar na hora, se não houver Chrome, Edge nem Chromium."""
+    if cliente in ("auto", "navegador") and not _playwright_instalado():
+        return "o módulo playwright não está instalado (pip install -r requirements.txt)"
+    if cliente == "curl" and not shutil.which("curl"):
+        return "curl não encontrado no sistema; use --cliente requests"
+    return None
+
+
 def nova_sessao(cliente: str = "auto"):
-    """cliente: 'auto' (navegador > curl > requests), 'navegador', 'curl' ou 'requests'."""
-    if cliente == "navegador" or (cliente == "auto" and _playwright_instalado()):
-        try:
-            return ClienteNavegador()
-        except Exception as e:
-            if cliente == "navegador":
-                raise SystemExit(f"não consegui abrir o navegador: {e}")
-            print(f"aviso: navegador indisponível ({e}); usando curl/requests")
-    if cliente in ("auto", "curl"):
-        curl = shutil.which("curl")
-        if curl:
-            return ClienteCurl(curl)
-        if cliente == "curl":
-            raise SystemExit("curl não encontrado no sistema; use --cliente requests")
+    """cliente: 'auto' (só o navegador; sem ele, para), 'navegador', 'curl' ou 'requests'. O curl e o requests só
+    são usados quando pedidos: nos testes, o curl recebeu 503 na paginação da lista e o requests, captcha ou 503."""
+    if cliente in ("auto", "navegador"):
+        motivo = problema_do_cliente(cliente)
+        if motivo is None:
+            try:
+                return ClienteNavegador()
+            except Exception as e:
+                motivo = str(e)
+        mensagem = f"não consegui abrir o navegador: {motivo}"
+        if cliente == "auto":
+            mensagem += ("\nO cliente automático só usa o navegador: o curl recebeu 503 na paginação da lista e o "
+                         "requests, captcha ou 503, e um bloqueio grava no banco uma pausa de horas. "
+                         "Para ler assim mesmo, use --cliente curl ou --cliente requests.")
+        raise SystemExit(mensagem)
+    if cliente == "curl":
+        if motivo := problema_do_cliente(cliente):
+            raise SystemExit(motivo)
+        return ClienteCurl(shutil.which("curl"))
     return sessao_requests()

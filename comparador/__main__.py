@@ -22,7 +22,10 @@ def main() -> None:
                         "um dos 29 gêneros de Livros, em 9 faixas de preço (~13 mil páginas por passada)")
     v.add_argument("--minutos", type=float, default=150, help="orçamento de tempo (padrão: %(default)s)")
     v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
-    v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
+    v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto",
+                   help="como ler as páginas (padrão: %(default)s = só o navegador; se ele não abrir, para e diz por quê). "
+                        "curl e requests só quando pedidos: a Amazon costuma bloqueá-los, e um bloqueio grava no banco "
+                        "uma pausa de horas")
     v.add_argument("--ritmo", type=float, default=None,
                    help="páginas por minuto no começo (padrão: 80%% do último ritmo limpo guardado no banco, "
                         f"ou {ritmo.PPM_BASE:g}, o ritmo medido sem bloqueios)")
