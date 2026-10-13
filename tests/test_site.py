@@ -410,7 +410,7 @@ class TestFolhaDeEstilo(unittest.TestCase):
         return set(re.findall(r"(--[a-z0-9]+):", bloco))
 
     def test_toda_cor_do_tema_claro_e_redefinida_no_escuro(self):
-        cores = {t for t in self.tokens(self.claro) if not t.startswith(("--fs-", "--r")) and t not in ("--f", "--serif")}
+        cores = {t for t in self.tokens(self.claro) if not t.startswith(("--fs-", "--r")) and t not in ("--f", "--serif", "--display")}
         self.assertEqual(cores - self.tokens(self.escuro), set(), "token de cor sem versão escura")
 
     def test_todo_var_usado_existe_e_todo_token_definido_e_usado(self):
@@ -474,6 +474,39 @@ class TestFolhaDeEstilo(unittest.TestCase):
     def test_hover_de_campo_escurece_a_borda_em_vez_de_clarear(self):
         regra = re.search(r"\.sel select:hover[^{]*\{([^}]*)\}", self.css).group(1)
         self.assertEqual(regra, "border-color:var(--mu)")                     # --mu2 era mais claro que --ln3 no claro e igual a ele no escuro
+
+    def test_contraste_dos_pares_de_texto_nos_dois_temas(self):
+        def lum(h):
+            c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            c = [x / 12.92 if x <= .03928 else ((x + .055) / 1.055) ** 2.4 for x in c]
+            return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+
+        def razao(a, b):
+            a, b = lum(a), lum(b)
+            return (max(a, b) + .05) / (min(a, b) + .05)
+
+        def hexa(h):
+            return "#" + "".join(ch * 2 for ch in h[1:]) if len(h) == 4 else h
+
+        for nome, bloco in (("claro", self.claro), ("escuro", self.escuro)):
+            t = {k: hexa(v) for k, v in re.findall(r"(--[a-z0-9]+):(#[0-9a-f]{3,6})(?=[;}])", bloco)}
+            pares = [(f, b) for f in ("--fg", "--mu", "--ac", "--dn", "--up", "--wr", "--med") for b in ("--bg", "--sf", "--sf2")]
+            pares += [("--dn", "--dns"), ("--up", "--ups"), ("--wr", "--wrs"), ("--ac", "--acs"), ("--prif", "--pri"), ("--tintaf", "--tinta")]
+            for f, b in pares:
+                self.assertGreaterEqual(razao(t[f], t[b]), 4.5, f"{nome}: {f} sobre {b}")
+            for b in ("--bg", "--sf"):                                            # contorno de campo: 3:1 (WCAG 1.4.11)
+                self.assertGreaterEqual(razao(t["--ln3"], t[b]), 3, f"{nome}: --ln3 sobre {b}")
+
+    def test_fontes_do_site_existem_sao_copiadas_e_trocam_sem_esperar(self):
+        faces = re.findall(r"@font-face\{([^}]*)\}", self.css)
+        self.assertEqual(len(faces), 4)
+        for f in faces:
+            arquivo = re.search(r"url\(([\w.-]+)\)", f).group(1)
+            self.assertTrue((site.WEB / arquivo).exists(), arquivo)
+            self.assertIn(arquivo, site.ARQUIVOS_WEB)
+            self.assertIn("font-display:swap", f)
+        self.assertIn("OFL.txt", site.ARQUIVOS_WEB)
+        self.assertIn('href="cormorant-600.woff2" as="font" type="font/woff2" crossorigin', self.html)
 
     def test_area_segura_e_cobertura_nao_se_misturam(self):
         # viewport-fit=cover sem env(safe-area-inset-*) deixa o conteúdo sob o entalhe; sem o cover, o navegador cuida

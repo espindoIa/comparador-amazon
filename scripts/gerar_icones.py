@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 
 WEB = Path(__file__).resolve().parent.parent / "comparador" / "web"
-FUNDO, PAGINA, AZUL = "#1a1916", "#f6f5f1", "#2a4fd6"
+FUNDO, PAGINA, DESTAQUE = "#7c2d12", "#faf5ea", "#b45309"   # couro, papel e âmbar (MASTER.md)
 MARCADOR = (f'<path d="M21 13h22a3 3 0 0 1 3 3v35l-14-8.5L18 51V16a3 3 0 0 1 3-3z" fill="{PAGINA}"/>'
-            f'<path d="M25 27.5l5 5 9-9" fill="none" stroke="{AZUL}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>')
+            f'<path d="M25 27.5l5 5 9-9" fill="none" stroke="{DESTAQUE}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>')
 
 
 def svg(raio: float = 0, escala: float = 1.0) -> str:

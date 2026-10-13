@@ -46,7 +46,8 @@ from .varredura import GENEROS
 
 DETALHES = ("autor", "imagem", "publicado", "idioma", "obra", "nota", "avaliacoes")
 ARQUIVOS_WEB = ("index.html", "livro.html", "app.js", "busca.js", "lista.js", "livro.js", "estilo.css", "icone.svg",
-                "icone-180.png", "icone-192.png", "icone-512.png", "icone-maskable-512.png", "manifest.json")
+                "icone-180.png", "icone-192.png", "icone-512.png", "icone-maskable-512.png", "manifest.json",
+                "cormorant-600.woff2", "crimson-400.woff2", "crimson-400i.woff2", "crimson-600.woff2", "OFL.txt")
 JANELA = 90            # dias do "preço mais comum" (mesma janela de livro.js)
 MIN_DIAS_COMUM = 14    # com menos dias de coleta na janela, o preço mais comum não é mostrado
 QUEDA_MIN = 0.05       # "baixaram de preço": queda de pelo menos 5%...

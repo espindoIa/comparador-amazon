@@ -1,26 +1,34 @@
 /* Preços de livros: estilo do app (index.html) e da página avulsa do `grafico` (livro.js).
- * Fontes do sistema (nada para baixar): serifa nos títulos, sem serifa no resto. */
+ * Tema "livraria": papel creme, marrom de capa e âmbar (ver design-system/precos-de-livros/MASTER.md).
+ * Fontes por papel: --display (Cormorant Garamond) só em títulos grandes; --serif (Crimson Pro) nos títulos de
+ * livro e no texto corrido; --f (do sistema) em controles, preços e números. As fontes ficam no próprio site
+ * (sem Google); na página avulsa do `grafico` (CSS embutido) elas não vêm e vale a pilha de serifas do sistema. */
+@font-face{font-family:"Cormorant Garamond";src:url(cormorant-600.woff2) format("woff2");font-weight:600;font-style:normal;font-display:swap}
+@font-face{font-family:"Crimson Pro";src:url(crimson-400.woff2) format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Crimson Pro";src:url(crimson-400i.woff2) format("woff2");font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:"Crimson Pro";src:url(crimson-600.woff2) format("woff2");font-weight:600 700;font-style:normal;font-display:swap}
 :root{
-  --bg:#f6f5f1;--sf:#fff;--sf2:#f0eee8;--sf3:#e8e5dd;--fg:#1a1916;--mu:#67635b;--mu2:#9b968c;--ln:#e7e4dd;--ln2:#d8d4ca;--ln3:#8a857b;
-  --ac:#2a4fd6;--acs:#eaeefc;--tinta:#1a1916;--tintaf:#fff;
-  --dn:#12754a;--dns:#e2f3e9;--up:#b4321f;--ups:#fbe8e4;--wr:#8f5a06;--wrs:#faefd8;
-  --med:#c26a05;--capa:#9b968c;--ev:#6d5ae61a;--evl:#5b45d6;
-  --hdr:rgba(246,245,241,.86);
-  --sh1:0 1px 2px rgba(26,25,22,.05),0 1px 3px rgba(26,25,22,.06);
-  --sh2:0 10px 30px rgba(26,25,22,.12),0 2px 8px rgba(26,25,22,.06);
-  --shc:0 1px 1px rgba(26,25,22,.08),0 6px 14px -6px rgba(26,25,22,.35);
+  --bg:#faf5ea;--sf:#fffdf8;--sf2:#f3ecdd;--sf3:#eae0cc;--fg:#1c1917;--mu:#5c5249;--mu2:#9a8e80;--ln:#e9e0cf;--ln2:#d9cdb6;--ln3:#8c7f6c;
+  --ac:#92400e;--acs:#f6e7d4;--tinta:#1c1917;--tintaf:#fffdf8;--pri:#b45309;--prif:#fff;
+  --dn:#146c43;--dns:#e1f0e5;--up:#a8321c;--ups:#f8e3dc;--wr:#3f5a86;--wrs:#e4eaf4;
+  --med:#2f6b7a;--capa:#9a8e80;--ev:#6d5ae61a;--evl:#5b45d6;
+  --hdr:rgba(250,245,234,.88);
+  --sh1:0 1px 2px rgba(60,40,20,.05),0 1px 3px rgba(60,40,20,.07);
+  --sh2:0 10px 30px rgba(60,40,20,.14),0 2px 8px rgba(60,40,20,.07);
+  --shc:0 1px 1px rgba(60,40,20,.1),0 6px 14px -6px rgba(60,40,20,.4);
   --r0:4px;--r1:8px;--r2:12px;--r3:16px;
   --fs-1:12px;--fs-2:13px;--fs-3:14px;--fs-4:15px;--fs-5:16px;--fs-6:18px;--fs-7:20px;--fs-8:22px;--fs-9:26px;--fs-10:30px;--fs-11:34px;--fs-12:40px;
   --f:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
-  --serif:ui-serif,"Iowan Old Style","Charter","Bitstream Charter","Sitka Text",Cambria,Georgia,"Noto Serif","Droid Serif",serif;
+  --serif:"Crimson Pro",ui-serif,"Iowan Old Style","Charter","Bitstream Charter","Sitka Text",Cambria,Georgia,"Noto Serif","Droid Serif",serif;
+  --display:"Cormorant Garamond","Iowan Old Style",Garamond,"Sitka Text",Cambria,Georgia,"Noto Serif",serif;
   color-scheme:light dark;
 }
 @media(prefers-color-scheme:dark){:root{
-  --bg:#131210;--sf:#1c1b18;--sf2:#252420;--sf3:#2e2c28;--fg:#eeebe4;--mu:#a7a297;--mu2:#79756c;--ln:#2b2a26;--ln2:#3b3934;--ln3:#79756c;
-  --ac:#8ea4ff;--acs:#1d2542;--tinta:#eeebe4;--tintaf:#131210;
-  --dn:#5bd199;--dns:#132a1e;--up:#ff917e;--ups:#3b1a15;--wr:#f0c062;--wrs:#33280f;
-  --med:#f5a524;--capa:#79756c;--ev:#a593ff26;--evl:#bcadff;
-  --hdr:rgba(19,18,16,.84);
+  --bg:#17130f;--sf:#211b16;--sf2:#2b241d;--sf3:#362d25;--fg:#f2ebdd;--mu:#bfb2a0;--mu2:#85796a;--ln:#2e271f;--ln2:#40362c;--ln3:#85796a;
+  --ac:#f0b26b;--acs:#3a2715;--tinta:#f2ebdd;--tintaf:#17130f;--pri:#e8a04a;--prif:#1c1209;
+  --dn:#6fd3a0;--dns:#15291d;--up:#ff9b85;--ups:#3d1d16;--wr:#9db7e8;--wrs:#1c2638;
+  --med:#6fc3d2;--capa:#85796a;--ev:#a593ff26;--evl:#bcadff;
+  --hdr:rgba(23,19,15,.86);
   --sh1:0 1px 2px rgba(0,0,0,.4);--sh2:0 10px 30px rgba(0,0,0,.55);--shc:0 1px 1px rgba(0,0,0,.4),0 6px 14px -6px rgba(0,0,0,.8);
 }}
 
@@ -29,7 +37,8 @@ html{-webkit-text-size-adjust:100%;scroll-padding-top:120px}
 body{margin:0;font:var(--fs-4)/1.5 var(--f);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 a{color:var(--ac);text-decoration:none}@media(hover:hover){a:hover{text-decoration:underline}}
 h1,h2,h3{line-height:1.2;margin:0;font-weight:600}
-h1,h2{font-family:var(--serif);letter-spacing:-.01em}
+h1,h2{font-family:var(--display);letter-spacing:0;font-synthesis:none}
+b,strong{font-weight:600}
 h1{font-size:var(--fs-10)}h2{font-size:var(--fs-8)}h3{font-size:var(--fs-4)}
 p{margin:0 0 .6em}
 button,input,select{font:inherit;color:inherit}
@@ -47,7 +56,7 @@ svg.i.s{width:16px;height:16px}
 /* ---------- cabeçalho ---------- */
 .hdr{position:sticky;top:0;z-index:20;background:var(--hdr);-webkit-backdrop-filter:saturate(160%) blur(14px);backdrop-filter:saturate(160%) blur(14px);border-bottom:1px solid var(--ln)}
 .hdr-in{max-width:1120px;margin:0 auto;padding:10px 20px;display:grid;grid-template-columns:auto 1fr auto;gap:12px 28px;align-items:center}
-.marca{display:flex;align-items:center;gap:10px;color:var(--fg);font:600 var(--fs-7)/1 var(--serif);letter-spacing:-.01em;white-space:nowrap}
+.marca{display:flex;align-items:center;gap:10px;color:var(--fg);font:600 var(--fs-8)/1 var(--display);white-space:nowrap}
 @media(hover:hover){.marca:hover{text-decoration:none}}.marca img{width:30px;height:30px;border-radius:var(--r1);box-shadow:0 0 0 1px var(--ln2)}
 .busca{position:relative;display:flex;align-items:center;max-width:580px;width:100%;justify-self:center}
 .busca svg{position:absolute;left:14px;color:var(--mu);pointer-events:none}
@@ -86,7 +95,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 /* ---------- botões, chips, abas ---------- */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 18px;border-radius:var(--r2);border:1px solid var(--ln2);background:var(--sf);color:var(--fg);font-weight:600;font-size:var(--fs-4);cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,transform .1s}
 @media(hover:hover){.btn:hover{background:var(--sf2);text-decoration:none}}.btn:active{transform:scale(.98)}
-.btn.pri{background:var(--tinta);border-color:var(--tinta);color:var(--tintaf)}@media(hover:hover){.btn.pri:hover{opacity:.9}}
+.btn.pri{background:var(--pri);border-color:var(--pri);color:var(--prif)}@media(hover:hover){.btn.pri:hover{opacity:.9}}
 .btn.sm{height:36px;padding:0 14px;font-size:var(--fs-3);border-radius:var(--r1)}
 .btn[aria-pressed=true]{background:var(--sf2);border-color:var(--fg)}
 .btn.gh{border-color:transparent;background:transparent;color:var(--ac)}@media(hover:hover){.btn.gh:hover{background:var(--acs)}}
