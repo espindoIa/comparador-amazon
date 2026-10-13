@@ -352,6 +352,44 @@ class TestMaisVendidos(unittest.TestCase):
         varredura.varrer(self.conn, amazon, vendidos=["1", "2", "3"], minutos=10_000, dormir=lambda s: None)
         self.assertIn("G300000001", {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")})
 
+    def relogio_falso(self, antes_da_meia_noite_s):
+        """Relógio que anda 30 s a cada leitura e cruza a meia-noite de Brasília (14/10/2026) depois de N segundos."""
+        meia_noite = datetime.fromisoformat(varredura.inicio_do_dia(datetime(2026, 10, 14).date()))
+        estado = {"t": meia_noite - timedelta(seconds=antes_da_meia_noite_s)}
+
+        def agora():
+            estado["t"] += timedelta(seconds=30)
+            return estado["t"].isoformat(timespec="seconds")
+
+        hoje = lambda: estado["t"].astimezone(db.BRASILIA).date()      # noqa: E731
+        for nome, funcao in (("agora", agora), ("hoje_brasil", hoje)):
+            p = mock.patch.object(db, nome, funcao)
+            p.start()
+            self.addCleanup(p.stop)
+        return meia_noite
+
+    def test_execucao_que_atravessa_a_meia_noite_recomeca_as_passadas_e_nao_fecha_o_dia_errado(self):
+        livros = [(f"G{i:09d}", 100 + i * 60) for i in range(300)]    # ~100 por faixa: 7 páginas cada
+        amazon = AmazonFalsaVendidos({"1": livros})
+        meia_noite = self.relogio_falso(antes_da_meia_noite_s=300)    # a virada cai no meio da leitura
+        eid = varredura.varrer(self.conn, amazon, vendidos=["1"], minutos=10_000, dormir=lambda s: None)
+        d2 = meia_noite.isoformat(timespec="seconds")
+        fatias = self.conn.execute("SELECT passada_iniciada_em, ultima_passada FROM fatias WHERE ativa = 1").fetchall()
+        self.assertEqual(len(fatias), 3)
+        # todas as passadas que valem para o dia novo começaram e terminaram nele
+        self.assertTrue(all(f[0] >= d2 and f[1] >= d2 for f in fatias), [tuple(f) for f in fatias])
+        dias = {r[0] for r in self.conn.execute("SELECT dia FROM dias")}
+        self.assertEqual(dias, {"2026-10-14"})                          # o dia 13 não fechou: ficou incompleto
+        obs = self.conn.execute("SELECT observacao FROM execucoes WHERE id = ?", (eid,)).fetchone()[0]
+        self.assertIn("atravessou a meia-noite", obs)
+        self.assertTrue(varredura.cobertura(self.conn, varredura.GRUPO_VENDIDOS).dia_completo)
+
+    def test_dia_que_fecha_antes_da_meia_noite_fica_registrado(self):
+        amazon = AmazonFalsaVendidos({"1": [("G000000001", 1000), ("G000000002", 5000), ("G000000003", 9000)]})
+        meia_noite = self.relogio_falso(antes_da_meia_noite_s=3600)   # o dia fecha bem antes da virada
+        varredura.varrer(self.conn, amazon, vendidos=["1"], minutos=10_000, dormir=lambda s: None)
+        self.assertEqual({r[0] for r in self.conn.execute("SELECT dia FROM dias")}, {"2026-10-13"})
+
     def test_livros_sem_preco_nao_contam_e_aparecem_quando_voltam(self):
         # a cada 10 livros, 1 sem preço: 15 de 16 por página têm preço
         g = [(f"G{i:09d}", None if i % 10 == 9 else 1000 + i) for i in range(1300)]

@@ -78,12 +78,19 @@ ordenam a busca e decidem quais livros vêm primeiro no índice do site.
 
 ## Agendamento e cópias
 
-`varredura.yml` roda às 00:41, 06:41, 12:41 e 18:41 (horário de Brasília). Cada execução continua de
-onde a anterior parou, e o dia costuma fechar nas três primeiras.
+`varredura.yml` roda às 00:41, 06:41, 12:41 e 18:41 (horário de Brasília), com 165 minutos de coleta por
+execução. O GitHub atrasa as execuções agendadas em horas, então nada depende do horário: cada execução
+continua de onde a anterior parou, e uma que atravessa a meia-noite recomeça as passadas em andamento,
+porque os preços de um dia precisam ser lidos no dia.
 
 O banco fica na release `catalogo`, como `catalogo-vendidos-<data>.db.gz`. Antes de publicar uma
 cópia nova, `scripts/verificar_banco.py` confere duas coisas: que o banco está íntegro e que nenhuma
-tabela encolheu. Ficam as 14 cópias mais recentes e a última de cada um dos 30 dias anteriores.
+tabela encolheu. `scripts/catalogo_release.py` faz o download (com tentativas e, se a cópia mais nova
+estiver quebrada, usando a anterior) e confere no GitHub o tamanho do que foi enviado. Ficam as 14
+cópias mais recentes e a última de cada um dos 30 dias anteriores.
+
+Se o navegador ou a página cair no meio da coleta, o cliente abre outro e a execução continua. Bloqueio
+continua parando a execução, como antes.
 
 Avisos por e-mail (falha do workflow):
 

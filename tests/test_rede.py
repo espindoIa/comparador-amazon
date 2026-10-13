@@ -223,6 +223,21 @@ class TestClienteNavegador(unittest.TestCase):
         self.assertEqual([x.status_code for x in r], [200, 200])
         self.assertIn("session-id=123-456", _Servidor.recebidos[-1].get("Cookie", ""))   # a 2ª já usa a sessão da 1ª
 
+    def test_pagina_ou_navegador_que_cai_e_reaberto_e_a_proxima_requisicao_funciona(self):
+        self.cliente.get(self.base + "/pagina")
+        self.cliente._pagina.close()                                       # a página morre
+        saida = rede.baixar_lote(self.cliente, [self.base + "/ok", self.base + "/ok2"], [0.0, 0.1])
+        self.assertEqual([e.status for _, _, e in saida], ["erro_http", "erro_http"])   # esta leva falha...
+        self.assertEqual(self.cliente.reaberturas, 1)
+        r = self.cliente.get(self.base + "/define-cookie")                 # ...e a seguinte já navega de novo
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.cliente.get(self.base + "/pagina2").text, "ação ok")
+        self.cliente._navegador.close()                                    # agora o navegador inteiro cai
+        with self.assertRaises(Exception):
+            self.cliente.get(self.base + "/pagina")
+        self.assertEqual(self.cliente.get(self.base + "/pagina").status_code, 200)
+        self.assertEqual(self.cliente.reaberturas, 2)
+
     def test_lote_erro_de_rede_vira_status_0_e_os_outros_seguem(self):
         self.cliente.get(self.base + "/pagina")
         saida = rede.baixar_lote(self.cliente, [self.base + "/ok", "http://127.0.0.1:9/", self.base + "/erro"],
