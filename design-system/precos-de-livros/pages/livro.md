@@ -22,7 +22,7 @@
   - preço mais comum: tracejada `--med`, que é fria e não se confunde com o marrom;
   - preço de capa: pontilhada `--capa`.
   - A legenda repete o traço de cada uma.
-- Datas de promoção: faixa `--ev` com o nome escrito.
+- Datas de promoção: faixa `--ev` (âmbar translúcido) com o nome escrito em `--evl`, e o ponto do menor preço na promoção com contorno `--evl`. Mesmo tom da marca: o que distingue a promoção é a faixa e o nome, não uma cor nova.
 - **Teclado:**
   - a área do gráfico entra no Tab (`tabindex=0`, `role=group`, rótulo com instruções);
   - ← → (e ↑ ↓) andam de um dia observado para o outro, Home e End vão às pontas, Esc esconde;

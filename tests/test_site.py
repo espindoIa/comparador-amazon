@@ -345,6 +345,26 @@ class TestSite(unittest.TestCase):
         self.assertRegex(html, r'src="app\.js\?v=[0-9a-f]{10}"')
         self.assertRegex(html, r'href="estilo\.css\?v=[0-9a-f]{10}"')
 
+    def test_previa_dos_links_so_com_endereco_completo(self):
+        banco(self.d / "a.db", [("B000000001", "Livro Um", None, [("2026-10-01", "2026-10-05", 5000, None)])])
+        site.construir([self.d / "a.db"], self.d / "sem")
+        self.assertNotIn("og:image", (self.d / "sem/index.html").read_text(encoding="utf-8"))
+        site.construir([self.d / "a.db"], self.d / "com", url="https://exemplo.github.io/comparador-amazon/")
+        html = (self.d / "com/index.html").read_text(encoding="utf-8")
+        self.assertRegex(html, r'<meta property="og:image" content="https://exemplo\.github\.io/comparador-amazon/icone-512\.png\?v=[0-9a-f]{10}">')
+        self.assertNotIn("og:url", html)                                            # canônico único levaria todo link compartilhado ao início
+        v = re.search(r'href="estilo\.css\?v=([0-9a-f]{10})"', html).group(1)
+        self.assertIn(f"icone-512.png?v={v}", html)                                   # a mesma versão dos outros arquivos
+        with self.assertRaises(ValueError):
+            site.construir([self.d / "a.db"], self.d / "ruim", url="exemplo.github.io")
+
+    def test_cli_site_com_url(self):
+        banco(self.d / "a.db", [("B000000001", "Livro Um", None, [("2026-10-01", "2026-10-05", 5000, None)])])
+        r = subprocess.run(["python", "-m", "comparador", "site", str(self.d / "a.db"), "--saida", str(self.d / "s"),
+                            "--url", "https://exemplo.github.io/comparador-amazon"], cwd=RAIZ, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('content="https://exemplo.github.io/comparador-amazon/icone-512.png?v=', (self.d / "s/index.html").read_text(encoding="utf-8"))
+
     def test_cli_site(self):
         banco(self.d / "a.db", [("B000000001", "Livro Um", None, [("2026-10-01", "2026-10-05", 5000, None)])])
         r = subprocess.run(["python", "-m", "comparador", "site", str(self.d / "a.db"), "--saida", str(self.d / "s")],
@@ -410,7 +430,7 @@ class TestFolhaDeEstilo(unittest.TestCase):
         return set(re.findall(r"(--[a-z0-9]+):", bloco))
 
     def test_toda_cor_do_tema_claro_e_redefinida_no_escuro(self):
-        cores = {t for t in self.tokens(self.claro) if not t.startswith(("--fs-", "--r")) and t not in ("--f", "--serif", "--display")}
+        cores = {t for t in self.tokens(self.claro) if not t.startswith(("--fs-", "--r", "--z")) and t not in ("--f", "--serif", "--display")}
         self.assertEqual(cores - self.tokens(self.escuro), set(), "token de cor sem versão escura")
 
     def test_todo_var_usado_existe_e_todo_token_definido_e_usado(self):
@@ -490,7 +510,7 @@ class TestFolhaDeEstilo(unittest.TestCase):
 
         for nome, bloco in (("claro", self.claro), ("escuro", self.escuro)):
             t = {k: hexa(v) for k, v in re.findall(r"(--[a-z0-9]+):(#[0-9a-f]{3,6})(?=[;}])", bloco)}
-            pares = [(f, b) for f in ("--fg", "--mu", "--ac", "--dn", "--up", "--wr", "--med") for b in ("--bg", "--sf", "--sf2")]
+            pares = [(f, b) for f in ("--fg", "--mu", "--ac", "--dn", "--up", "--wr", "--med", "--evl") for b in ("--bg", "--sf", "--sf2")]
             pares += [("--dn", "--dns"), ("--up", "--ups"), ("--wr", "--wrs"), ("--ac", "--acs"), ("--prif", "--pri"), ("--tintaf", "--tinta"), ("--sf", "--ac")]                     # --sf sobre --ac: chip ligado e contador
             for f, b in pares:
                 self.assertGreaterEqual(razao(t[f], t[b]), 4.5, f"{nome}: {f} sobre {b}")
@@ -507,6 +527,23 @@ class TestFolhaDeEstilo(unittest.TestCase):
             self.assertIn("font-display:swap", f)
         self.assertIn("OFL.txt", site.ARQUIVOS_WEB)
         self.assertIn('href="cormorant-600.woff2" as="font" type="font/woff2" crossorigin', self.html)
+
+    def test_z_index_e_camadas_vem_dos_tokens(self):
+        self.assertEqual(re.findall(r"z-index:-?\d+", self.css), [], "z-index solto: use --zacima, --ztip, --zhdr, --ztoast, --zpular")
+
+    def test_modelos_em_js_so_tem_estilo_inline_de_esqueleto_e_matiz(self):
+        for nome in ("app.js", "livro.js"):
+            texto = (site.WEB / nome).read_text(encoding="utf-8")
+            for estilo in re.findall(r'style="([^"]*)"', texto):
+                props = {p.split(":")[0].strip() for p in estilo.split(";") if p.strip()}
+                self.assertLessEqual(props, {"width", "height", "margin-top", "--h"}, f"{nome}: style={estilo!r} devia ser classe")
+
+    def test_pagina_404_existe_e_e_publicada(self):
+        html = (site.WEB / "404.html").read_text(encoding="utf-8")
+        self.assertIn("404.html", site.ARQUIVOS_WEB)
+        self.assertIn('<meta name="robots" content="noindex">', html)
+        self.assertIn('href="estilo.css"', html)
+        self.assertIn("<base href=", html)                                    # funciona em qualquer profundidade de endereço
 
     def test_area_segura_e_cobertura_nao_se_misturam(self):
         # viewport-fit=cover sem env(safe-area-inset-*) deixa o conteúdo sob o entalhe; sem o cover, o navegador cuida

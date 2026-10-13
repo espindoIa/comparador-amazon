@@ -158,7 +158,7 @@
       '</div><div class="eds">' + formatos + '</div></div>' + (o.eds.some(function (e) { return sv[e.asin]; }) ? SALVO : '') + '</a></li>';
   }
   function esqueleto(n) {
-    var r = '<div class="sk-row"><div class="cv sk"></div><div style="flex:1"><div class="sk l" style="width:70%"></div><div class="sk l" style="width:40%"></div><div class="sk l" style="width:25%;height:16px"></div></div></div>';
+    var r = '<div class="sk-row"><div class="cv sk"></div><div class="sk-corpo"><div class="sk l" style="width:70%"></div><div class="sk l" style="width:40%"></div><div class="sk l" style="width:25%;height:16px"></div></div></div>';
     return '<div class="esq">' + new Array(n + 1).join(r) + '</div>';
   }
   function erro(msg) {
@@ -245,7 +245,9 @@
     history[substituir ? 'replaceState' : 'pushState']({ y: 0, n: (st.n || 0) + (substituir ? 0 : 1) }, '', url);
     scrollAlvo = 0; focar = !semFoco; desenhar();
   }
-  function rolar() { if (scrollAlvo != null) { scrollTo(0, scrollAlvo); scrollAlvo = null; } }
+  // rolagem instantânea mesmo com scroll-behavior:smooth; navegador que não conhece 'instant' recusa o objeto e cai no scrollTo simples
+  function pular(y) { try { scrollTo({ top: y, behavior: 'instant' }); } catch (e) { scrollTo(0, y); } }
+  function rolar() { if (scrollAlvo != null) { pular(scrollAlvo); scrollAlvo = null; } }
   // depois de uma troca de tela, o foco vai para o título da tela nova (ou para o conteúdo), para o leitor de tela
   // anunciar a troca e o Tab seguir dali. Cada tela chama ao desenhar o conteúdo final (não o esqueleto).
   // focoApos: seletor do controle que deve receber o foco quando a tela for redesenhada no lugar
@@ -329,7 +331,7 @@
     var chips = FAMILIAS.filter(function (f) { return tem[f[0]]; });
     el.innerHTML = '<div class="sec-h"><h2>Baixaram de preço</h2>' +
       (vis.length > lim ? '<button type="button" class="lnk" data-acao="baixa-tudo">Ver todos (' + vis.length + ')</button>' : '') + '</div>' +
-      (chips.length > 1 ? '<div class="chips" style="margin-bottom:16px"><button type="button" class="chip" data-baixa="" aria-pressed="' + !filtroBaixa + '">Todos</button>' +
+      (chips.length > 1 ? '<div class="chips mb"><button type="button" class="chip" data-baixa="" aria-pressed="' + !filtroBaixa + '">Todos</button>' +
         chips.map(function (f) { return '<button type="button" class="chip" data-baixa="' + f[0] + '" aria-pressed="' + (filtroBaixa === f[0]) + '">' + f[1] + '</button>'; }).join('') + '</div>' : '') +
       '<div class="' + (baixaTudo ? 'grade' : 'estante') + '">' + vis.slice(0, lim).map(function (i) { return cartao(i.e, i.ant); }).join('') + '</div>';
     arrumarEstantes();
@@ -367,7 +369,7 @@
     var r = rotaAtual;
     if (!idx) { app.innerHTML = esqueleto(6); indice().then(function () { if (aindaEm(r)) busca(false); }, function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); }); return; }
     resultado = curta() ? { lista: [], cont: { fam: {}, i: {}, g: {} } } : buscar(idx);
-    if (!$('#ferr')) app.innerHTML = '<h1 class="busca-h vh" id="bh"></h1><div class="ferr" id="ferr"></div><div aria-live="polite" class="vh" id="cont-res"></div><div id="res" style="margin-top:10px"></div>';
+    if (!$('#ferr')) app.innerHTML = '<h1 class="busca-h vh" id="bh"></h1><div class="ferr" id="ferr"></div><div aria-live="polite" class="vh" id="cont-res"></div><div id="res" class="res"></div>';
     // navegando por um gênero (sem texto): o nome do gênero vira o título da página
     var gi = S.g ? idx.genPorNo[S.g] : null, bh = $('#bh');
     var porGenero = gi != null && !S.q.trim();
@@ -463,7 +465,7 @@
   function aplicarBusca(digitando) {
     var url = urlBusca();
     if (url === './') { if (rotaAtual && rotaAtual.v === 'busca') ir('./', true, digitando); return; }
-    if (rotaAtual && rotaAtual.v === 'busca') { history.replaceState(history.state, '', url); mostrados = 30; scrollTo(0, 0); busca(false); }
+    if (rotaAtual && rotaAtual.v === 'busca') { history.replaceState(history.state, '', url); mostrados = 30; pular(0); busca(false); }
     else ir(url, false, digitando);
   }
   var tBusca = null;
@@ -624,7 +626,7 @@
         '<button type="button" class="btn pri" data-acao="buscar">' + ic('busca', 's') + 'Buscar livros</button></div>';
       focarTela(); return;
     }
-    if (!$('#lst')) app.innerHTML = '<div class="lista-h"><div><h1>Minha lista</h1><p class="mu" style="margin:4px 0 0">' + L.plural(asins.length, 'livro', 'livros') + '</p></div></div>' + esqueleto(Math.min(asins.length, 5));
+    if (!$('#lst')) app.innerHTML = '<div class="lista-h"><div><h1>Minha lista</h1><p class="mu sub">' + L.plural(asins.length, 'livro', 'livros') + '</p></div></div>' + esqueleto(Math.min(asins.length, 5));
     carregarItens(asins).then(function (rs) {
       if (!aindaEm(r)) return;
       var m = rs[0], hoje = m.ultima_coleta, itens = rs.slice(1).map(function (it) { return itemLista(it, hoje); });
@@ -645,7 +647,7 @@
       else if (ordemLista === 'alvo') v.sort(function (a, b) { var d = function (i) { return i.fora || !alv[i.asin] ? 9 : (i.preco - alv[i.asin]) / alv[i.asin]; }; return d(a) - d(b); });
       else if (ordemLista === 'abaixo') v.sort(function (a, b) { return (a.mc ? (a.preco - a.mc) / a.mc : 9) - (b.mc ? (b.preco - b.mc) / b.mc : 9); });
       else v.sort(function (a, b) { var p = a.fora ? '~' : norm(a.o.t), s = b.fora ? '~' : norm(b.o.t); return p < s ? -1 : p > s ? 1 : 0; });
-      app.innerHTML = '<div class="lista-h"><div><h1>Minha lista</h1><p class="mu" style="margin:4px 0 0">' + L.plural(itens.length, 'livro', 'livros') + ' · salva neste aparelho</p></div>' +
+      app.innerHTML = '<div class="lista-h"><div><h1>Minha lista</h1><p class="mu sub">' + L.plural(itens.length, 'livro', 'livros') + ' · salva neste aparelho</p></div>' +
         '<div class="ctl"><label class="sel"><span class="vh">Ordenar por</span><select id="ordl">' +
         ordens.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === ordemLista ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' + ic('baixo', 's') + '</label>' +
         '<button type="button" class="btn sm" data-acao="compartilhar-lista">' + ic('share', 's') + 'Compartilhar</button></div></div>' +
@@ -670,7 +672,7 @@
       if (!aindaEm(r)) return;
       var itens = rs.slice(1).map(function (it) { return itemLista(it, rs[0].ultima_coleta); }), minha = salvos();
       var novos = asins.filter(function (a) { return !minha[a]; }).length;
-      app.innerHTML = '<div class="lista-h"><div><h1>Lista compartilhada</h1><p class="mu" style="margin:4px 0 0">' + L.plural(itens.length, 'livro', 'livros') + '</p></div>' +
+      app.innerHTML = '<div class="lista-h"><div><h1>Lista compartilhada</h1><p class="mu sub">' + L.plural(itens.length, 'livro', 'livros') + '</p></div>' +
         (novos ? '<button type="button" class="btn pri" data-acao="importar" data-asins="' + asins.join(',') + '">' + ic('salvar', 's') + 'Adicionar à minha lista' + (novos < asins.length ? ' (' + novos + ' novos)' : '') + '</button>' :
           '<a class="btn" href="./?lista" data-r>Todos já estão na sua lista</a>') + '</div>' +
         '<ul class="lst">' + itens.map(function (i) { return linhaLista(i, null, false); }).join('') + '</ul>';
@@ -692,7 +694,7 @@
     META.then(function (m) {
       if (rotaAtual.v !== 'sobre') return;
       app.innerHTML = '<article class="prosa"><h1>Como funciona</h1>' +
-        '<p class="mu" style="font-size:var(--fs-6);margin-top:10px">Preços dos livros mais vendidos da Amazon.com.br, lidos todo dia' +
+        '<p class="mu lead">Preços dos livros mais vendidos da Amazon.com.br, lidos todo dia' +
         (m.lido_ate ? ' (preços lidos até ' + leitura(m.lido_ate) + ')' : m.ultima_coleta ? ' (última leitura em ' + L.dl(m.ultima_coleta) + ')' : '') +
         '. O site mostra os números; a decisão é sua.</p>' +
         '<h2>Os números</h2><dl>' +

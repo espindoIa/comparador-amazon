@@ -45,7 +45,7 @@ from .relatorio import BURACO, WEB, aviso, ler_eventos
 from .varredura import GENEROS
 
 DETALHES = ("autor", "imagem", "publicado", "idioma", "obra", "nota", "avaliacoes")
-ARQUIVOS_WEB = ("index.html", "livro.html", "app.js", "busca.js", "lista.js", "livro.js", "estilo.css", "icone.svg",
+ARQUIVOS_WEB = ("index.html", "livro.html", "404.html", "app.js", "busca.js", "lista.js", "livro.js", "estilo.css", "icone.svg",
                 "icone-180.png", "icone-192.png", "icone-512.png", "icone-maskable-512.png", "manifest.json",
                 "cormorant-600.woff2", "crimson-400.woff2", "crimson-400i.woff2", "crimson-600.woff2", "OFL.txt")
 JANELA = 90            # dias do "preço mais comum" (mesma janela de livro.js)
@@ -157,12 +157,31 @@ def _versao(saida: Path) -> str:
     return h.hexdigest()[:10]
 
 
-def _versionar(saida: Path) -> None:
+def _versionar(saida: Path) -> str:
     v = _versao(saida)
-    for nome in ("index.html", "livro.html"):
+    for nome in ("index.html", "livro.html", "404.html"):
         html = (saida / nome).read_text(encoding="utf-8")
         html = re.sub(r'(src|href)="([\w-]+\.(?:js|css|svg|json|png))"', lambda m: f'{m[1]}="{m[2]}?v={v}"', html)
         (saida / nome).write_text(html, encoding="utf-8")
+    return v
+
+
+def _previa(saida: Path, url: str, v: str) -> None:
+    """Imagem de prévia dos links compartilhados (Open Graph): os apps de mensagem só aceitam endereço completo,
+    e o endereço público só a publicação conhece (--url). O ?v= renova a prévia em cache quando o ícone muda."""
+    if not re.match(r"https?://", url):
+        raise ValueError(f"--url precisa começar com http:// ou https:// (veio {url!r})")
+    url = url.rstrip("/")
+    marca = '<meta property="og:locale" content="pt_BR">\n'
+    html = (saida / "index.html").read_text(encoding="utf-8")
+    if marca not in html:
+        raise ValueError("index.html sem a meta og:locale, onde entra a prévia")
+    # sem og:url: as telas do app são o mesmo index.html com ?livro=…/?lista=…, e um endereço canônico único
+    # faria o link compartilhado de um livro ou de uma lista abrir na página inicial
+    tags = (f'<meta property="og:image" content="{url}/icone-512.png?v={v}">\n'
+            '<meta property="og:image:width" content="512">\n<meta property="og:image:height" content="512">\n'
+            '<meta property="og:image:alt" content="Ícone do Preços de livros">\n')
+    (saida / "index.html").write_text(html.replace(marca, marca + tags), encoding="utf-8")
 
 
 def _json(obj) -> str:
@@ -384,7 +403,7 @@ def _outras(obras: list[dict]) -> dict[int, list[int]]:
     return out
 
 
-def construir(bancos: list[Path], saida: Path, eventos: Path | None = None) -> dict:
+def construir(bancos: list[Path], saida: Path, eventos: Path | None = None, url: str | None = None) -> dict:
     livros: dict[str, dict] = {}
     avisos = [a for a in (ler_banco(Path(b), livros) for b in bancos) if a]
     livros = {a: l for a, l in livros.items() if l["h"]}          # sem preço registrado não há o que mostrar
@@ -397,7 +416,9 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None) -> d
     (saida / "dados" / "h").mkdir(parents=True)
     for nome in ARQUIVOS_WEB:
         shutil.copy(WEB / nome, saida / nome)
-    _versionar(saida)
+    v = _versionar(saida)
+    if url:
+        _previa(saida, url, v)
 
     # na busca: só o que é livro, continua à venda pela Amazon e apareceu nos últimos SUMIR_DIAS dias
     hoje = max((l["u"] for l in livros.values() if l["v"]), default=None)

@@ -11,12 +11,13 @@
   --bg:#faf5ea;--sf:#fffdf8;--sf2:#f3ecdd;--sf3:#eae0cc;--fg:#1c1917;--mu:#5c5249;--mu2:#9a8e80;--ln:#e9e0cf;--ln2:#d9cdb6;--ln3:#8c7f6c;
   --ac:#92400e;--acs:#f6e7d4;--tinta:#1c1917;--tintaf:#fffdf8;--pri:#b45309;--prif:#fff;
   --dn:#146c43;--dns:#e1f0e5;--up:#a8321c;--ups:#f8e3dc;--wr:#3f5a86;--wrs:#e4eaf4;
-  --med:#2f6b7a;--capa:#9a8e80;--filete:rgba(232,196,128,.75);--ev:#6d5ae61a;--evl:#5b45d6;
-  --hdr:rgba(250,245,234,.88);
+  --med:#2f6b7a;--capa:#9a8e80;--filete:rgba(232,196,128,.75);--ev:rgba(180,83,9,.1);--evl:#92400e;
+  --hdr:rgba(250,245,234,.88);--grao:.05;
   --sh1:0 1px 2px rgba(60,40,20,.05),0 1px 3px rgba(60,40,20,.07);
   --sh2:0 10px 30px rgba(60,40,20,.14),0 2px 8px rgba(60,40,20,.07);
   --shc:0 1px 1px rgba(60,40,20,.1),0 6px 14px -6px rgba(60,40,20,.4);
   --r0:4px;--r1:8px;--r2:12px;--r3:16px;
+  --zpapel:-1;--zacima:1;--ztip:2;--zhdr:20;--ztoast:50;--zpular:60;   /* camadas: grão do papel, sobre a linha, dica, cabeçalho, aviso, link de pular */
   --fs-1:12px;--fs-2:13px;--fs-3:14px;--fs-4:15px;--fs-5:16px;--fs-6:18px;--fs-7:20px;--fs-8:22px;--fs-9:26px;--fs-10:30px;--fs-11:34px;--fs-12:40px;
   --f:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
   --serif:"Crimson Pro",ui-serif,"Iowan Old Style","Charter","Bitstream Charter","Sitka Text",Cambria,Georgia,"Noto Serif","Droid Serif",serif;
@@ -27,16 +28,22 @@
   --bg:#17130f;--sf:#211b16;--sf2:#2b241d;--sf3:#362d25;--fg:#f2ebdd;--mu:#bfb2a0;--mu2:#85796a;--ln:#2e271f;--ln2:#40362c;--ln3:#85796a;
   --ac:#f0b26b;--acs:#3a2715;--tinta:#f2ebdd;--tintaf:#17130f;--pri:#e8a04a;--prif:#1c1209;
   --dn:#6fd3a0;--dns:#15291d;--up:#ff9b85;--ups:#3d1d16;--wr:#9db7e8;--wrs:#1c2638;
-  --med:#6fc3d2;--capa:#85796a;--filete:rgba(232,196,128,.6);--ev:#a593ff26;--evl:#bcadff;
-  --hdr:rgba(23,19,15,.86);
+  --med:#6fc3d2;--capa:#85796a;--filete:rgba(232,196,128,.6);--ev:rgba(232,160,74,.14);--evl:#f0b26b;
+  --hdr:rgba(23,19,15,.86);--grao:.07;
   --sh1:0 1px 2px rgba(0,0,0,.4);--sh2:0 10px 30px rgba(0,0,0,.55);--shc:0 1px 1px rgba(0,0,0,.4),0 6px 14px -6px rgba(0,0,0,.8);
 }}
 
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-padding-top:120px}
-body{margin:0;font:var(--fs-4)/1.5 var(--f);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+@media(prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+body{position:relative;isolation:isolate;margin:0;font:var(--fs-4)/1.5 var(--f);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+/* grão de papel: ruído bem leve sobre a tela (fixo, cobre a janela em qualquer página, não intercepta clique); some no alto contraste e na impressão */
+body::before{content:"";position:fixed;inset:0;z-index:var(--zpapel);pointer-events:none;opacity:var(--grao);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .35 0 0 0 0 .25 0 0 0 0 .15 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+@media print,(forced-colors:active){body::before{display:none}}
 a{color:var(--ac);text-decoration:none}@media(hover:hover){a:hover{text-decoration:underline}}
-h1,h2,h3{line-height:1.2;margin:0;font-weight:600}
+h1,h2,h3{line-height:1.2;margin:0;font-weight:600;text-wrap:balance}
+p,dd,li{text-wrap:pretty}
 h1,h2{font-family:var(--display);letter-spacing:0;font-synthesis:none}
 h1{font-size:var(--fs-10)}h2{font-size:var(--fs-8)}h3{font-size:var(--fs-4)}
 p{margin:0 0 .6em}
@@ -45,7 +52,7 @@ button,input,select{font:inherit;color:inherit}
 .mu{color:var(--mu)}.sm{font-size:var(--fs-2)}.num{font-variant-numeric:tabular-nums}
 .vh{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 /* link de pular: fora da tela até receber foco */
-.pular{position:absolute;left:12px;top:-80px;z-index:60;background:var(--tinta);color:var(--tintaf);padding:10px 16px;border-radius:var(--r2);font-weight:600}
+.pular{position:absolute;left:12px;top:-80px;z-index:var(--zpular);background:var(--tinta);color:var(--tintaf);padding:10px 16px;border-radius:var(--r2);font-weight:600}
 .pular:focus{top:12px}
 /* o título que recebe o foco numa troca de tela (e o #app) não precisa de anel: não é um controle */
 #app:focus,h1[tabindex="-1"]:focus,h2[tabindex="-1"]:focus,[data-foco]:focus{outline:none}
@@ -53,7 +60,7 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 svg.i.s{width:16px;height:16px}
 
 /* ---------- cabeçalho ---------- */
-.hdr{position:sticky;top:0;z-index:20;background:var(--hdr);-webkit-backdrop-filter:saturate(160%) blur(14px);backdrop-filter:saturate(160%) blur(14px);border-bottom:3px double var(--ln2)}
+.hdr{position:sticky;top:0;z-index:var(--zhdr);background:var(--hdr);-webkit-backdrop-filter:saturate(160%) blur(14px);backdrop-filter:saturate(160%) blur(14px);border-bottom:3px double var(--ln2)}
 .hdr-in{max-width:1120px;margin:0 auto;padding:10px 20px;display:grid;grid-template-columns:auto 1fr auto;gap:12px 28px;align-items:center}
 .marca{display:flex;align-items:center;gap:10px;color:var(--fg);font:600 var(--fs-8)/1 var(--display);white-space:nowrap}
 @media(hover:hover){.marca:hover{text-decoration:none}}.marca img{width:30px;height:30px;border-radius:var(--r1);box-shadow:0 0 0 1px var(--ln2)}
@@ -85,7 +92,7 @@ input::placeholder{color:var(--mu)}
 .sec-h h2{font-size:var(--fs-8)}
 .sec-h h2{margin-right:auto}
 .sec-h a,.sec-h button.lnk{font-size:var(--fs-3);font-weight:600;white-space:nowrap}
-.card{background:var(--sf);border:1px solid var(--ln);border-radius:var(--r3);box-shadow:var(--sh1)}
+.card{background:var(--sf);border:1px solid var(--ln);border-radius:var(--r3)}
 .pad{padding:18px}
 @media(min-width:720px){.pad{padding:22px 26px}}
 footer.rod{max-width:1120px;margin:0 auto;padding:22px 20px 44px;color:var(--mu);font:var(--fs-4)/1.5 var(--serif);border-top:3px double var(--ln2);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:space-between}
@@ -104,6 +111,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 @media(hover:hover){.ib:hover{background:var(--sf2);color:var(--fg)}}
 .chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding:2px;margin:-2px}
 .chips::-webkit-scrollbar{display:none}
+.chips.mb{margin-bottom:16px}
 .chip{flex:none;display:inline-flex;transition:border-color .15s,transform .1s;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--ln3);background:var(--sf);font-size:var(--fs-3);font-weight:500;cursor:pointer;white-space:nowrap}
 @media(hover:hover){.chip:hover{border-color:var(--mu)}}
 .chip[aria-pressed=true]{background:var(--ac);border-color:var(--ac);color:var(--sf)}
@@ -156,7 +164,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 .cartao .a{font-size:var(--fs-2);color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cartao .p{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 6px;font-variant-numeric:tabular-nums}
 .cartao .p b{font-size:var(--fs-4)}.cartao .p s{font-size:var(--fs-1);color:var(--mu)}
-.cartao .selo{position:absolute;bottom:6px;left:6px;z-index:1}
+.cartao .selo{position:absolute;bottom:6px;left:6px;z-index:var(--zacima)}
 .cartao .selo.pill{box-shadow:0 1px 3px rgba(0,0,0,.18)}
 
 /* ---------- linhas de livro (busca, lista) ---------- */
@@ -183,6 +191,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 .spark{width:96px;height:32px;display:block}
 .spark path{fill:none;stroke:var(--ac);stroke-width:1.6;stroke-linejoin:round}
 @media(max-width:519px){.row .lado .spark{display:none}.row{gap:14px;padding:12px 14px}}
+.res{margin-top:10px}
 .mais{display:flex;justify-content:center;padding:18px}
 
 /* ---------- busca ---------- */
@@ -207,7 +216,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 .boas{padding:8px 0 0}
 .boas .sobre-t{font-size:var(--fs-1);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mu);margin:0 0 10px}
 .boas h1{font-size:var(--fs-12);line-height:1.05;max-width:720px}
-.boas p{color:var(--mu);margin:12px 0 0;font:var(--fs-6)/1.45 var(--serif)}
+.boas p{color:var(--mu);margin:12px 0 0;font:var(--fs-6)/1.45 var(--serif);max-width:60ch}
 @media(max-width:519px){.boas h1{font-size:var(--fs-9)}.boas p{font-size:var(--fs-4)}}
 .prox{display:flex;gap:14px;align-items:center;padding:14px 16px;border-left:4px solid var(--pri)}
 .prox .dia{flex:none;width:52px;height:56px;border-radius:var(--r2);background:var(--sf2);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
@@ -282,7 +291,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 .graf .pe{fill:var(--sf);stroke:var(--evl);stroke-width:2.5}
 .graf .cur{stroke:var(--mu2);stroke-width:1;stroke-dasharray:3 3}
 .graf .curp{fill:var(--ac);stroke:var(--sf);stroke-width:2.5}
-.tip{position:absolute;top:0;pointer-events:none;background:var(--tinta);color:var(--tintaf);border-radius:var(--r1);padding:6px 10px;font-size:var(--fs-2);line-height:1.35;white-space:nowrap;box-shadow:var(--sh2);transform:translateX(-50%);font-variant-numeric:tabular-nums;z-index:2}
+.tip{position:absolute;top:0;pointer-events:none;background:var(--tinta);color:var(--tintaf);border-radius:var(--r1);padding:6px 10px;font-size:var(--fs-2);line-height:1.35;white-space:nowrap;box-shadow:var(--sh2);transform:translateX(-50%);font-variant-numeric:tabular-nums;z-index:var(--ztip)}
 .tip b{font-size:var(--fs-3)}
 .tip[hidden]{display:none}
 .leg{display:flex;flex-wrap:wrap;gap:6px 8px;margin-top:10px}
@@ -313,13 +322,14 @@ details{font-size:var(--fs-3);color:var(--mu);margin-top:8px}summary{cursor:poin
 /* ---------- lista ---------- */
 .lista-h{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin-bottom:18px}
 .lista-h h1{font-size:var(--fs-10)}
+.lista-h .sub{margin:4px 0 0}
 .lista-h .ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 /* Com 16px, "Adicionados por último" mede ~174px; com a seta e a margem, o select pede 230px. Sem essa largura ao lado, o botão desce para a linha de baixo. */
 @media(max-width:599px){.lista-h>*{width:100%}.lista-h h1{font-size:var(--fs-9)}.lista-h .ctl .sel{flex:1 1 230px}.lista-h .ctl .btn{flex:1 1 auto}.lista-h .ctl .sel select{width:100%}}
 .lista-h .ctl .btn{height:36px}
 .resumo{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;font-size:var(--fs-3);padding:12px 16px;background:var(--sf2);border-radius:var(--r2)}
-.rm{position:relative;z-index:1}
-.alvo{position:relative;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:6px;font-size:var(--fs-2)}
+.rm{position:relative;z-index:var(--zacima)}
+.alvo{position:relative;z-index:var(--zacima);display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:6px;font-size:var(--fs-2)}
 .alvo .lnk{font-size:var(--fs-2);font-weight:600}
 .alvo-f{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .alvo-f input{width:110px;height:36px;padding:0 10px;border:1px solid var(--ln3);border-radius:var(--r1);background:var(--sf);font-size:var(--fs-5);-moz-appearance:textfield}
@@ -333,6 +343,7 @@ details{font-size:var(--fs-3);color:var(--mu);margin-top:8px}summary{cursor:poin
 
 /* ---------- sobre ---------- */
 .prosa{max-width:680px}
+.prosa .lead{font-size:var(--fs-6);margin-top:10px}
 .prosa h1{font-size:var(--fs-12)}
 @media(max-width:519px){.prosa h1{font-size:var(--fs-9)}}
 .prosa h2{font-size:var(--fs-9);margin:34px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--ln2)}.prosa p,.prosa li,.prosa dd{font:var(--fs-6)/1.6 var(--serif)}
@@ -340,7 +351,7 @@ details{font-size:var(--fs-3);color:var(--mu);margin-top:8px}summary{cursor:poin
 .prosa ul{padding-left:18px}.prosa li{margin:4px 0}
 
 /* ---------- avisos rápidos e carregamento ---------- */
-.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;background:var(--tinta);color:var(--tintaf);padding:12px 16px;border-radius:var(--r2);box-shadow:var(--sh2);display:flex;align-items:center;gap:16px;font-size:var(--fs-3);z-index:50;transition:opacity .2s,transform .2s;max-width:calc(100% - 32px);pointer-events:none}
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;background:var(--tinta);color:var(--tintaf);padding:12px 16px;border-radius:var(--r2);box-shadow:var(--sh2);display:flex;align-items:center;gap:16px;font-size:var(--fs-3);z-index:var(--ztoast);transition:opacity .2s,transform .2s;max-width:calc(100% - 32px);pointer-events:none}
 .toast.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
 .toast .atalho{font:600 var(--fs-1)/1 var(--f);opacity:.75;margin-left:6px;padding:2px 5px;border:1px solid currentColor;border-radius:var(--r0)}
 .toast button{border:0;background:none;color:inherit;font-weight:700;cursor:pointer;padding:4px;text-decoration:underline;text-underline-offset:3px}
@@ -349,6 +360,7 @@ details{font-size:var(--fs-3);color:var(--mu);margin-top:8px}summary{cursor:poin
 .sk-row{display:flex;gap:16px;padding:14px 16px;background:var(--sf);border:1px solid var(--ln);border-radius:var(--r3)}
 .sk-row .cv{background:var(--sf2);border-radius:var(--r0)}
 .sk-row .l{height:12px;margin:6px 0}
+.sk-corpo{flex:1}
 .esq{display:grid;gap:10px}
 .erro{text-align:center;padding:40px 16px}
 /* ---------- telas de toque: alvos de pelo menos 40px (44px nos campos e botões de ícone) ---------- */
@@ -372,5 +384,6 @@ details{font-size:var(--fs-3);color:var(--mu);margin-top:8px}summary{cursor:poin
 /* ---------- página avulsa do `grafico` (sem o app em volta) ---------- */
 body.avulsa{max-width:960px;margin:0 auto;padding:20px 16px}
 body.avulsa .compra{margin-top:18px}
+body.avulsa .sec h1+.mu{margin-top:6px}
 .poucos{display:flex;gap:12px;align-items:flex-start;background:var(--sf2);border-radius:var(--r2);padding:14px 16px;color:var(--mu);font-size:var(--fs-3);margin-top:4px}
 .poucos svg{color:var(--fg);margin-top:1px}.poucos p{margin:0}
