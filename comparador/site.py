@@ -46,7 +46,7 @@ from .varredura import GENEROS
 
 DETALHES = ("autor", "imagem", "publicado", "idioma", "obra", "nota", "avaliacoes")
 ARQUIVOS_WEB = ("index.html", "livro.html", "app.js", "busca.js", "lista.js", "livro.js", "estilo.css", "icone.svg",
-                "manifest.json")
+                "icone-180.png", "icone-192.png", "icone-512.png", "icone-maskable-512.png", "manifest.json")
 JANELA = 90            # dias do "preço mais comum" (mesma janela de livro.js)
 MIN_DIAS_COMUM = 14    # com menos dias de coleta na janela, o preço mais comum não é mostrado
 QUEDA_MIN = 0.05       # "baixaram de preço": queda de pelo menos 5%...
@@ -160,7 +160,7 @@ def _versionar(saida: Path) -> None:
     v = _versao(saida)
     for nome in ("index.html", "livro.html"):
         html = (saida / nome).read_text(encoding="utf-8")
-        html = re.sub(r'(src|href)="(\w+\.(?:js|css|svg|json))"', lambda m: f'{m[1]}="{m[2]}?v={v}"', html)
+        html = re.sub(r'(src|href)="([\w-]+\.(?:js|css|svg|json|png))"', lambda m: f'{m[1]}="{m[2]}?v={v}"', html)
         (saida / nome).write_text(html, encoding="utf-8")
 
 
