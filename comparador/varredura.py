@@ -534,6 +534,22 @@ def detalhes_em_falta(n: int, com: dict[str, int]) -> list[str]:
     return [CAMPOS_PREENCHIMENTO[c] for c in CAMPOS_ESPERADOS if com.get(c, 0) < PREENCHIMENTO_MIN * n]
 
 
+def ler_config(conn: sqlite3.Connection) -> dict:
+    return {r[0]: r[1] for r in conn.execute("SELECT chave, valor FROM config")}
+
+
+def aprender_ritmo(conn: sqlite3.Connection, r: Ritmo, teto_inicial: float, execucao) -> dict:
+    """Guarda no banco o teto e o último ritmo limpo para a próxima execução (ver ritmo.aprender)."""
+    from . import ritmo as modulo_ritmo
+    novo = modulo_ritmo.aprender(ler_config(conn), db.hoje_brasil().isoformat(), r, teto_inicial,
+                                 execucao["paginas"], execucao["bloqueios"], execucao["erros"] + execucao["curtas"])
+    for chave, valor in novo.items():
+        conn.execute("INSERT INTO config (chave, valor) VALUES (?, ?) "
+                     "ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor", (chave, valor))
+    conn.commit()
+    return novo
+
+
 def cobertura(conn: sqlite3.Connection, grupo: str = NO_HQ_MANGA) -> Cobertura:
     """Progresso do grupo hoje (cada banco guarda um grupo: um nó ou "vendidos")."""
     criar_schema(conn)

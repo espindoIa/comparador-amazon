@@ -390,6 +390,20 @@ class TestMaisVendidos(unittest.TestCase):
         varredura.varrer(self.conn, amazon, vendidos=["1"], minutos=10_000, dormir=lambda s: None)
         self.assertEqual({r[0] for r in self.conn.execute("SELECT dia FROM dias")}, {"2026-10-13"})
 
+    def test_teto_de_ritmo_fica_no_banco_e_sobe_depois_de_um_dia_limpo(self):
+        varredura.criar_schema(self.conn)
+        r = Ritmo(60, 60)
+        r.ppm = 60
+        eid = self.conn.execute("INSERT INTO execucoes (iniciada_em, paginas, bloqueios, erros, curtas) VALUES ('x', 8000, 0, 0, 1)").lastrowid
+        e = self.conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
+        mudou = varredura.aprender_ritmo(self.conn, r, 60.0, e)
+        self.assertEqual(mudou["ritmo_teto"], "75.0")
+        self.assertEqual(varredura.ler_config(self.conn)["ritmo_teto"], "75.0")
+        self.assertEqual(varredura.ler_config(self.conn)["ritmo_ultimo_limpo"], "60.0")
+        r2 = Ritmo(75, 75)                                           # a execução seguinte já começa com o teto novo
+        r2.ppm = 75
+        self.assertEqual(varredura.aprender_ritmo(self.conn, r2, 75.0, e), {"ritmo_ultimo_limpo": "75.0"})   # hoje já subiu
+
     def test_livros_sem_preco_nao_contam_e_aparecem_quando_voltam(self):
         # a cada 10 livros, 1 sem preço: 15 de 16 por página têm preço
         g = [(f"G{i:09d}", None if i % 10 == 9 else 1000 + i) for i in range(1300)]
@@ -585,7 +599,7 @@ class TestRitmoNaVarredura(unittest.TestCase):
         e = self.varrer(amazon, nos="123", ritmo=Ritmo(100, teto=100))
         self.assertEqual(self.vistos(), {a for l in por_no.values() for a, _ in l})
         self.assertGreater(max(len(l) for l in amazon.lotes), 1)
-        self.assertLessEqual(max(len(l) for l in amazon.lotes), 3)
+        self.assertLessEqual(max(len(l) for l in amazon.lotes), Ritmo(100, teto=100).pistas)      # 7 a 100 por minuto
         for lote in amazon.lotes:           # no máximo uma página por fatia em cada lote
             fatias = [re.sub(r"&page=\d+", "", u) for u in lote]
             self.assertEqual(len(fatias), len(set(fatias)))
@@ -645,8 +659,9 @@ class TestRitmoNaVarredura(unittest.TestCase):
     def test_parar_na_falha_para_na_primeira_e_diz_em_que_ritmo(self):
         amazon = AmazonRealista({"1": self.livros(80)}, falhas=[CACHORROS])
         e = self.varrer(amazon, ritmo=Ritmo(50, teto=50), parar_na_falha=True)
-        # 50 páginas/min = 2 ao mesmo tempo: uma foi bloqueada e a outra passou, e não houve um segundo lote
-        self.assertEqual((e["bloqueios"], e["paginas"], len(amazon.chamadas)), (1, 1, 2))
+        # 50 páginas/min = 4 pistas, mas só há 3 fatias: uma foi bloqueada, as outras duas passaram, e não houve
+        # um segundo lote
+        self.assertEqual((e["bloqueios"], e["paginas"], len(amazon.chamadas)), (1, 2, 3))
         self.assertIn("parada na primeira falha, programada a 50 páginas/min", e["observacao"])
 
     def test_falha_em_lote_conta_uma_vez_e_derruba_para_uma_pista(self):
@@ -654,8 +669,8 @@ class TestRitmoNaVarredura(unittest.TestCase):
                                 falhas=[CACHORROS] * 10, lote=True)
         ritmo = Ritmo(100, teto=100)
         e = self.varrer(amazon, nos="123", ritmo=ritmo)
-        self.assertEqual([len(l) for l in amazon.lotes[:1]], [3])
-        self.assertEqual(e["bloqueios"], 5)                          # lote de 3, depois 1 e 1: 3 lotes com falha
+        self.assertEqual([len(l) for l in amazon.lotes[:1]], [Ritmo(100, teto=100).pistas])      # 7 de 9 fatias
+        self.assertEqual(e["bloqueios"], 9)                          # lote de 7, depois 1 e 1: 3 lotes com falha
         self.assertIn("interrompida após 3 falhas seguidas", e["observacao"])
         self.assertEqual((ritmo.falhas, ritmo.ppm, ritmo.pistas), (3, PPM_RECUO, 1))
         self.assertLess(ritmo.teto, 100)                             # bloqueio é grave: o teto desce

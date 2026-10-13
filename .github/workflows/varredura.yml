@@ -18,6 +18,10 @@
 # - O banco fica em assets da release "catalogo" (não no git): cada execução publica uma
 #   cópia nova com data no nome e só então apaga as antigas. Ficam as 14 mais recentes e a
 #   última de cada um dos 30 dias anteriores (scripts/podar_copias.py; ~10–20 MB cada).
+# - Uma execução que termina limpa com o dia incompleto dispara a próxima (scripts/encadear.py), até 5 seguidas:
+#   o dia fecha sem esperar o horário agendado, que o GitHub atrasa em horas. Os 4 horários ficam como rede de
+#   segurança e terminam em segundos se o dia já está completo.
+# - O teto de ritmo fica no banco e sobe sozinho, 25% por dia limpo até 90 páginas/min programadas.
 # - Orçamento de 165 min por execução (o job tem 180): download e publicação levam segundos.
 # - O download usa a cópia mais recente que passa nas conferências (gzip inteiro, SQLite íntegro) e a publicação
 #   confere o tamanho no GitHub e repete o envio cortado (scripts/catalogo_release.py).
@@ -36,9 +40,17 @@ on:
       minutos:
         description: "Orçamento de tempo, em minutos"
         default: "165"
+      encadeadas:
+        description: "Uso interno: quantas execuções seguidas já foram encadeadas antes desta"
+        default: "0"
+      forcar_precos:
+        description: "Publicar mesmo se a trava de preços em massa recusar (só depois de conferir que a mudança é real)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+  actions: write       # para disparar a próxima execução (passo "Continua o dia")
 
 env:
   GH_TOKEN: ${{ github.token }}
@@ -61,6 +73,7 @@ jobs:
     env:
       ALVO: ${{ matrix.alvo }}
       DB: data/catalogo-${{ matrix.alvo }}.db
+      FORCAR_PRECOS: ${{ inputs.forcar_precos && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -84,10 +97,12 @@ jobs:
           MINUTOS: ${{ inputs.minutos || '165' }}
         run: |
           if [ "$ALVO" = vendidos ]; then QUAL=(--vendidos); else QUAL=(--no "$ALVO"); fi
+          echo "INICIO_RUN=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_ENV"
           python -m comparador --db "$DB" varrer "${QUAL[@]}" --minutos "$MINUTOS" --cliente navegador
 
       # Roda mesmo se a varredura falhou: o progresso até ali fica salvo.
       - name: Publica o catálogo
+        id: publica
         if: always()
         run: |
           [ -f "$DB" ] || exit 0
@@ -97,6 +112,9 @@ jobs:
           fi
           ANTES=""; [ -f "$RUNNER_TEMP/antes.db" ] && ANTES="$RUNNER_TEMP/antes.db"
           python scripts/verificar_banco.py "$DB" $ANTES --tabela catalogo --tabela historico --tabela dias --tabela generos
+          # Erro de leitura de preço (reais lidos como centavos, preço de capa no lugar do preço) mudaria quase todos
+          # os preços de uma vez: recusa a publicação e a release fica com a última cópia boa.
+          python scripts/verificar_precos.py "$DB" $ANTES ${FORCAR_PRECOS:+--forcar}
           # Envia, confere no GitHub (estado e tamanho) e repete se veio cortado; só então apaga as cópias antigas.
           python scripts/catalogo_release.py publicar "$ALVO" "$DB"
           # Só depois do upload: apaga as cópias desta categoria que não precisam ficar
@@ -104,6 +122,24 @@ jobs:
           gh release view catalogo --json assets --jq '.assets[].name' \
             | python scripts/podar_copias.py --alvo "$ALVO" \
             | while read -r velho; do gh release delete-asset catalogo "$velho" --yes; done
+
+      # Só depois de uma publicação confirmada (senão a próxima execução baixaria uma cópia mais velha e o
+      # trabalho desta se perderia). A decisão fica em scripts/encadear.py: dia incompleto, execução limpa e
+      # no máximo 5 seguidas. Os horários agendados continuam como rede de segurança.
+      - name: Continua o dia (dispara a próxima execução)
+        if: ${{ always() && steps.publica.outcome == 'success' }}
+        env:
+          ENCADEADAS: ${{ inputs.encadeadas || '0' }}
+          REF: ${{ github.ref_name }}
+        run: |
+          [ "$ALVO" = vendidos ] && [ -f "$DB" ] && [ -n "$INICIO_RUN" ] || exit 0
+          codigo=0
+          saida=$(python scripts/encadear.py "$DB" --desde "$INICIO_RUN" --encadeadas "$ENCADEADAS") || codigo=$?
+          echo "$saida" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$codigo" -eq 0 ]; then
+            gh workflow run varredura.yml --repo "$GITHUB_REPOSITORY" --ref "$REF" -f encadeadas="$((ENCADEADAS + 1))"
+            echo "próxima execução disparada ($((ENCADEADAS + 1)) seguida)" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Cobertura
         if: always()

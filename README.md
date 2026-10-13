@@ -67,9 +67,12 @@ Algumas decisões que vieram de medir as páginas reais:
 - Só entram ofertas vendidas pela própria Amazon (filtro "Vendido por" da busca). O filtro vale
   para o card, então um formato secundário pode vir de outro vendedor. Medimos isso em cerca de
   1,5% dos itens.
-- O ritmo começa em 21 páginas por minuto e sobe aos poucos até 60. Quando a Amazon bloqueia ou
-  devolve uma página com poucos resultados, ele cai. Não há rodízio de IP, disfarce de navegador
-  nem resolução de captcha.
+- O ritmo começa em 21 páginas por minuto e sobe aos poucos até o teto. O teto fica guardado no banco: começa em
+  60 e sobe 25% por dia de coleta limpa (sem bloqueio e quase sem página curta), até 90 programadas, o que dá
+  uns 78 reais por minuto. Depois de um bloqueio ele cai e fica parado por 3 dias. Quando a Amazon bloqueia
+  ou devolve uma página com poucos resultados, o ritmo cai na hora. É uma única sequência de requisições,
+  espaçadas no tempo: não há rodízio de IP, execução em paralelo em vários servidores, disfarce de navegador
+  nem resolução de captcha. Para fixar o teto, `--ritmo-max`.
 - Uma página com resultado ralo, mesmo com HTTP 200, conta como falha e é lida de novo.
 - O histórico guarda intervalos ("R$ 39,90 de 2 a 15 de outubro"). Ele só cresce quando o preço muda.
 
@@ -83,9 +86,16 @@ execução. O GitHub atrasa as execuções agendadas em horas, então nada depen
 continua de onde a anterior parou, e uma que atravessa a meia-noite recomeça as passadas em andamento,
 porque os preços de um dia precisam ser lidos no dia.
 
+Uma execução que termina limpa com o dia incompleto dispara a próxima (`scripts/encadear.py`, até 5
+seguidas), depois de confirmar a publicação do banco. Assim o dia fecha sem esperar o horário agendado. Depois
+de um bloqueio, de um aviso de layout ou de uma execução curta, ela não encadeia, e quem continua é o
+próximo horário. Os horários agendados terminam em segundos quando o dia já está completo.
+
 O banco fica na release `catalogo`, como `catalogo-vendidos-<data>.db.gz`. Antes de publicar uma
 cópia nova, `scripts/verificar_banco.py` confere duas coisas: que o banco está íntegro e que nenhuma
-tabela encolheu. `scripts/catalogo_release.py` faz o download (com tentativas e, se a cópia mais nova
+tabela encolheu, e `scripts/verificar_precos.py` compara os preços dos livros físicos com os da cópia
+anterior: se quase todos mudarem de uma vez (um erro de leitura, como reais lidos como centavos), a
+publicação é recusada e a release fica com a última cópia boa. `scripts/catalogo_release.py` faz o download (com tentativas e, se a cópia mais nova
 estiver quebrada, usando a anterior) e confere no GitHub o tamanho do que foi enviado. Ficam as 14
 cópias mais recentes e a última de cada um dos 30 dias anteriores.
 
