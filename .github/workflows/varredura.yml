@@ -1,6 +1,6 @@
 # Varredura DIÁRIA dos mais vendidos ("vendidos"): os ~2.000 livros mais vendidos (com preço de
-# compra) de cada um dos 29 gêneros de Livros (o ranking geral de Livros não é mais lido: custava 4,7% das
-# páginas para ~0,15% dos livros). A Amazon só mostra 75 páginas
+# compra) de cada um dos 29 gêneros de Livros (o ranking geral de Livros não é mais lido: custava 4,9% das
+# páginas para 0,29% dos livros). A Amazon só mostra 75 páginas
 # na ordem "mais vendidos", mas cada faixa de preço tem o seu ranking: cada categoria é lida em
 # 9 faixas (R$ 0–19,99 / 20–29,99 / 30–39,99 / 40–49,99 / 50–59,99 / 60–79,99 / 80–119,99 / 120–199,99 /
 # 200+), e cada faixa para ao completar 1.000 livros
@@ -10,9 +10,9 @@
 # continuam entrando como um dos gêneros).
 # Ritmo programado (comparador/ritmo.py): começa em 21 páginas/min e sobe até 60 programadas (~50 reais)
 # enquanto não há falha; recua em bloqueio ou página curta. Medido em out/2026: 0 bloqueios e 1 página curta
-# em ~5.100 páginas. São ~9 mil páginas por dia (13/10/2026: 9.473, 450 delas no ranking geral).
+# em ~5.100 páginas. São ~13 mil páginas por passada (13/10/2026: 13.795, 675 delas no ranking geral).
 #
-# Três sequências em paralelo: os 29 gêneros estão divididos em três grupos de ~3 mil páginas
+# Três sequências em paralelo: os 29 gêneros estão divididos em três grupos de ~4,4 mil páginas
 # (comparador.varredura.PARTICOES_VENDIDOS), cada um num servidor do GitHub (job da matrix), com banco
 # e teto de ritmo próprios. Cada servidor tem o seu IP, e é isso que permite ler em paralelo: a carga sobre a
 # Amazon é três vezes a de antes, em cada instante. O que não muda é o ritmo de cada sequência (o mesmo teto de 60

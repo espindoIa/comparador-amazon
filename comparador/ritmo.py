@@ -101,7 +101,7 @@ class Ritmo:
 # ---------- teto que se ajusta de um dia para o outro ----------
 # O teto não é fixo: fica guardado no banco (tabela config, que viaja na release) e sobe 25% por dia em que a
 # coleta rodou limpa no teto, até PPM_TETO_AUTO_MAX. Depois de um bloqueio (ou de falha repetida) cai para o
-# que o freio da execução deixou e fica parado por DIAS_DE_ESPERA dias. Assim cada dia de coleta (~3 mil
+# que o freio da execução deixou e fica parado por DIAS_DE_ESPERA dias. Assim cada dia de coleta (~4,4 mil
 # páginas por sequência) é a evidência para o próximo passo, e quem roda pode baixar o teto com `--ritmo-max`.
 PASSO_TETO = 1.25
 DIAS_DE_ESPERA = 3

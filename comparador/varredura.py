@@ -58,8 +58,8 @@ FAIXAS_VENDIDOS = [(0, 1999), (2000, 2999), (3000, 3999), (4000, 4999), (5000, 5
 # esta quantidade ou até o limite de páginas acima.
 LIVROS_POR_FAIXA = 1000
 GRUPO_VENDIDOS = "vendidos"
-# Ranking geral de Livros. Não é mais lido por padrão: custava 450 páginas por dia (4,7%) para ~0,15% dos livros
-# (os que não estão em nenhum gênero). Continua aceito em --generos.
+# Ranking geral de Livros. Não é mais lido por padrão: custava 675 páginas por passada (4,9%) para 565 livros (0,29% do
+# catálogo) que não estão em nenhum gênero. Continua aceito em --generos.
 NO_LIVROS = "6740748011"
 # Gêneros de Livros (subcategorias diretas), lidos da página da Amazon em out/2026.
 GENEROS = {
@@ -79,15 +79,16 @@ GENEROS = {
 }
 # Os 29 gêneros divididos em três sequências de coleta, uma por servidor do GitHub (job da matrix de varredura.yml).
 # O nome é o do alvo: cada sequência tem o seu banco (catalogo-<nome>-<data>.db.gz) e o site junta os três pelo ASIN.
-# Divisão por páginas lidas por dia (13/10/2026): 3.015, 2.991 e 3.017, ou seja, cada sequência faz um terço do dia.
+# Divisão pelas páginas de uma passada completa (banco de 13/10/2026, passada completa: 13.795 páginas, 675 delas no
+# ranking geral): 4.387, 4.395 e 4.338 para as três sequências, cada uma com um terço da passada.
 # Os nomes terminam em letra: um sufixo numérico casaria com o padrão de nomes dos outros alvos nos scripts da release.
 PARTICOES_VENDIDOS = {
-    "vendidos": ("7841720011", "7843925011", "12764254011", "7842741011", "7843068011",
-                 "7872687011", "7882388011", "7882415011", "7882554011", "7882627011"),
-    "vendidos-b": ("7841296011", "7841521011", "7841731011", "7842837011", "7841775011",
-                   "7872552011", "7842710011", "7874461011", "7873971011"),
-    "vendidos-c": ("7872854011", "7841795011", "7842641011", "7874340011", "7843058011",
-                   "7844001011", "7843064011", "7872829011", "7874675011", "7841279011"),
+    "vendidos": ("7872854011", "7841296011", "7841731011", "7843925011", "7842837011",
+                 "12764254011", "7842741011", "7843068011", "7843064011", "7882627011"),
+    "vendidos-b": ("7841795011", "7842641011", "7872552011", "7842710011", "7872687011",
+                   "7874461011", "7882388011", "7882415011", "7882554011", "7841279011"),
+    "vendidos-c": ("7841521011", "7841720011", "7874340011", "7843058011", "7841775011",
+                   "7844001011", "7872829011", "7873971011", "7874675011"),
 }
 PRECO_MAXIMO = SEM_TETO       # centavos: teto da última fatia
 FAIXAS_INICIAIS = [0, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 6000, 8000,

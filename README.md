@@ -56,8 +56,9 @@ node tests/busca.test.js                 # só a busca
 A Amazon só mostra 75 páginas (1.200 livros) de cada lista de mais vendidos, mas cada faixa de
 preço tem a própria lista. Por isso cada um dos 29 gêneros de Livros é lido em 9 faixas de preço,
 até juntar 1.000 livros com preço em cada faixa. Isso cobre com folga os ~2.000 mais vendidos de
-cada gênero. São cerca de 9 mil páginas por dia. O ranking geral de Livros não é lido: custava 450
-páginas por dia (4,7%) para uns 180 livros que não estão em nenhum gênero (0,15% do catálogo).
+cada gênero. São cerca de 13 mil páginas por passada completa (medido em 13/10: 13.795). O ranking geral de Livros
+não é lido: custava 675 páginas por passada (4,9%) para uns 565 livros que não estão em nenhum gênero (0,29% do
+catálogo).
 
 Algumas decisões que vieram de medir as páginas reais:
 
@@ -74,9 +75,9 @@ Algumas decisões que vieram de medir as páginas reais:
   Quando a Amazon bloqueia ou devolve uma página com poucos resultados, o ritmo cai na hora. Para fixar o
   teto, `--ritmo-max`; para mudar o limite da subida, `--teto-auto-max`.
 - A coleta roda em três sequências ao mesmo tempo, cada uma num servidor do GitHub e, portanto, com IP próprio.
-  Os 29 gêneros estão divididos em três grupos de ~3 mil páginas (`PARTICOES_VENDIDOS`), e cada grupo tem o
-  seu banco e o seu teto. Pela conta (3 mil páginas a uns 55 por minuto), o dia fecha em cerca de uma hora em vez de
-  quase três, mas a Amazon passa a receber três vezes mais requisições por minuto do que recebia. Cada sequência lê no mesmo ritmo de antes e
+  Os 29 gêneros estão divididos em três grupos de ~4,4 mil páginas (`PARTICOES_VENDIDOS`), e cada grupo tem o
+  seu banco e o seu teto. Pela conta (4,4 mil páginas a uns 55 por minuto), o dia fecha em cerca de 1h20 em vez de
+  uns 4h30, mas a Amazon passa a receber três vezes mais requisições por minuto do que recebia. Cada sequência lê no mesmo ritmo de antes e
   o total de páginas por dia é o mesmo; o que encolhe é a janela. Não há rodízio de IP: um bloqueio não
   troca de servidor nem de IP. Faz aquela sequência desacelerar e, se as falhas continuarem (3 seguidas), parar, e
   baixa o teto guardado dela. As outras duas não ficam sabendo. Também não há disfarce de navegador nem resolução de captcha.

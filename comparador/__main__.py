@@ -19,7 +19,7 @@ def main() -> None:
                    help="nó da categoria (padrão: %(default)s = HQs, Mangás e Graphic Novels)")
     v.add_argument("--vendidos", action="store_true",
                    help="em vez da categoria --no, os ~2.000 livros mais vendidos (com preço) de cada "
-                        "um dos 29 gêneros de Livros, em 9 faixas de preço (~9 mil páginas por dia)")
+                        "um dos 29 gêneros de Livros, em 9 faixas de preço (~13 mil páginas por passada)")
     v.add_argument("--minutos", type=float, default=150, help="orçamento de tempo (padrão: %(default)s)")
     v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
     v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
