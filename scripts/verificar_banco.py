@@ -8,10 +8,14 @@ que no banco anterior (sinal de que algo apagou ou recomeçou os dados).
 import argparse
 import sqlite3
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from comparador import db  # noqa: E402
 
 
-def contar(caminho: str, tabelas: list[str]) -> dict[str, int]:
-    conn = sqlite3.connect(f"file:{caminho}?mode=ro", uri=True)
+def contar(caminho: str, tabelas: list[str], papel: str = "banco") -> dict[str, int]:
+    conn = db.abrir_leitura(caminho, papel)
     try:
         try:
             ok = conn.execute("PRAGMA integrity_check").fetchone()[0]
@@ -32,10 +36,10 @@ def main() -> None:
     p.add_argument("anterior", nargs="?")
     p.add_argument("--tabela", action="append", required=True)
     a = p.parse_args()
-    novo = contar(a.novo, a.tabela)
+    novo = contar(a.novo, a.tabela, "novo")
     print("novo:", novo)
     if a.anterior:
-        antes = contar(a.anterior, a.tabela)
+        antes = contar(a.anterior, a.tabela, "anterior")
         print("anterior:", antes)
         encolheu = [t for t in a.tabela if novo[t] < antes[t]]
         if encolheu:

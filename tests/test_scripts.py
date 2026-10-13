@@ -3,12 +3,16 @@
 import gzip
 import importlib.util
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 PASTA = Path(__file__).resolve().parent.parent / "scripts"
+sys.path.insert(0, str(PASTA.parent))
+from comparador import db  # noqa: E402
 
 
 def carregar(nome):
@@ -398,6 +402,55 @@ class TestVigia(unittest.TestCase):
             r = subprocess.run([sys.executable, str(PASTA / "vigia.py"), str(arq), "--alvos", *self.ALVOS],
                                capture_output=True, text=True)
         self.assertEqual((r.returncode, r.stdout.split()), (0, ["vendidos-b", "vendidos-c"]), r.stderr)
+
+
+class TestBancoAusente(unittest.TestCase):
+    """Um banco que não abre tem de aparecer no log do workflow com o nome e o caminho, não como traceback do sqlite3."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.bom = Path(self.tmp.name) / "bom.db"
+        c = sqlite3.connect(self.bom)
+        c.execute("CREATE TABLE catalogo (asin TEXT PRIMARY KEY, formato TEXT)")
+        c.commit()
+        c.close()
+        self.falta = Path(self.tmp.name) / "falta.db"
+
+    def rodar(self, script, *args):
+        r = subprocess.run([sys.executable, str(PASTA / script), *map(str, args)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        return r.stderr
+
+    def test_verificar_banco_diz_qual_dos_dois_faltou(self):
+        self.assertIn(f"novo: banco não encontrado: {self.falta}", self.rodar("verificar_banco.py", self.falta, "--tabela", "catalogo"))
+        erro = self.rodar("verificar_banco.py", self.bom, self.falta, "--tabela", "catalogo")
+        self.assertIn(f"anterior: banco não encontrado: {self.falta}", erro)
+
+    def test_verificar_precos_diz_qual_dos_dois_faltou(self):
+        self.assertIn(f"anterior: banco não encontrado: {self.falta}", self.rodar("verificar_precos.py", self.bom, self.falta))
+        self.assertIn(f"novo: banco não encontrado: {self.falta}", self.rodar("verificar_precos.py", self.falta, self.bom))
+
+    def test_proximo_ciclo_diz_qual_banco_faltou(self):
+        erro = self.rodar("proximo_ciclo.py", self.falta, "--alvo", "vendidos", "--inicio-run", "2026-10-13T00:00:00+00:00")
+        self.assertIn(f"banco não encontrado: {self.falta}", erro)
+
+    def test_abrir_leitura_abre_so_para_leitura_e_aceita_caminho_com_espaco_e_cerquilha(self):
+        pasta = Path(self.tmp.name) / "pasta com espaço #1"
+        pasta.mkdir()
+        caminho = pasta / "x.db"
+        sqlite3.connect(caminho).close()
+        conn = db.abrir_leitura(caminho, "novo")
+        self.addCleanup(conn.close)
+        with self.assertRaises(sqlite3.OperationalError):
+            conn.execute("CREATE TABLE t (a)")                                  # mode=ro
+
+    def test_abrir_leitura_nao_cria_o_arquivo_que_falta(self):
+        with self.assertRaises(SystemExit) as e:
+            db.abrir_leitura(self.falta, "anterior")
+        self.assertIn(str(self.falta), str(e.exception))
+        self.assertFalse(self.falta.exists())
 
 
 if __name__ == "__main__":

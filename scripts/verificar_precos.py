@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from comparador import db  # noqa: E402
 from comparador.site import familia  # noqa: E402
 
 MIN_COMPARAVEIS = 1000
@@ -31,13 +32,15 @@ def _ultimos(conn: sqlite3.Connection) -> dict[str, tuple[int, str | None]]:
 
 
 def medir(novo: Path, anterior: Path) -> dict:
-    a = sqlite3.connect(f"file:{anterior}?mode=ro", uri=True)
-    n = sqlite3.connect(f"file:{novo}?mode=ro", uri=True)
+    a = db.abrir_leitura(anterior, "anterior")
     try:
-        antes, agora = _ultimos(a), _ultimos(n)
+        n = db.abrir_leitura(novo, "novo")
+        try:
+            antes, agora = _ultimos(a), _ultimos(n)
+        finally:
+            n.close()
     finally:
         a.close()
-        n.close()
     fisico = lambda f: familia(f) == "f"      # noqa: E731
     comparaveis = [(antes[k][0], p) for k, (p, f) in agora.items() if k in antes and fisico(f)]
     mudaram = [(x, y) for x, y in comparaveis if x != y]
