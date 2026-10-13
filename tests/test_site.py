@@ -410,7 +410,7 @@ class TestFolhaDeEstilo(unittest.TestCase):
         return set(re.findall(r"(--[a-z0-9]+):", bloco))
 
     def test_toda_cor_do_tema_claro_e_redefinida_no_escuro(self):
-        cores = {t for t in self.tokens(self.claro) if not t.startswith(("--fs-", "--r")) and t not in ("--f", "--serif", "--display")}
+        cores = {t for t in self.tokens(self.claro) if not t.startswith(("--fs-", "--r", "--z")) and t not in ("--f", "--serif", "--display")}
         self.assertEqual(cores - self.tokens(self.escuro), set(), "token de cor sem versão escura")
 
     def test_todo_var_usado_existe_e_todo_token_definido_e_usado(self):
@@ -490,7 +490,7 @@ class TestFolhaDeEstilo(unittest.TestCase):
 
         for nome, bloco in (("claro", self.claro), ("escuro", self.escuro)):
             t = {k: hexa(v) for k, v in re.findall(r"(--[a-z0-9]+):(#[0-9a-f]{3,6})(?=[;}])", bloco)}
-            pares = [(f, b) for f in ("--fg", "--mu", "--ac", "--dn", "--up", "--wr", "--med") for b in ("--bg", "--sf", "--sf2")]
+            pares = [(f, b) for f in ("--fg", "--mu", "--ac", "--dn", "--up", "--wr", "--med", "--evl") for b in ("--bg", "--sf", "--sf2")]
             pares += [("--dn", "--dns"), ("--up", "--ups"), ("--wr", "--wrs"), ("--ac", "--acs"), ("--prif", "--pri"), ("--tintaf", "--tinta"), ("--sf", "--ac")]                     # --sf sobre --ac: chip ligado e contador
             for f, b in pares:
                 self.assertGreaterEqual(razao(t[f], t[b]), 4.5, f"{nome}: {f} sobre {b}")
@@ -507,6 +507,23 @@ class TestFolhaDeEstilo(unittest.TestCase):
             self.assertIn("font-display:swap", f)
         self.assertIn("OFL.txt", site.ARQUIVOS_WEB)
         self.assertIn('href="cormorant-600.woff2" as="font" type="font/woff2" crossorigin', self.html)
+
+    def test_z_index_e_camadas_vem_dos_tokens(self):
+        self.assertEqual(re.findall(r"z-index:-?\d+", self.css), [], "z-index solto: use --zacima, --ztip, --zhdr, --ztoast, --zpular")
+
+    def test_modelos_em_js_so_tem_estilo_inline_de_esqueleto_e_matiz(self):
+        for nome in ("app.js", "livro.js"):
+            texto = (site.WEB / nome).read_text(encoding="utf-8")
+            for estilo in re.findall(r'style="([^"]*)"', texto):
+                props = {p.split(":")[0].strip() for p in estilo.split(";") if p.strip()}
+                self.assertLessEqual(props, {"width", "height", "margin-top", "--h"}, f"{nome}: style={estilo!r} devia ser classe")
+
+    def test_pagina_404_existe_e_e_publicada(self):
+        html = (site.WEB / "404.html").read_text(encoding="utf-8")
+        self.assertIn("404.html", site.ARQUIVOS_WEB)
+        self.assertIn('<meta name="robots" content="noindex">', html)
+        self.assertIn('href="estilo.css"', html)
+        self.assertIn("<base href=", html)                                    # funciona em qualquer profundidade de endereço
 
     def test_area_segura_e_cobertura_nao_se_misturam(self):
         # viewport-fit=cover sem env(safe-area-inset-*) deixa o conteúdo sob o entalhe; sem o cover, o navegador cuida

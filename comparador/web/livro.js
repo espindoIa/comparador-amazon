@@ -327,7 +327,7 @@
     var tr = D.trechos, eventos = D.eventos || [], ult = tr[tr.length - 1][1], atual = fatos(tr, ult), G = dadosGrafico(tr, eventos), L = limpar(D.titulo || D.asin);
     if (root.document && root.document.body) root.document.body.classList.add('avulsa');
     raiz.innerHTML = (D.aviso ? '<p class="aviso">' + esc(D.aviso) + '</p>' : '') +
-      '<section class="sec"><h1>' + esc(L.t) + '</h1><p class="mu" style="margin-top:6px">' + [D.formato, L.idioma, 'ASIN ' + D.asin].filter(Boolean).map(esc).join(' · ') + '</p>' +
+      '<section class="sec"><h1>' + esc(L.t) + '</h1><p class="mu">' + [D.formato, L.idioma, 'ASIN ' + D.asin].filter(Boolean).map(esc).join(' · ') + '</p>' +
       '<div class="compra"><div class="preco-g"><b>' + brl(atual.preco) + '</b><span class="mu sm">em ' + dl(ult) + '</span></div><div class="fat">' + comparacoes(atual) + '</div></div></section>' +
       '<section class="card pad sec"><div class="g-box"></div>' + avisoDados(atual) + estatisticas(atual, tr[0][0]) + '</section>' +
       secaoEventos(tr, eventos, ult);

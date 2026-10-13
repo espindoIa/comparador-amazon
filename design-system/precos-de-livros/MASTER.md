@@ -33,7 +33,8 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 | `--wr` / `--wrs` | aviso de dado velho ("sem coleta recente") | `#3f5a86` / `#e4eaf4` | `#9db7e8` / `#1c2638` |
 | `--med` | linha do preço mais comum | `#2f6b7a` | `#6fc3d2` |
 | `--capa` | linha do preço de capa | `#9a8e80` | `#85796a` |
-| `--ev` / `--evl` | faixa e nome das datas de promoção | violeta translúcido | violeta claro |
+| `--ev` / `--evl` | faixa e nome das datas de promoção | âmbar translúcido / `#92400e` (7,0:1 no sf) | âmbar translúcido / `#f0b26b` (9,2:1) |
+| `--grao` | opacidade do grão de papel | .05 | .07 |
 | `--filete` | filete dourado da capa gerada (decorativo) | âmbar translúcido | âmbar translúcido |
 
 - `--wr` e `--med` ficam em tons frios de propósito: em âmbar ou laranja se confundiriam com a marca.
@@ -65,7 +66,12 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 - **Lombada:** filete de 4 px à esquerda. Gêneros em `--ac`, cartão de promoção em `--pri`.
 - **Capa gerada** (sem imagem): pano de encadernação, com o matiz escolhido entre couro, vinho, verde, azul, ocre e ameixa (`PANOS` em `app.js`), e filete dourado.
   - Na capa pequena da lista vai só a inicial.
-- Sombras quentes (`--sh1`, `--sh2`, `--shc`).
+- **Um acento só:** marrom e âmbar. As datas de promoção usam o âmbar translúcido, sem cor nova. Verde e vermelho são semânticos (caiu/subiu), não acento; `--med` e `--wr`, frios, existem para não se confundir com a marca.
+- **Grão de papel:** `body::before` com ruído SVG (`feTurbulence`) na opacidade `--grao`, atrás do conteúdo (`--zpapel`), sem clique; some no alto contraste e na impressão.
+- **Sombras quentes** (`--sh1`, `--sh2`, `--shc`) só no que flutua ou responde: hover de linha e de gênero, dica do gráfico, aviso rápido, capas, segmento ligado. Cartão em repouso (`.card`, `.row`, `.ferr`) tem só borda `--ln`.
+- **Camadas:** `--zpapel` −1, `--zacima` 1, `--ztip` 2, `--zhdr` 20, `--ztoast` 50, `--zpular` 60. Não existe `z-index` solto 🔒.
+- **Quebra de linha:** `h1,h2,h3` com `text-wrap:balance`; `p,dd,li` com `text-wrap:pretty`; parágrafo de abertura até 60ch.
+- **Rolagem:** suave só sem movimento reduzido; restaurar a posição (voltar) e trocar de filtro na busca são instantâneos.
 - Espaçamento: passos de 2 px, sem token. Lacunas comuns: 8, 12, 14, 16, 18, 24.
 
 ## Componentes e estados
@@ -79,6 +85,7 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 | Livro em lista | `.row` (busca, lista) e `.cartao` (estantes) | hover; foco cerca a linha inteira 🔒 |
 | Carregando | `esqueleto(n)` / `.sk` | sem brilho com movimento reduzido |
 | Vazio e erro | `.vazio` (medalhão `--acs`/`--ac`), `erro(msg)` | sempre com ação |
+| Página 404 | `404.html` (GitHub Pages) | bloco `.vazio` com `h1` e "Ir para o início"; `<base>` calculada para funcionar em qualquer profundidade de endereço |
 | Aviso rápido | `#toast` | 5 s; 10 s com ação; pausa com ponteiro ou foco; Esc fecha |
 
 ## Acessibilidade (obrigatório)
@@ -102,6 +109,6 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 - Texto em `--mu2`; borda de campo em `--ln2`.
 - Cormorant em texto pequeno; serifa em controle ou em preço.
 - Cor como único sinal (preço caiu/subiu, série do gráfico).
-- `style="..."` com tamanho de fonte em px nos modelos em JS 🔒; hover fora de `@media(hover:hover)` 🔒.
+- `style="..."` nos modelos em JS, a não ser larguras/alturas do esqueleto e o `--h` da capa gerada 🔒; hover fora de `@media(hover:hover)` 🔒.
 - Emoji como ícone: os ícones são SVG de traço (`IC` em `app.js`).
 - Fontes externas (Google), carrossel, depoimentos, CTA de landing page.
