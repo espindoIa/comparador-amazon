@@ -176,8 +176,9 @@ def _previa(saida: Path, url: str, v: str) -> None:
     html = (saida / "index.html").read_text(encoding="utf-8")
     if marca not in html:
         raise ValueError("index.html sem a meta og:locale, onde entra a prévia")
-    tags = (f'<meta property="og:url" content="{url}/">\n'
-            f'<meta property="og:image" content="{url}/icone-512.png?v={v}">\n'
+    # sem og:url: as telas do app são o mesmo index.html com ?livro=…/?lista=…, e um endereço canônico único
+    # faria o link compartilhado de um livro ou de uma lista abrir na página inicial
+    tags = (f'<meta property="og:image" content="{url}/icone-512.png?v={v}">\n'
             '<meta property="og:image:width" content="512">\n<meta property="og:image:height" content="512">\n'
             '<meta property="og:image:alt" content="Ícone do Preços de livros">\n')
     (saida / "index.html").write_text(html.replace(marca, marca + tags), encoding="utf-8")

@@ -352,7 +352,7 @@ class TestSite(unittest.TestCase):
         site.construir([self.d / "a.db"], self.d / "com", url="https://exemplo.github.io/comparador-amazon/")
         html = (self.d / "com/index.html").read_text(encoding="utf-8")
         self.assertRegex(html, r'<meta property="og:image" content="https://exemplo\.github\.io/comparador-amazon/icone-512\.png\?v=[0-9a-f]{10}">')
-        self.assertIn('<meta property="og:url" content="https://exemplo.github.io/comparador-amazon/">', html)
+        self.assertNotIn("og:url", html)                                            # canônico único levaria todo link compartilhado ao início
         v = re.search(r'href="estilo\.css\?v=([0-9a-f]{10})"', html).group(1)
         self.assertIn(f"icone-512.png?v={v}", html)                                   # a mesma versão dos outros arquivos
         with self.assertRaises(ValueError):
