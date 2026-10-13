@@ -35,7 +35,7 @@ Os tokens têm paridade completa entre os temas (os 29 tokens de cor e sombra s�
 | # | Issue | File(s) | Why | Fix |
 |---|-------|---------|-----|-----|
 | R1 | **O foco de teclado na lista não cerca o cartão.** Em `div.row`, o link esticado (`.esticar::after{inset:0}`) cobre o cartão para o clique e o hover tem tratamento (`div.row:has(.esticar:hover)`), mas o anel de foco aparece só ao redor do título. Confirmado na renderização, em claro e em escuro. | `estilo.css:146,157`; `app.js:544` | Quem navega por teclado vê um alvo menor do que o que o mouse enxerga. A "Minha lista" é uma das telas centrais. | `div.row:has(.esticar:focus-visible){outline:2px solid var(--ac);outline-offset:2px}` e `.row .esticar:focus-visible{outline:none}`, espelhando a regra do hover. |
-| R2 | **Escala sem tokens.** São 27 tamanhos de fonte distintos (7, 9, 11, 11,5, 12, 12,5, 13, 13,5, 14, 15, 15,5, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27, 28, 30, 32, 34 e 40 px, com meios pixels) e 9 tamanhos de `h1` (22 a 34). Raios: `10px` aparece 5 vezes fora da escala `--r1` 8 / `--r2` 12, e `8px` aparece 5 vezes escrito à mão. | `estilo.css` | Cada tela novo escolhe um número novo, e a hierarquia do início, da busca, do livro e da lista não se compara. | Definir de 6 a 8 degraus (`--fs-*`) e 2 tamanhos de `h1` (computador e celular); trocar `10px` e `8px` por tokens de raio. |
+| R2 | **Escala sem tokens.** São 27 tamanhos de fonte distintos (7, 9, 11, 11,5, 12, 12,5, 13, 13,5, 14, 15, 15,5, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27, 28, 30, 32, 34 e 40 px, com meios pixels) e 9 tamanhos de `h1` (22 a 34). Raios: `10px` aparece 5 vezes fora da escala `--r1` 8 / `--r2` 12, e `8px` aparece 5 vezes escrito à mão. | `estilo.css` | Cada tela nova escolhe um número novo, e a hierarquia do início, da busca, do livro e da lista não se compara. | Definir de 6 a 8 degraus (`--fs-*`) e 2 tamanhos de `h1` (computador e celular); trocar `10px` e `8px` por tokens de raio. |
 | R3 | **Três tokens sem uso**: `--r1`, `--ac2` e `--acf` só aparecem na definição (e `--ac2`/`--acf` nos dois temas). | `estilo.css:4,5,12,19` | Dá a falsa impressão de que existe um tom de realce em hover e uma cor de texto sobre o realce. | Usar (`--r1` resolve parte de R2) ou apagar. |
 | R4 | **Estados que faltam.** Sem hover: `.seg button` (seletor de período do gráfico), `.leg button` (legenda), `.sel select` e `.busca input`. Sem `:active`: `.chip`, `.ib`, enquanto `.btn` tem `scale(.98)`. Os hovers não estão atrás de `@media(hover:hover)`, então ficam "presos" depois de um toque no celular. | `estilo.css:81-103,144-146` | A mesma família de controles reage de jeitos diferentes. | Uma regra comum de hover para controles segmentados e legenda; envolver os hovers em `@media(hover:hover)`. |
 | R5 | **Alvos de toque abaixo de 44 px**: `.ib` 40; `.chip`, `.btn.sm`, campos e selects 36; `.busca .limpa` 32; `.seg button` e `.leg button` 30. Todos passam o mínimo de 24 px do WCAG 2.2 AA, mas ficam abaixo dos 44 pt do iOS. | `estilo.css:52,84,87,91,98,102,264` | Os mais apertados são justamente os do gráfico (período e legenda), que se usa com o dedo. | Aumentar a área de toque com `::before` ou padding sem mexer no desenho (começar por `.seg button` e `.leg button`). |
@@ -48,7 +48,7 @@ Os tokens têm paridade completa entre os temas (os 29 tokens de cor e sombra s�
 |---|------------|-----------|
 | N1 | `@media (forced-colors: active)` com contorno nos estados `aria-pressed` e `aria-current` | `.chip`, `.seg`, `.btn.pri` e `.badge` dependem só da cor de fundo, que o modo de alto contraste do Windows remove. |
 | N2 | Manter um indicador mínimo em `prefers-reduced-motion` | `*{animation:none!important}` congela o `.giro`, que vira um anel parado; o texto "Buscando…" continua, mas o brilho do esqueleto também some. |
-| N3 | Remover `.btn.salvar svg{transition:transform .2s}` | Nenhuma regra muda o `transform` desse ícone; só o preenchimento muda. |
+| N3 | Remover as regras sem uso: `.btn.salvar svg{transition:transform .2s}` e `.seg button:disabled` | Nenhuma regra muda o `transform` desse ícone (só o preenchimento muda), e nenhum arquivo `.js` define `disabled` em nenhum elemento. |
 | N4 | Capas de substituição: texto de 9 px (7 px em `.cv.p`) | É ilegível nessa largura; basta a inicial ou nada, já que está `aria-hidden`. O branco sobre o gradiente chega a 3,65:1 no pior matiz. |
 | N5 | Trocar os `style=` estáticos dos modelos em JS por classes | Margens e tamanhos fixos em 8 pontos de `app.js` e `livro.js` (por exemplo `style="margin:4px 0 0"`, `style="font-size:17px"`; o `h2` com `font-size:19px` em `livro.js:161` repete `.graf-h h2`). Os `style=` de largura do esqueleto estão certos. |
 
@@ -64,11 +64,11 @@ Os tokens têm paridade completa entre os temas (os 29 tokens de cor e sombra s�
 
 | Component/Element | Hover | Focus | Active | Disabled | Loading | Empty | Error | Dark Mode |
 |-------------------|-------|-------|--------|----------|---------|-------|-------|-----------|
-| `.btn` | ✓ | ✓ (global) | ✓ | ✗ (sem estilo; nenhum uso) | n/a | n/a | n/a | ✓ |
+| `.btn` | ✓ | ✓ (global) | ✓ | n/a (nenhum botão é desabilitado) | n/a | n/a | n/a | ✓ |
 | `.chip` (filtros) | ✓ | ✓ | ✗ | n/a | n/a | n/a | n/a | ✓ |
-| `.seg button` (período) | ✗ | ✓ | ✗ | ✓ | n/a | n/a | n/a | ✓ |
+| `.seg button` (período) | ✗ | ✓ | ✗ | n/a (estilo existe, nada o usa) | n/a | n/a | n/a | ✓ |
 | `.leg button` (legenda) | ✗ | ✓ | ✗ | n/a | n/a | n/a | n/a | ✓ |
-| Campos (busca, preço, `select`) | ✗ | ✓ | n/a | ✗ | n/a | n/a | ✗ (sem `:invalid`) | ✓ (borda fraca, R6) |
+| Campos (busca, preço, `select`) | ✗ | ✓ | n/a | n/a | n/a | n/a | ✗ (sem `:invalid`) | ✓ (borda fraca, R6) |
 | `.ib` (botão de ícone) | ✓ | ✓ | ✗ | n/a | n/a | n/a | n/a | ✓ |
 | Linha da lista (`div.row`) | ✓ | ✗ (só no título, R1) | n/a | n/a | ✓ | ✓ | ✓ | ✓ |
 | Linha da busca (`a.row`) | ✓ | ✓ | n/a | n/a | ✓ | ✓ | ✓ | ✓ |
