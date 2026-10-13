@@ -1,4 +1,15 @@
 {
   "model": "claude-sonnet-5-5",
-  "advisorModel": "claude-opus-5-5"
+  "advisorModel": "claude-opus-5-5",
+  "extraKnownMarketplaces": {
+    "taste-skill": {
+      "source": {
+        "source": "github",
+        "repo": "Leonxlnx/taste-skill"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "taste-skill@taste-skill": true
+  }
 }
