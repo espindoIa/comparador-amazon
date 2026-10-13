@@ -344,6 +344,13 @@ class TestProximoCiclo(unittest.TestCase):
         quando, motivo = r.stdout.splitlines()
         self.assertTrue(datetime.fromisoformat(quando) > datetime.now(timezone.utc))
         self.assertIn("ciclo", motivo)
+        rj = subprocess.run([sys.executable, str(PASTA / "proximo_ciclo.py"), str(arquivo), "--alvo", "vendidos-b",
+                             "--inicio-run", "2000-01-01T00:00:00+00:00", "--json"], capture_output=True, text=True)
+        self.assertEqual(rj.returncode, 0, rj.stderr)
+        dados = __import__("json").loads(rj.stdout)                         # só o JSON na saída
+        self.assertEqual(sorted(dados), ["motivo", "quando"])
+        self.assertTrue(datetime.fromisoformat(dados["quando"]) > datetime.now(timezone.utc))   # o horário tem um sorteio: não se compara o valor
+        self.assertIn("ciclo", dados["motivo"])
 
 
 class TestEspera(unittest.TestCase):
@@ -451,6 +458,32 @@ class TestBancoAusente(unittest.TestCase):
             db.abrir_leitura(self.falta, "anterior")
         self.assertIn(str(self.falta), str(e.exception))
         self.assertFalse(self.falta.exists())
+
+
+class TestEsperaLinhaDeComando(unittest.TestCase):
+    def rodar(self, *args):
+        return subprocess.run([sys.executable, str(PASTA / "espera.py"), *args], capture_output=True, text=True, timeout=60)
+
+    def test_entrada_ruim_vira_mensagem_com_exemplo_e_nao_traceback(self):
+        for args, texto in (([], "instante"), (["amanha"], "não é um instante ISO 8601"),
+                            (["2026-10-13T18:00:00"], "não tem fuso")):
+            with self.subTest(args=args):
+                r = self.rodar(*args)
+                self.assertEqual(r.returncode, 2, r.stdout)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertIn(texto, r.stderr)
+        self.assertIn("2026-10-13T18:00:00+00:00", self.rodar("amanha").stderr)
+
+    def test_aceita_fuso_explicito_e_o_z_e_um_instante_passado_dispara_na_hora(self):
+        for instante in ("2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00Z", "2000-01-01T03:00:00+03:00"):
+            with self.subTest(instante=instante):
+                r = self.rodar(instante)
+                self.assertEqual((r.returncode, r.stdout.strip()), (0, "disparar"), r.stderr)
+
+    def test_instante_devolve_datetime_com_fuso(self):
+        self.assertEqual(espera.instante("2026-10-13T18:00:00Z"), datetime(2026, 10, 13, 18, tzinfo=timezone.utc))
+        with self.assertRaises(Exception):
+            espera.instante("2026-10-13T18:00:00")
 
 
 if __name__ == "__main__":
