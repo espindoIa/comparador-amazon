@@ -429,6 +429,29 @@ class TestSiteNoNavegador(unittest.TestCase):
             b.close()
         self.assertEqual(erros, [])
 
+    def test_estante_no_computador_tem_ver_todos_quando_esconde_livros(self):
+        from playwright.sync_api import sync_playwright
+        h = lambda a, b: [("2026-10-01", "2026-10-08", a, None), ("2026-10-09", "2026-10-09", b, None)]
+        base = self._servir([(f"A0000000{i:02d}", f"Livro {i}", "Capa comum", h(5000, 3000 + i)) for i in range(10)])
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            for largura, esperado in ((1280, True), (390, False)):
+                pg = b.new_page(viewport={"width": largura, "height": 900})
+                pg.goto(f"{base}/")
+                pg.wait_for_selector("#baixa .cartao")
+                pg.wait_for_timeout(200)
+                visiveis = pg.eval_on_selector_all("#baixa .cartao", "e => e.filter(c => !c.inert).length")
+                botao = pg.locator('#baixa [data-acao="abrir-estante"]')
+                self.assertEqual(botao.count() == 1, esperado, largura)
+                if esperado:
+                    self.assertLess(visiveis, 10)                                       # uma fileira só...
+                    botao.click()                                                       # ...e "Ver todos" mostra o resto
+                    self.assertEqual(pg.eval_on_selector_all("#baixa .grade .cartao", "e => e.filter(c => !c.inert).length"), 10)
+                else:
+                    self.assertEqual(visiveis, 10)                                      # no celular a estante rola
+                pg.close()
+            b.close()
+
     def test_buscar_salvar_na_lista_e_abrir_historico(self):
         from playwright.sync_api import sync_playwright
         base = self._servir([("8535902775", "A paciente silenciosa", "Capa comum", [("2026-10-01", "2026-10-20", 3499, 6490)]),

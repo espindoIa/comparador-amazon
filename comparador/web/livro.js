@@ -110,9 +110,9 @@
   function estatisticas(f, inicio) {
     var varios = f.diasObservados > 1, curto = f.ate - inicio + 1 < f.diasJanela, desde = curto ? 'desde ' + dmes(inicio) : 'em ' + f.diasJanela + ' dias';
     return '<div class="stats">' +
-      celula('Preço mais comum', f.diasObservados >= MIN_COMUM ? brl(f.mediana) : '–', f.diasObservados >= MIN_COMUM ? 'mediana ' + desde : 'aparece com ' + MIN_COMUM + ' dias de coleta') +
-      celula('Mais barato', varios ? brl(f.minimo) : '–', varios ? dl(f.diaMinimo) : 'precisa de 2 dias de coleta') +
-      celula('Mais caro', varios ? brl(f.maximo) : '–', varios ? dl(f.diaMaximo) : 'precisa de 2 dias de coleta') +
+      celula('Preço mais comum', f.diasObservados >= MIN_COMUM ? brl(f.mediana) : '–', f.diasObservados >= MIN_COMUM ? 'mediana ' + desde : 'a partir de ' + MIN_COMUM + ' dias') +
+      celula('Menor preço', varios ? brl(f.minimo) : '–', varios ? dl(f.diaMinimo) : 'a partir de 2 dias') +
+      celula('Maior preço', varios ? brl(f.maximo) : '–', varios ? dl(f.diaMaximo) : 'a partir de 2 dias') +
       celula('Acompanhado desde', dl(inicio), plural(f.diasObservados, 'dia com preço', 'dias com preço') + (curto ? '' : ' em 90')) + '</div>';
   }
   function avisoDados(f) {
@@ -157,9 +157,8 @@
       if (f) blocos.push(blocoEvento(e, f));
       else if (e[1] > hoje && (!prox || e[1] < prox[1])) prox = e;
     });
-    if (prox) blocos.push('<div class="ev-b"><h3>' + esc(prox[0]) + ' <small>' + dl(prox[1]) + ', daqui a ' + plural(prox[1] - hoje, 'dia', 'dias') + '</small></h3>' +
-      '<p class="mu sm">O preço deste livro na data vai aparecer aqui, comparado com o preço mais comum dos 90 dias anteriores.</p></div>');
-    return blocos.length ? '<section class="card pad sec"><h2 style="margin-bottom:8px">Datas de promoção</h2>' + blocos.join('') + '</section>' : '';
+    if (prox) blocos.push('<div class="ev-b ev-prox"><h3>' + esc(prox[0]) + '</h3><span>' + dl(prox[1]) + ' · daqui a ' + plural(prox[1] - hoje, 'dia', 'dias') + '</span></div>');
+    return blocos.length ? '<section class="card pad sec"><h2 style="font-size:19px;margin-bottom:10px">Datas de promoção</h2>' + blocos.join('') + '</section>' : '';
   }
 
   // dados do gráfico: dias com faixa, trechos, eventos próximos e janela inicial
