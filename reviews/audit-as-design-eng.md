@@ -81,3 +81,9 @@ Os tokens têm paridade completa entre os temas (os 29 tokens de cor e sombra s�
 - Dark Mode Parity: PASS (todos os tokens redefinidos e renderizado sem quebras; ressalvas em V2 e R6)
 - Animation Quality: PASS (só `transform` e `opacity`, 100–200 ms, regra de `prefers-reduced-motion`; ver N2 e N3)
 - Visual Consistency: CONCERNS (27 tamanhos de fonte, 9 de `h1`, `10px` fora da escala de raios)
+
+## Atualização: o que foi corrigido (PRs #31 e seguintes)
+
+- **V1 e V2** foram corrigidos no PR #31.
+- **Sobre o V1:** a correção usou `font-size: 16px` **sem** a media query de 719 px sugerida na tabela, como o campo de busca já fazia. Uma media query por largura deixaria de fora o iPhone na horizontal e o iPad.
+- **Efeito colateral não previsto no relatório:** com 16 px, os rótulos padrão dos seletores (`Todos os gêneros`, `Adicionados por último`) deixaram de caber lado a lado em celular. O PR #31 faz a linha quebrar quando não cabe.
