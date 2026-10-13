@@ -425,9 +425,28 @@ class TestFolhaDeEstilo(unittest.TestCase):
             self.assertIn("border:1px solid var(--ln3)", regra, seletor)
 
     def test_nenhum_hover_fora_do_media_de_ponteiro_com_hover(self):
-        for regra in re.findall(r"(?:^|\})\s*([^{}@]*:hover[^{}]*)\{", self.css):
+        fora, nivel, i = [], 0, 0
+        css = self.css
+        while i < len(css):                                              # tira os blocos @media(hover:hover){...}, com chaves balanceadas
+            if css.startswith("@media(hover:hover){", i):
+                i = css.index("{", i)
+                prof = 0
+                while True:
+                    prof += (css[i] == "{") - (css[i] == "}")
+                    i += 1
+                    if prof == 0:
+                        break
+                continue
+            fora.append(css[i]); i += 1
+        for regra in re.findall(r"(?:^|\})\s*([^{}@]*:hover[^{}]*)\{", "".join(fora)):
             self.fail(f"regra de :hover fora de @media(hover:hover): {regra.strip()}")
         self.assertIn("@media(hover:hover){", self.css)
+
+    def test_botao_ao_lado_de_campo_tem_a_altura_do_campo_no_toque(self):
+        toque = self.css[self.css.index("@media(pointer:coarse){"):].split("\n}", 1)[0]
+        altura = lambda sel: re.search(re.escape(sel) + r"\{height:(\d+)px", toque).group(1)
+        self.assertEqual(altura(".sel select,.faixa-preco input,.alvo-f input"), "44")
+        self.assertEqual(altura(".lista-h .ctl .btn,.alvo-f .btn"), "44")
 
     def test_anel_do_link_so_some_onde_o_anel_da_linha_funciona(self):
         # sem :has, a regra da linha é descartada: se a que tira o anel do link valesse sozinha, o link ficaria sem foco visível

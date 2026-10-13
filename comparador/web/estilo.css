@@ -130,7 +130,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 .grade{display:grid;grid-template-columns:repeat(auto-fill,minmax(136px,1fr));gap:24px 18px}
 @media(max-width:719px){.grade{grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:20px 14px}}
 .cartao{display:flex;flex-direction:column;gap:4px;color:var(--fg);scroll-snap-align:start;min-width:0}
-@media(hover:hover){.cartao:hover{text-decoration:none}}@media(hover:hover){.cartao:hover .t{text-decoration:underline}}
+@media(hover:hover){.cartao:hover{text-decoration:none}.cartao:hover .t{text-decoration:underline}}
 .cartao .cv{margin-bottom:6px}
 .cartao .t{font:600 14px/1.3 var(--serif);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .cartao .a{font-size:12.5px;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -329,9 +329,10 @@ details{font-size:14px;color:var(--mu);margin-top:8px}summary{cursor:pointer;fon
 @media(pointer:coarse){
   .ib{width:44px;height:44px}
   .busca .limpa{width:40px;height:40px;right:2px}
-  .chip,.leg button,.btn.sm,.lista-h .ctl .btn{height:40px}
+  .chip,.leg button,.btn.sm{height:40px}
   .seg{padding:2px}.seg button{height:40px}
   .sel select,.faixa-preco input,.alvo-f input{height:44px}
+  .lista-h .ctl .btn,.alvo-f .btn{height:44px}                /* os botões ao lado de um campo têm a altura dele */
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
