@@ -6,6 +6,7 @@ Fixtures REAIS (out/2026, trechos de páginas de busca da categoria HQs e Mangá
 
 import contextlib
 import io
+import json
 import re
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from comparador import __main__ as varredura_cli
 from comparador import db, varredura
 from comparador.busca import ItemBusca, LayoutDesconhecido, parse_busca, url_busca
 from comparador.ritmo import PPM_RECUO, Ritmo
@@ -418,6 +420,131 @@ class TestLinhaDeComando(unittest.TestCase):
             self.assertIn("ritmo: começa em", saida)                                 # o plano sai inteiro, depois o aviso
             self.assertIn("a execução pararia aqui: o módulo playwright não está instalado", erro)
             self.assertFalse(Path(f"{d}/c.db").exists())
+
+    def banco_com_ciclo(self, caminho, horas):
+        conn = db.conectar(caminho)
+        varredura.criar_schema(conn)
+        conn.execute("INSERT INTO config (chave, valor) VALUES ('ciclo_horas', ?)", (str(horas),))
+        conn.commit()
+        conn.close()
+
+    def test_db_vale_antes_e_depois_do_comando_e_o_de_depois_manda(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = f"{d}/a.db", f"{d}/b.db"
+            self.banco_com_ciclo(a, 6)
+            self.banco_com_ciclo(b, 24)
+            ciclo = lambda *args: json.loads(self.principal(*args)[1])["ciclo_horas"]
+            self.assertEqual(ciclo("--db", a, "catalogo", "--json"), 6)                  # antes do comando
+            self.assertEqual(ciclo("catalogo", "--db", b, "--json"), 24)                 # depois do comando
+            self.assertEqual(ciclo("--db", a, "catalogo", "--db", b, "--json"), 24)      # nos dois: vale o de depois
+            codigo, _, erro = self.principal("catalogo", "--json")                       # nenhum: o padrão, que não existe aqui
+            self.assertEqual(codigo, 1)
+            self.assertIn(f"banco não encontrado: {varredura_cli.DB_PADRAO}", erro)
+
+    def test_catalogo_grafico_e_site_recusam_banco_que_nao_existe_sem_criar_arquivo(self):
+        with tempfile.TemporaryDirectory() as d:
+            falta = f"{d}/falta.db"
+            for args in (["--db", falta, "catalogo"], ["--db", falta, "grafico", "x"], ["site", falta, "--saida", f"{d}/s"]):
+                with self.subTest(args=args[2:]):
+                    codigo, _, erro = self.principal(*args)
+                    self.assertEqual(codigo, 1)
+                    self.assertIn("banco não encontrado", erro)
+                    self.assertIn(falta, erro)
+            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), [])              # nada foi criado
+
+    def test_banco_ausente_lembra_que_o_padrao_mudou_se_o_antigo_existe(self):
+        import os
+        antes = os.getcwd()
+        with tempfile.TemporaryDirectory() as d:
+            self.addCleanup(os.chdir, antes)
+            os.chdir(d)
+            Path("data").mkdir()
+            Path("data/catalogo.db").write_bytes(b"")
+            codigo, _, erro = self.principal("catalogo")
+        self.assertEqual(codigo, 1)
+        self.assertIn("o padrão era data/catalogo.db", erro)
+
+    def test_sem_opcoes_o_modo_e_o_dos_mais_vendidos_e_no_escolhe_uma_categoria(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, saida, _ = self.principal("--db", f"{d}/c.db", "varrer", "--dry-run")
+            self.assertIn(f"fatias: {len(varredura.GENEROS)} gêneros", saida)
+            _, saida, _ = self.principal("--db", f"{d}/c.db", "varrer", "--vendidos", "--dry-run")           # continua aceito
+            self.assertIn("gêneros ×", saida)
+            _, saida, _ = self.principal("--db", f"{d}/c.db", "varrer", "--no", "7842710011", "--dry-run")
+            self.assertIn("fatias: categoria 7842710011", saida)
+            codigo, _, erro = self.principal("--db", f"{d}/c.db", "varrer", "--no", "7842710011", "--vendidos", "--dry-run")
+            self.assertEqual(codigo, 2)
+            self.assertIn("--vendidos e --no se excluem", erro)
+            self.assertFalse(Path(f"{d}/c.db").exists())
+
+    def test_opcoes_dos_mais_vendidos_com_no_sao_recusadas_em_vez_de_ignoradas(self):
+        with tempfile.TemporaryDirectory() as d:
+            for opcao, valor in (("--generos", "6740748011"), ("--faixas", "0,20"), ("--particao", "vendidos-b")):
+                with self.subTest(opcao=opcao):
+                    codigo, _, erro = self.principal("--db", f"{d}/c.db", "varrer", "--no", "7842710011", opcao, valor)
+                    self.assertEqual(codigo, 2)
+                    self.assertIn(f"{opcao} vale só para os mais vendidos", erro)
+
+    def test_catalogo_com_no_olha_a_categoria_e_sem_no_os_mais_vendidos(self):
+        with tempfile.TemporaryDirectory() as d:
+            conn = db.conectar(f"{d}/c.db")
+            varredura.criar_schema(conn)
+            varredura.semear_vendidos(conn, ["1"], FAIXAS_TESTE)
+            conn.commit()
+            conn.close()
+            fatias = lambda *a: json.loads(self.principal("--db", f"{d}/c.db", "catalogo", "--json", *a)[1])["fatias"]
+            self.assertEqual(fatias(), len(FAIXAS_TESTE))
+            self.assertEqual(fatias("--vendidos"), len(FAIXAS_TESTE))
+            self.assertEqual(fatias("--no", "7842710011"), 0)
+
+    def test_eventos_pedido_que_nao_existe_e_erro_e_o_padrao_ausente_nao(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.banco_com_ciclo(f"{d}/c.db", 12)
+            codigo, _, erro = self.principal("site", f"{d}/c.db", "--saida", f"{d}/s", "--eventos", f"{d}/sem.csv")
+            self.assertEqual(codigo, 1)
+            self.assertIn(f"arquivo de eventos não encontrado: {d}/sem.csv", erro)
+            codigo, _, erro = self.principal("--db", f"{d}/c.db", "grafico", "x", "--eventos", f"{d}/sem.csv")
+            self.assertEqual((codigo, "arquivo de eventos não encontrado" in erro), (1, True))
+            with mock.patch.object(varredura_cli, "EVENTOS_PADRAO", Path(d) / "nao-tem.csv"):
+                self.assertEqual(self.principal("site", f"{d}/c.db", "--saida", f"{d}/s")[0], 0)      # sem pedir: sem promoções
+
+    def test_html_bruto_vai_para_ao_lado_do_banco_ou_para_onde_se_pedir(self):
+        from comparador import __main__ as cli
+        visto = []
+
+        def executar_falso(conn, sessao, **kw):
+            visto.append(kw["pasta_html"])
+            return varredura.Resultado(ciclo_horas=12)                   # exec_id None: "o ciclo já está completo"
+
+        with tempfile.TemporaryDirectory() as d:
+            for extra, esperado in (([], Path(d) / "html"), (["--pasta-html", f"{d}/lixo"], Path(d) / "lixo")):
+                argv = ["comparador", "--db", f"{d}/c.db", "varrer", *extra]
+                with mock.patch.object(sys, "argv", argv), mock.patch.object(cli.rede, "nova_sessao", return_value=object()), \
+                        mock.patch.object(cli.varredura, "executar", executar_falso), contextlib.redirect_stdout(io.StringIO()):
+                    cli.main()
+                self.assertEqual(visto[-1], esperado)
+
+    def test_catalogo_json_traz_o_mesmo_que_o_texto_e_os_exigir_continuam_valendo(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.banco_com_ciclo(f"{d}/c.db", 12)
+            codigo, saida, _ = self.principal("--db", f"{d}/c.db", "catalogo", "--json")
+            dados = json.loads(saida)                                             # só JSON na saída: dá para encadear
+            self.assertEqual(codigo, 0)
+            for chave in ("itens", "vistos_hoje", "fatias", "fatias_hoje", "dia_completo", "dias_sem_varredura_completa",
+                          "ciclo_horas", "fatias_atrasadas", "pausa_ate", "ultimas_execucoes"):
+                self.assertIn(chave, dados)
+            self.assertEqual(dados["ciclo_horas"], 12)
+            texto = self.principal("--db", f"{d}/c.db", "catalogo")[1]
+            self.assertIn(f"{dados['itens']} itens no catálogo", texto)
+            self.assertNotIn("{", texto)
+
+    def test_ajuda_do_varrer_tem_grupos_exemplos_e_nao_cita_constante_do_codigo(self):
+        raiz = Path(__file__).resolve().parent.parent
+        r = subprocess.run([sys.executable, "-m", "comparador", "varrer", "--help"], cwd=raiz, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for texto in ("uso comum:", "ritmo e ciclo", "depuração:", "exemplos:", "--dry-run", "--pasta-html"):
+            self.assertIn(texto, r.stdout)
+        self.assertNotIn("PARTICOES_VENDIDOS", r.stdout)
 
     def test_particao_e_limite_do_teto_chegam_na_varredura(self):
         from comparador import __main__ as cli
