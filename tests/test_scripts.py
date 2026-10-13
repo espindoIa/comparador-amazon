@@ -41,6 +41,15 @@ class TestPodarCopias(unittest.TestCase):
         self.assertIn("catalogo-2026-09-30-1200.db.gz", apagar)                 # teste antigo, sem categoria
         self.assertNotIn("catalogo-7842710011-2026-10-01-0341.db.gz", apagar)   # outra categoria: não mexe
 
+    def test_cada_sequencia_poda_so_as_proprias_copias(self):
+        # três sequências de coleta na mesma release: o passo de publicação de uma não pode apagar as da outra
+        alvos = ("vendidos", "vendidos-b", "vendidos-c")
+        nomes = [f"catalogo-{a}-2026-10-{d:02d}-{h:02d}41.db.gz" for a in alvos for d in range(1, 13) for h in (3, 9, 15, 21)]
+        for alvo in alvos:
+            apagar = podar_copias.podar(nomes, alvo, date(2026, 10, 12), recentes=6, dias=5)
+            self.assertTrue(apagar, alvo)
+            self.assertTrue(all(n.startswith(f"catalogo-{alvo}-2") for n in apagar), (alvo, apagar))
+
     def test_padrao_nunca_apaga_a_mais_recente(self):
         nomes = ["catalogo-vendidos-2020-01-01-0341.db.gz"]
         self.assertEqual(podar_copias.podar(nomes, "vendidos", date(2026, 10, 12)), [])
@@ -141,6 +150,15 @@ class TestCatalogoRelease(unittest.TestCase):
         self.assertEqual(self.baixar(GhFalso(self.d)), 0)
         self.assertEqual(self.baixar(GhFalso(self.d, {"catalogo-7842710011-2026-10-13-0300.db.gz": b"x"})), 0)
         self.assertFalse((self.d / "saida.db").exists())
+
+    def test_cada_sequencia_baixa_so_a_propria_copia(self):
+        bom = banco_gz(self.d, "a.gz").read_bytes()
+        gh = GhFalso(self.d, {"catalogo-vendidos-b-2026-10-13-0900.db.gz": bom, "catalogo-vendidos-c-2026-10-13-0900.db.gz": bom})
+        self.assertEqual(self.baixar(gh), 0)                                              # "vendidos" não tem cópia: do zero
+        self.assertEqual((gh.baixados, (self.d / "saida.db").exists()), ([], False))
+        self.assertEqual(catalogo_release.baixar("vendidos-b", self.d / "b.db", gh, dormir=lambda s: None, log=self.log.append), 0)
+        self.assertEqual(gh.baixados, ["catalogo-vendidos-b-2026-10-13-0900.db.gz"])
+        self.assertTrue((self.d / "b.db").exists())
 
     def test_publicar_confere_o_tamanho_e_repete_o_envio_cortado(self):
         banco = banco_gz(self.d, "a.gz").parent / "x.db"

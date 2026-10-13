@@ -81,6 +81,21 @@ class TestSite(unittest.TestCase):
         self.assertEqual(len(h["B000000001"]["h"]), 1)           # os dois históricos viraram um trecho só
         self.assertEqual(len(json.loads((self.d / "out/dados/eventos.json").read_text())), 2)
 
+    def test_livro_que_muda_de_sequencia_de_coleta_mantem_o_historico_e_ganha_o_preco_novo(self):
+        # "vendidos" lia todos os gêneros; depois da divisão, "vendidos-b" lê o de X e o de Y e o antigo para de vê-los
+        banco(self.d / "vendidos.db", [("B000000001", "Livro X", "Capa comum", [("2026-10-01", "2026-10-05", 5000, None)]),
+                                       ("B000000002", "Livro Y", "Capa comum", [("2026-10-01", "2026-10-05", 4000, None)]),
+                                       ("B000000003", "Livro Z", "Capa comum", [("2026-10-01", "2026-10-12", 3000, None)])])
+        banco(self.d / "vendidos-b.db", [("B000000001", "Livro X", "Capa comum", [("2026-10-12", "2026-10-12", 5000, None)]),
+                                         ("B000000002", "Livro Y", "Capa comum", [("2026-10-12", "2026-10-12", 3500, None)])])
+        meta = site.construir([self.d / "vendidos.db", self.d / "vendidos-b.db"], self.d / "out", Path(RAIZ) / "eventos.csv")
+        self.assertEqual(meta["itens"], 3)
+        ed = edicoes(self.d / "out")
+        self.assertEqual(len(historico(self.d / "out", "B000000001")["h"]), 1)         # mesmo preço: um trecho só
+        self.assertEqual([t[2] for t in historico(self.d / "out", "B000000002")["h"]], [4000, 3500])
+        self.assertEqual([ed["B000000002"][1][2], ed["B000000002"][1][4]], [3500, 0])  # preço do banco que lê hoje
+        self.assertEqual(ed["B000000003"][1][4], 0)                                    # o que o banco antigo ainda lê
+
     def test_detalhes_do_livro_vao_para_o_indice_e_o_historico(self):
         banco(self.d / "a.db", [("B000000001", "Livro Um", "Capa dura", [("2026-10-01", "2026-10-05", 5000, None)]),
                                 ("B000000002", "Livro Dois", "Kindle", [("2026-10-01", "2026-10-05", 900, None)])])

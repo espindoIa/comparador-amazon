@@ -5,6 +5,8 @@ Fixtures REAIS (out/2026, trechos de páginas de busca da categoria HQs e Mangá
 """
 
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -322,6 +324,64 @@ class TestFaixasDeProducao(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM fatias WHERE ativa = 0").fetchone()[0], 3)  # as antigas ficam, inativas
 
 
+class TestLinhaDeComando(unittest.TestCase):
+    def test_particao_desconhecida_e_recusada_antes_de_criar_o_banco(self):
+        # um alvo digitado errado no workflow não pode criar um banco vazio que o passo de publicação enviaria
+        with tempfile.TemporaryDirectory() as d:
+            raiz = Path(__file__).resolve().parent.parent
+            r = subprocess.run([sys.executable, "-m", "comparador", "--db", f"{d}/c.db", "varrer", "--vendidos",
+                                "--particao", "vendidos-z"], cwd=raiz, capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("vendidos-z", r.stderr)
+            self.assertFalse(Path(f"{d}/c.db").exists())
+
+    def test_particao_e_limite_do_teto_chegam_na_varredura(self):
+        from comparador import __main__ as cli
+        with tempfile.TemporaryDirectory() as d:
+            conn = db.conectar(f"{d}/c.db")
+            varredura.criar_schema(conn)
+            conn.execute("INSERT INTO config (chave, valor) VALUES ('ritmo_teto', '75')")   # guardado por uma versão anterior
+            conn.commit()
+            conn.close()
+            visto = {}
+
+            def varrer_falso(conn, sessao, **kw):
+                visto.update(kw)
+                return None                                          # "o dia já estava completo"
+
+            argv = ["comparador", "--db", f"{d}/c.db", "varrer", "--vendidos", "--particao", "vendidos-b", "--teto-auto-max", "60"]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(cli.rede, "nova_sessao", return_value=object()), \
+                    mock.patch.object(cli.varredura, "varrer", varrer_falso):
+                cli.main()
+        self.assertEqual(visto["vendidos"], list(varredura.PARTICOES_VENDIDOS["vendidos-b"]))
+        self.assertEqual(visto["ritmo"].teto, 60.0)                  # o limite vale sobre o teto de 75 que estava no banco
+
+    def test_ajuda_lista_as_particoes_e_o_limite_do_teto(self):
+        raiz = Path(__file__).resolve().parent.parent
+        r = subprocess.run([sys.executable, "-m", "comparador", "varrer", "--help"], cwd=raiz,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for texto in ("--particao", "--teto-auto-max", *varredura.PARTICOES_VENDIDOS):
+            self.assertIn(texto, r.stdout)
+
+
+class TestParticoes(unittest.TestCase):
+    def test_dividem_os_29_generos_sem_repetir_nem_esquecer(self):
+        todos = [g for nos in varredura.PARTICOES_VENDIDOS.values() for g in nos]
+        self.assertEqual(sorted(todos), sorted(varredura.GENEROS))
+        self.assertNotIn(varredura.NO_LIVROS, todos)
+        self.assertEqual(len(varredura.PARTICOES_VENDIDOS), 3)
+        self.assertEqual({len(n) for n in varredura.PARTICOES_VENDIDOS.values()}, {9, 10})
+
+    def test_nomes_sao_alvos_que_os_scripts_da_release_nao_confundem(self):
+        # o primeiro continua sendo o banco que já existe; os outros terminam em letra (um número casaria com
+        # o padrão de nomes de "vendidos" em catalogo_release.py)
+        nomes = list(varredura.PARTICOES_VENDIDOS)
+        self.assertEqual(nomes[0], "vendidos")
+        for n in nomes:
+            self.assertRegex(n, r"^vendidos(-[a-z])?$")
+
+
 class TestMaisVendidos(unittest.TestCase):
     def setUp(self):
         self.conn = db.conectar(":memory:")
@@ -351,6 +411,32 @@ class TestMaisVendidos(unittest.TestCase):
         amazon.por_no["3"] = [("G300000001", 999)]
         varredura.varrer(self.conn, amazon, vendidos=["1", "2", "3"], minutos=10_000, dormir=lambda s: None)
         self.assertIn("G300000001", {r[0] for r in self.conn.execute("SELECT asin FROM catalogo")})
+
+    def test_so_le_os_nos_pedidos_e_os_outros_ficam_inativos_ate_voltarem(self):
+        amazon = AmazonFalsaVendidos({"1": [("G100000001", 500)], "2": [("G200000001", 600)]})
+        varredura.criar_schema(self.conn)
+        varredura.semear_vendidos(self.conn, ["1", "2"])                   # banco que já lia os dois nós
+        varredura.varrer(self.conn, amazon, vendidos=["2"], minutos=10_000, dormir=lambda s: None)
+        ativos = lambda: {r[0] for r in self.conn.execute("SELECT DISTINCT no FROM fatias WHERE ativa = 1")}  # noqa: E731
+        self.assertEqual({r[0] for r in self.conn.execute("SELECT asin FROM catalogo")}, {"G200000001"})
+        self.assertFalse([u for u in amazon.chamadas if "n%3A1%2C" in u])
+        self.assertTrue(varredura.cobertura(self.conn, varredura.GRUPO_VENDIDOS).dia_completo)  # o dia fecha só com o nó 2
+        self.assertEqual(ativos(), {"2"})
+        varredura.semear_vendidos(self.conn, ["1"])                         # o nó 2 sai e o 1 volta, com a fatia que já tinha
+        self.assertEqual(ativos(), {"1"})
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias WHERE no = '2'").fetchone()[0], 3)
+        varredura.semear_vendidos(self.conn, ["1", "2"])
+        self.assertEqual(ativos(), {"1", "2"})
+
+    def test_o_ranking_geral_nao_entra_na_leitura_padrao_mas_entra_se_pedido(self):
+        varredura.criar_schema(self.conn)
+        varredura.semear_vendidos(self.conn, [varredura.NO_LIVROS])        # banco antigo: lia o ranking geral
+        varredura.semear_vendidos(self.conn, varredura.nos_vendidos())     # agora lê os gêneros
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias WHERE no = ? AND ativa = 1",
+                                           (varredura.NO_LIVROS,)).fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fatias WHERE no = ?", (varredura.NO_LIVROS,)).fetchone()[0], 3)
+        self.assertEqual(self.conn.execute("SELECT COUNT(DISTINCT no) FROM fatias WHERE ativa = 1").fetchone()[0],
+                         len(varredura.GENEROS))
 
     def relogio_falso(self, antes_da_meia_noite_s):
         """Relógio que anda 30 s a cada leitura e cruza a meia-noite de Brasília (14/10/2026) depois de N segundos."""
@@ -403,6 +489,15 @@ class TestMaisVendidos(unittest.TestCase):
         r2 = Ritmo(75, 75)                                           # a execução seguinte já começa com o teto novo
         r2.ppm = 75
         self.assertEqual(varredura.aprender_ritmo(self.conn, r2, 75.0, e), {"ritmo_ultimo_limpo": "75.0"})   # hoje já subiu
+
+    def test_limite_do_teto_vale_na_gravacao_do_banco(self):
+        varredura.criar_schema(self.conn)
+        r = Ritmo(60, 60)
+        r.ppm = 60
+        eid = self.conn.execute("INSERT INTO execucoes (iniciada_em, paginas, bloqueios, erros, curtas) VALUES ('x', 8000, 0, 0, 1)").lastrowid
+        e = self.conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
+        self.assertEqual(varredura.aprender_ritmo(self.conn, r, 60.0, e, 60.0), {"ritmo_ultimo_limpo": "60.0"})   # limpo, mas no limite
+        self.assertNotIn("ritmo_teto", varredura.ler_config(self.conn))
 
     def test_livros_sem_preco_nao_contam_e_aparecem_quando_voltam(self):
         # a cada 10 livros, 1 sem preço: 15 de 16 por página têm preço
@@ -705,11 +800,16 @@ class TestRitmoNaVarredura(unittest.TestCase):
                 varredura.faixas_de_precos(ruim)
 
     def test_nos_vendidos(self):
-        todos = varredura.nos_vendidos()
-        self.assertEqual((todos[0], len(todos)), (varredura.NO_LIVROS, 1 + len(varredura.GENEROS)))
+        self.assertEqual(varredura.nos_vendidos(), list(varredura.GENEROS))     # os 29 gêneros, sem o ranking geral
+        self.assertNotIn(varredura.NO_LIVROS, varredura.nos_vendidos())
         self.assertEqual(varredura.nos_vendidos(" 7841720011, 7844001011 "), ["7841720011", "7844001011"])
-        with self.assertRaises(ValueError):
-            varredura.nos_vendidos("7841720011,000")
+        self.assertEqual(varredura.nos_vendidos(varredura.NO_LIVROS), [varredura.NO_LIVROS])   # ainda dá para pedir
+        for nome, nos in varredura.PARTICOES_VENDIDOS.items():
+            self.assertEqual(varredura.nos_vendidos(particao=nome), list(nos))
+        for ruim in (dict(generos="7841720011,000"), dict(particao="vendidos-z"),
+                     dict(generos="7841720011", particao="vendidos")):
+            with self.assertRaises(ValueError, msg=ruim):
+                varredura.nos_vendidos(**ruim)
 
     def test_migra_banco_sem_as_colunas_de_medicao(self):
         self.conn.executescript(

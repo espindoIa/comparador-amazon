@@ -121,10 +121,11 @@ class TestRitmo(unittest.TestCase):
 
 
 class TestTetoQueSeAjusta(unittest.TestCase):
-    def execucao(self, cfg, *, ppm=60.0, teto=60.0, inicial=60.0, paginas=8000, bloqueios=0, leves=1, hoje="2026-10-13"):
+    def execucao(self, cfg, *, ppm=60.0, teto=60.0, inicial=60.0, paginas=8000, bloqueios=0, leves=1, hoje="2026-10-13",
+                 maximo=r.PPM_TETO_AUTO_MAX):
         x = Ritmo(ppm, teto)
         x.ppm = ppm
-        return r.aprender(cfg, hoje, x, inicial, paginas, bloqueios, leves)
+        return r.aprender(cfg, hoje, x, inicial, paginas, bloqueios, leves, maximo)
 
     def test_sem_nada_guardado_comeca_no_padrao(self):
         self.assertEqual(r.ritmo_guardado({}, r.PPM_TETO_PADRAO), (r.PPM_BASE, r.PPM_TETO_PADRAO))
@@ -159,6 +160,23 @@ class TestTetoQueSeAjusta(unittest.TestCase):
         espera = {"ritmo_espera_ate": "2026-10-16"}
         self.assertNotIn("ritmo_teto", self.execucao(espera, ppm=42, teto=42, inicial=42, hoje="2026-10-14"))
         self.assertIn("ritmo_teto", self.execucao(espera, ppm=42, teto=42, inicial=42, hoje="2026-10-16"))
+
+    def test_limite_menor_vale_sobre_o_teto_guardado_e_o_teto_nao_passa_dele(self):
+        # várias sequências em paralelo: cada uma sobe no máximo até o limite (60), mesmo que o banco tenha 75 guardado
+        self.assertEqual(r.ritmo_guardado({"ritmo_teto": "75", "ritmo_ultimo_limpo": "70"}, 60.0, maximo=60.0), (56.0, 60.0))
+        self.assertEqual(r.ritmo_guardado({"ritmo_teto": "45"}, 60.0, maximo=60.0)[1], 45.0)   # o que é menor continua
+        self.assertEqual(r.ritmo_guardado({}, 60.0, maximo=50.0)[1], 50.0)
+        self.assertNotIn("ritmo_teto", self.execucao({}, maximo=60.0))                         # limpo no limite: não sobe
+        self.assertIn("ritmo_ultimo_limpo", self.execucao({}, maximo=60.0))
+        # abaixo do limite continua subindo, e para nele
+        self.assertEqual(self.execucao({}, ppm=45, teto=45, inicial=45, maximo=60.0)["ritmo_teto"], "56.2")
+        self.assertEqual(self.execucao({}, ppm=56, teto=56, inicial=56, maximo=60.0)["ritmo_teto"], "60.0")
+
+    def test_bloqueio_com_limite_menor_continua_baixando_o_teto_e_segurando_a_subida(self):
+        x = Ritmo(60, 60)
+        x.falha(grave=True)
+        n = r.aprender({}, "2026-10-13", x, 60.0, 3000, 1, 0, 60.0)
+        self.assertEqual((n["ritmo_teto"], n["ritmo_espera_ate"], n["ritmo_ultimo_limpo"]), ("42.0", "2026-10-16", ""))
 
 
 if __name__ == "__main__":
