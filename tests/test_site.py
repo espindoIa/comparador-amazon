@@ -756,6 +756,67 @@ class TestSiteNoNavegador(unittest.TestCase):
             b.close()
         self.assertEqual(erros, [])
 
+    def test_teclado_e_leitor_de_tela(self):
+        from playwright.sync_api import sync_playwright
+        base = self._servir([("8535902775", "A paciente silenciosa", "Capa comum",
+                              [("2026-09-01", "2026-09-20", 3999, 6490), ("2026-09-21", "2026-10-20", 3499, 6490)]),
+                             ("B0ABCDEFGH", "Outro livro", "Kindle", [("2026-10-01", "2026-10-20", 1999, None)])])
+        ativo = "(() => { const a = document.activeElement; return a.id || a.className || a.tagName; })()"
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            pg = b.new_page()
+            erros = []
+            pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.goto(f"{base}/")
+            pg.evaluate("localStorage.clear()")
+            pg.goto(f"{base}/")
+            pg.wait_for_selector(".boas h1")
+            pg.keyboard.press("Tab")                                                     # o primeiro Tab chega no link de pular
+            self.assertEqual(pg.evaluate(ativo), "pular")
+            pg.keyboard.press("Enter")
+            self.assertEqual(pg.evaluate("document.activeElement.textContent"), pg.inner_text(".boas h1"))
+            pg.fill("#q", "paciente")                                                    # digitar não tira o foco do campo
+            pg.wait_for_selector("#res .row")
+            self.assertEqual(pg.evaluate(ativo), "q")
+            pg.wait_for_function("document.querySelector('#cont-res').textContent === '1 livro encontrado'")
+            pg.focus("[data-fam=k]")                                                     # o chip recriado pela barra mantém o foco
+            pg.keyboard.press("Enter")
+            pg.wait_for_selector("[data-fam=k][aria-pressed=true]")
+            self.assertEqual(pg.evaluate("document.activeElement.dataset.fam"), "k")
+            pg.keyboard.press("Enter")
+            pg.click("#res .row")                                                        # trocar de tela leva o foco ao título
+            pg.wait_for_selector("#graf svg")
+            pg.wait_for_function("document.activeElement.tagName === 'H1'")
+            self.assertIn("paciente", pg.evaluate("document.activeElement.textContent"))
+            self.assertIn("menor R$ 34,99", pg.get_attribute("#graf svg", "aria-label"))   # resumo do gráfico em texto
+            pg.focus("#graf .graf")                                                      # gráfico pelo teclado
+            pg.keyboard.press("End")
+            self.assertFalse(pg.is_hidden("#graf .tip"))
+            self.assertIn("R$ 34,99", pg.inner_text("#graf .tip"))
+            pg.keyboard.press("Home")
+            self.assertIn("R$ 39,99", pg.inner_text("#graf [aria-live]"))
+            pg.click("[data-salvar]")                                                    # aviso rápido fecha com Esc
+            pg.wait_for_selector("#toast.on")
+            pg.keyboard.press("Escape")
+            pg.wait_for_selector("#toast:not(.on)", state="attached")
+            pg.goto(f"{base}/?lista")                                                    # preço-alvo inválido não apaga o alvo
+            pg.wait_for_selector("#lst .row b")
+            pg.click("[data-alvo]")
+            pg.fill("#alvo-v", "30")
+            pg.press("#alvo-v", "Enter")
+            pg.wait_for_selector(".alvo .mu")
+            self.assertEqual(pg.evaluate("document.activeElement.dataset.alvo"), "8535902775")   # o foco volta ao botão
+            pg.click("[data-alvo]")
+            pg.fill("#alvo-v", "0")
+            pg.press("#alvo-v", "Enter")
+            pg.wait_for_selector(".erro-campo")
+            self.assertEqual(pg.get_attribute("#alvo-v", "aria-invalid"), "true")
+            pg.goto(f"{base}/?lista")
+            pg.wait_for_selector("#lst .row b")
+            self.assertIn("Seu preço: R$ 30,00", pg.inner_text("#lst"))
+            b.close()
+        self.assertEqual(erros, [])
+
 
 if __name__ == "__main__":
     unittest.main()
