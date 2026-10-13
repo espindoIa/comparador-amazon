@@ -4,6 +4,8 @@ Fixtures REAIS (out/2026, trechos de páginas de busca da categoria HQs e Mangá
 `busca_fatia.html`, `busca_formatos.html` e `busca_fim.html` (última página, vazia).
 """
 
+import contextlib
+import io
 import re
 import subprocess
 import sys
@@ -333,6 +335,88 @@ class TestLinhaDeComando(unittest.TestCase):
                                 "--particao", "vendidos-z"], cwd=raiz, capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode, 2, r.stderr)
             self.assertIn("vendidos-z", r.stderr)
+            self.assertFalse(Path(f"{d}/c.db").exists())
+
+    def principal(self, *args):
+        """Roda o CLI sem pedir nada à Amazon (qualquer sessão ou leitura aberta faz o teste falhar): (código, stdout, stderr)."""
+        from comparador import __main__ as cli
+        saida, erro, codigo = io.StringIO(), io.StringIO(), 0
+        with mock.patch.object(sys, "argv", ["comparador", *args]), \
+                mock.patch.object(cli.rede, "nova_sessao", side_effect=AssertionError("abriu a sessão")), \
+                mock.patch.object(cli.varredura, "varrer", side_effect=AssertionError("leu páginas")), \
+                contextlib.redirect_stdout(saida), contextlib.redirect_stderr(erro):
+            try:
+                cli.main()
+            except SystemExit as e:
+                codigo = e.code if isinstance(e.code, int) else 1
+                if not isinstance(e.code, int):
+                    print(e.code, file=erro)
+        return codigo, saida.getvalue(), erro.getvalue()
+
+    def test_valores_sem_sentido_sao_recusados_antes_de_criar_o_banco(self):
+        with tempfile.TemporaryDirectory() as d:
+            for opcao, valor, texto in [("--ritmo", "-3", "maior que 0"), ("--ritmo-max", "0", "maior que 0"),
+                                        ("--teto-auto-max", "-1", "maior que 0"), ("--minutos", "0", "maior que 0"),
+                                        ("--minutos", "nan", "maior que 0"), ("--max-paginas", "0", "pelo menos 1"),
+                                        ("--subir-a-cada", "0", "pelo menos 1"), ("--ritmo", "abc", "não é um número")]:
+                with self.subTest(opcao=opcao, valor=valor):
+                    codigo, _, erro = self.principal("--db", f"{d}/c.db", "varrer", "--vendidos", opcao, valor)
+                    self.assertEqual(codigo, 2, erro)
+                    self.assertIn(opcao, erro)
+                    self.assertIn(texto, erro)
+            self.assertFalse(Path(f"{d}/c.db").exists())
+
+    def test_ritmo_inicial_acima_do_teto_fixo_e_recusado_em_vez_de_levantar_o_teto_em_silencio(self):
+        with tempfile.TemporaryDirectory() as d:
+            codigo, _, erro = self.principal("--db", f"{d}/c.db", "varrer", "--ritmo", "50", "--ritmo-max", "10")
+            self.assertEqual(codigo, 2)
+            self.assertIn("--ritmo (50) passa de --ritmo-max (10)", erro)
+            self.assertEqual(self.principal("--db", f"{d}/c.db", "varrer", "--ritmo", "10", "--ritmo-max", "10", "--dry-run")[0], 0)
+
+    def test_dry_run_mostra_o_plano_sem_abrir_sessao_sem_ler_e_sem_criar_o_banco(self):
+        with tempfile.TemporaryDirectory() as d:
+            codigo, saida, erro = self.principal("--db", f"{d}/c.db", "varrer", "--vendidos", "--particao", "vendidos-b",
+                                                 "--faixas", "0,20,40", "--minutos", "20", "--max-paginas", "5", "--dry-run")
+            self.assertEqual((codigo, erro), (0, ""))
+            self.assertFalse(Path(f"{d}/c.db").exists())
+        n = len(varredura.PARTICOES_VENDIDOS["vendidos-b"])
+        for linha in ("nada foi lido da Amazon nem gravado", "ainda não existe",
+                      "ritmo: começa em 21 páginas/min, teto 60 (teto guardado no banco); ciclo de 12 h (guardado no banco)",
+                      "pausa: nenhuma", f"fatias: {n} gêneros × 3 faixas de preço = {3 * n}",
+                      "orçamento: 20 min; para depois de 5 requisições", "cliente: auto"):
+            self.assertIn(linha, saida)
+
+    def test_dry_run_le_o_banco_sem_alterar_e_mostra_teto_e_pausa_guardados(self):
+        with tempfile.TemporaryDirectory() as d:
+            conn = db.conectar(f"{d}/c.db")
+            varredura.criar_schema(conn)
+            pausa = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat(timespec="seconds")
+            conn.executemany("INSERT INTO config (chave, valor) VALUES (?, ?)",
+                             [("ritmo_teto", "75"), ("ritmo_pausa_ate", pausa), ("ciclo_horas", "6")])
+            conn.commit()
+            conn.close()
+            antes = Path(f"{d}/c.db").read_bytes()
+            codigo, saida, erro = self.principal("--db", f"{d}/c.db", "varrer", "--vendidos", "--teto-auto-max", "60", "--dry-run")
+            self.assertEqual((codigo, erro), (0, ""))
+            self.assertIn("ritmo: começa em", saida)
+            self.assertIn("teto 60 (teto guardado no banco); ciclo de 6 h (guardado no banco)", saida)
+            self.assertIn("o varrer não leria nada. Para ler assim mesmo: --ignorar-pausa", saida)
+            self.assertIn("aberto só para leitura", saida)
+            self.assertIn("ignorada por --ignorar-pausa", self.principal(
+                "--db", f"{d}/c.db", "varrer", "--vendidos", "--ignorar-pausa", "--dry-run")[1])
+            self.assertEqual(Path(f"{d}/c.db").read_bytes(), antes)                  # nem uma linha gravada
+
+    def test_dry_run_confere_as_opcoes_e_avisa_quando_o_cliente_nao_abriria(self):
+        from comparador import __main__ as cli
+        with tempfile.TemporaryDirectory() as d:
+            codigo, _, erro = self.principal("--db", f"{d}/c.db", "varrer", "--vendidos", "--generos", "999", "--dry-run")
+            self.assertEqual(codigo, 1)
+            self.assertIn("opção inválida: gênero desconhecido: 999", erro)
+            with mock.patch.object(cli.cliente_http, "_playwright_instalado", return_value=False):
+                codigo, saida, erro = self.principal("--db", f"{d}/c.db", "varrer", "--vendidos", "--dry-run")
+            self.assertEqual(codigo, 1)
+            self.assertIn("ritmo: começa em", saida)                                 # o plano sai inteiro, depois o aviso
+            self.assertIn("a execução pararia aqui: o módulo playwright não está instalado", erro)
             self.assertFalse(Path(f"{d}/c.db").exists())
 
     def test_particao_e_limite_do_teto_chegam_na_varredura(self):

@@ -644,6 +644,25 @@ class Resultado:
     completou: bool = False             # a janela (ciclo) ficou completa
 
 
+def ritmo_da_execucao(config: dict, *, ritmo_inicial: float | None = None, ritmo_max: float | None = None,
+                      teto_auto_max: float = modulo_ritmo.PPM_TETO_AUTO_MAX, subir_a_cada: int = modulo_ritmo.A_CADA) -> Ritmo:
+    """O ritmo com que uma execução começa: o teto e o ritmo guardados no banco (`config`), a não ser que
+    `ritmo_max` fixe o teto e `ritmo_inicial` o ritmo de partida."""
+    if ritmo_max is None:
+        inicio, teto = modulo_ritmo.ritmo_guardado(config, modulo_ritmo.PPM_TETO_PADRAO, maximo=teto_auto_max)
+    else:
+        inicio, teto = ritmo_inicial or modulo_ritmo.PPM_BASE, ritmo_max
+    if ritmo_inicial is not None:
+        inicio = ritmo_inicial
+    return Ritmo(inicio, teto, a_cada=subir_a_cada)
+
+
+def descrever_ritmo(r: Ritmo, teto_guardado: bool, ciclo: int, ciclo_guardado: bool) -> str:
+    """A linha "ritmo: ..." que a execução (e o --dry-run) mostra."""
+    return (f"ritmo: começa em {r.ppm:.0f} páginas/min, teto {r.teto:.0f}" + (" (teto guardado no banco)" if teto_guardado else "")
+            + f"; ciclo de {ciclo} h" + (" (guardado no banco)" if ciclo_guardado else ""))
+
+
 def executar(conn: sqlite3.Connection, sessao, *, no: str = NO_HQ_MANGA, vendidos=None, minutos: float = 60,
              max_paginas: int | None = None, faixas=None, ritmo_inicial: float | None = None,
              ritmo_max: float | None = None, teto_auto_max: float = modulo_ritmo.PPM_TETO_AUTO_MAX,
@@ -661,16 +680,10 @@ def executar(conn: sqlite3.Connection, sessao, *, no: str = NO_HQ_MANGA, vendido
     if ciclo_horas is None and not ignorar_pausa and (pausa := pausa_vigente(conn)):
         res.pausa_ate = pausa
         return res
-    if auto:
-        inicio, teto = modulo_ritmo.ritmo_guardado(config, modulo_ritmo.PPM_TETO_PADRAO, maximo=teto_auto_max)
-    else:
-        inicio, teto = ritmo_inicial or modulo_ritmo.PPM_BASE, ritmo_max
-    if ritmo_inicial is not None:
-        inicio = ritmo_inicial
-    r = Ritmo(inicio, teto, a_cada=subir_a_cada)
+    r = ritmo_da_execucao(config, ritmo_inicial=ritmo_inicial, ritmo_max=ritmo_max, teto_auto_max=teto_auto_max,
+                          subir_a_cada=subir_a_cada)
     res.ppm_inicial, res.teto = r.ppm, r.teto
-    log(f"ritmo: começa em {r.ppm:.0f} páginas/min, teto {r.teto:.0f}" + (" (teto guardado no banco)" if auto else "")
-        + f"; ciclo de {ciclo} h" + (" (guardado no banco)" if ciclo_horas is None else ""))
+    log(descrever_ritmo(r, auto, ciclo, ciclo_horas is None))
     res.exec_id = varrer(conn, sessao, no=no, vendidos=vendidos, minutos=minutos, faixas=faixas, max_paginas=max_paginas,
                          pasta_html=pasta_html, ritmo=r, parar_na_falha=parar_na_falha, dormir=dormir, relogio=relogio,
                          ciclo_horas=ciclo)

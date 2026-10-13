@@ -44,6 +44,13 @@ cd site && python -m http.server 8000    # http://localhost:8000
 Sem Chrome nem Edge: `python -m playwright install chromium`, ou aponte `COMPARADOR_NAVEGADOR`
 para o executável de outro navegador.
 
+O `varrer` lê só pelo navegador (`--cliente auto`): se ele não abrir, para e diz por quê, em vez de cair em outro
+cliente. `--cliente curl` e `--cliente requests` existem, mas a Amazon costuma bloqueá-los, e um bloqueio grava no
+banco uma pausa de horas.
+
+`varrer --dry-run` confere as opções e mostra o plano (ritmo, ciclo, pausa, fatias, cliente) sem abrir o
+navegador, sem pedir nada à Amazon e sem gravar no banco.
+
 Testes:
 
 ```bash

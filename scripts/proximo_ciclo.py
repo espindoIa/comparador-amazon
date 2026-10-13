@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from comparador import ritmo, varredura  # noqa: E402
+from comparador import db, ritmo, varredura  # noqa: E402
 
 MIN_PAGINAS = 500            # menos que isto e a execução "não andou": não vale continuar já
 ENTRE_EXECUCOES_MIN = 10     # distância mínima entre o começo de duas execuções seguidas (nunca um laço apertado)
@@ -68,7 +68,7 @@ def main() -> None:
     p.add_argument("--inicio-run", required=True, help="instante (UTC, ISO) em que esta execução começou")
     p.add_argument("--publicacao-falhou", action="store_true", help="a publicação do banco desta execução falhou")
     a = p.parse_args()
-    conn = sqlite3.connect(f"file:{a.banco}?mode=ro", uri=True)
+    conn = db.abrir_leitura(a.banco, "catálogo")
     conn.row_factory = sqlite3.Row
     try:
         quando, motivo = decidir(conn, a.alvo, datetime.fromisoformat(a.inicio_run), datetime.now(timezone.utc),

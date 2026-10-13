@@ -24,6 +24,18 @@ def conectar(caminho: str | Path) -> sqlite3.Connection:
     return conn
 
 
+def abrir_leitura(caminho: str | Path, papel: str = "banco") -> sqlite3.Connection:
+    """Abre um banco que já existe, só para leitura. Se não abrir, encerra dizendo qual banco foi (`papel`: "novo",
+    "anterior"...) e onde o procurou, em vez de um traceback do sqlite3 sem o caminho."""
+    caminho = Path(caminho)
+    if not caminho.exists():
+        raise SystemExit(f"{papel}: banco não encontrado: {caminho}")
+    try:
+        return sqlite3.connect(f"{caminho.absolute().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error as e:
+        raise SystemExit(f"{papel}: não consegui abrir {caminho}: {e}")
+
+
 def dia_brasil(iso_utc: str) -> date:
     """Dia (em Brasília) de um instante ISO em UTC."""
     return datetime.fromisoformat(iso_utc).astimezone(BRASILIA).date()
