@@ -1,0 +1,47 @@
+# Reinicia uma sequência de coleta que ficou sem o anel de execuções (varredura.yml → espera.yml → varredura.yml...).
+#
+# O anel se mantém sozinho: cada execução agenda a seguinte. Mas qualquer falha entre uma e outra (um job cancelado, um
+# disparo que não saiu, a release fora do ar na hora de publicar) o quebraria para sempre. A cada 30 min este vigia
+# olha as execuções de varredura e de espera: se uma sequência não tem nenhuma em andamento nem criada há pouco, dispara
+# varredura.yml para ela. A leitura em si respeita a pausa depois de bloqueio e o que já foi lido no ciclo, então um
+# reinício à toa termina em segundos sem pedir nada à Amazon.
+# A variável de repositório COLETA_PAUSADA=true desliga o vigia (e o anel).
+#
+# Para iniciar a coleta pela primeira vez, ou depois de pará-la, basta rodar este workflow à mão.
+name: vigia
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: vigia
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  COLETA_PAUSADA: ${{ vars.COLETA_PAUSADA }}
+
+jobs:
+  vigia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reinicia as sequências sem anel
+        env:
+          REF: ${{ github.ref_name }}      # num cron, é a branch padrão
+        run: |
+          if [ "$COLETA_PAUSADA" = true ]; then echo "coleta pausada (variável COLETA_PAUSADA)"; exit 0; fi
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow varredura.yml --limit 60 --json status,displayTitle,createdAt > "$RUNNER_TEMP/varredura.json"
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow espera.yml --limit 60 --json status,displayTitle,createdAt > "$RUNNER_TEMP/espera.json"
+          for alvo in $(python3 scripts/vigia.py "$RUNNER_TEMP/varredura.json" "$RUNNER_TEMP/espera.json" --alvos vendidos vendidos-b vendidos-c); do
+            echo "$alvo: sem anel de execuções; reiniciando" | tee -a "$GITHUB_STEP_SUMMARY"
+            gh workflow run varredura.yml --repo "$GITHUB_REPOSITORY" --ref "$REF" -f alvo="$alvo"
+          done

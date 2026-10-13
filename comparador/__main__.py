@@ -42,6 +42,12 @@ def main() -> None:
     v.add_argument("--particao", choices=list(varredura.PARTICOES_VENDIDOS),
                    help="com --vendidos: só os gêneros desta sequência de coleta (uma por servidor em varredura.yml; "
                         "ver PARTICOES_VENDIDOS)")
+    v.add_argument("--ciclo-horas", type=int, choices=ritmo.CICLOS, default=None,
+                   help="horas entre passadas completas do catálogo (padrão: o degrau guardado no banco, que começa em "
+                        f"{ritmo.CICLO_INICIAL} h e desce um degrau por dia limpo até {ritmo.CICLOS[0]} h). Com esta opção, o "
+                        "ciclo fica fixo e nada é aprendido")
+    v.add_argument("--ignorar-pausa", action="store_true",
+                   help="lê mesmo durante a pausa que segue um bloqueio (horas, de propósito: cada execução cai num IP novo)")
     v.add_argument("--subir-a-cada", type=int, default=ritmo.A_CADA,
                    help="páginas boas seguidas para cada subida de 25%% do ritmo (padrão: %(default)s)")
     v.add_argument("--parar-na-falha", action="store_true",
@@ -53,6 +59,9 @@ def main() -> None:
     k.add_argument("--vendidos", action="store_true", help="banco dos mais vendidos")
     k.add_argument("--exigir-ontem", action="store_true",
                    help="sai com código 1 se ontem não teve varredura completa (para alertas)")
+    k.add_argument("--exigir-frescor", action="store_true",
+                   help="sai com código 1 se alguma fatia está sem passada completa há mais de 2 ciclos e 2 h (a coleta parou "
+                        "ou não dá conta do ciclo; para alertas)")
     k.add_argument("--exigir-detalhes", action="store_true",
                    help="sai com código 1 se a última execução avisou que os cards vieram sem capa ou autor (para alertas)")
 
@@ -100,31 +109,33 @@ def main() -> None:
             faixas = varredura.faixas_de_precos(args.faixas.split(",")) if args.faixas else None
         except ValueError as e:
             raise SystemExit(f"opção inválida: {e}")
-        auto = args.ritmo_max is None
-        config = varredura.ler_config(conn)
-        inicio, teto = ritmo.ritmo_guardado(config, ritmo.PPM_TETO_PADRAO, maximo=args.teto_auto_max) if auto else (args.ritmo or ritmo.PPM_BASE, args.ritmo_max)
-        if args.ritmo is not None:
-            inicio = args.ritmo
-        r = ritmo.Ritmo(inicio, teto, a_cada=args.subir_a_cada)
-        print(f"ritmo: começa em {r.ppm:.0f} páginas/min, teto {r.teto:.0f}" + (" (teto guardado no banco)" if auto else ""))
+        if args.ciclo_horas is None and not args.ignorar_pausa and (pausa := varredura.pausa_vigente(conn)):
+            print(f"em pausa até {pausa.isoformat(timespec='minutes')} (bloqueio recente); nada a fazer. "
+                  "Para ler assim mesmo: --ignorar-pausa")
+            return
         sessao = rede.nova_sessao(args.cliente)
         try:
-            eid = varredura.varrer(conn, sessao, no=args.no, vendidos=vendidos, minutos=args.minutos, faixas=faixas,
-                                   max_paginas=args.max_paginas, pasta_html=Path("data/html"), ritmo=r,
-                                   parar_na_falha=args.parar_na_falha)
+            res = varredura.executar(
+                conn, sessao, no=args.no, vendidos=vendidos, minutos=args.minutos, max_paginas=args.max_paginas,
+                faixas=faixas, ritmo_inicial=args.ritmo, ritmo_max=args.ritmo_max, teto_auto_max=args.teto_auto_max,
+                subir_a_cada=args.subir_a_cada, ciclo_horas=args.ciclo_horas, ignorar_pausa=args.ignorar_pausa,
+                parar_na_falha=args.parar_na_falha, pasta_html=Path("data/html"))
         finally:
             if hasattr(sessao, "fechar"):
                 sessao.fechar()
-        if eid is None:
-            print(f"{db.hoje_brasil()}: varredura do dia já está completa; nada a fazer")
+        if res.exec_id is None:
+            print(f"{db.hoje_brasil()}: ciclo de {res.ciclo_horas} h já está completo; nada a fazer")
             return
-        e = conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
-        if auto and not args.parar_na_falha and args.max_paginas is None:
-            mudou = varredura.aprender_ritmo(conn, r, teto, e, args.teto_auto_max)
-            if "ritmo_teto" in mudou:
-                print(f"ritmo: teto guardado no banco passa de {teto:.0f} para {float(mudou['ritmo_teto']):.0f}")
-        print(f"execução {eid}: {e['paginas']} páginas, {e['itens']} preços, {e['bloqueios']} bloqueios, "
-              f"{e['erros']} erros, {e['curtas']} páginas curtas, {e['ppm']} páginas/min")
+        e = conn.execute("SELECT * FROM execucoes WHERE id = ?", (res.exec_id,)).fetchone()
+        if "ritmo_teto" in res.config_ritmo:
+            print(f"ritmo: teto guardado no banco passa de {res.teto:.0f} para {float(res.config_ritmo['ritmo_teto']):.0f}")
+        if "ciclo_horas" in res.config_ciclo and res.config_ciclo["ciclo_horas"] != str(res.ciclo_horas):
+            print(f"ciclo: passa de {res.ciclo_horas} h para {res.config_ciclo['ciclo_horas']} h")
+        if "ritmo_pausa_ate" in res.config_ciclo:
+            print(f"pausa: sem leitura até {res.config_ciclo['ritmo_pausa_ate']}")
+        print(f"execução {res.exec_id}: {e['paginas']} páginas, {e['itens']} preços, {e['bloqueios']} bloqueios, "
+              f"{e['erros']} erros, {e['curtas']} páginas curtas, {e['ppm']} páginas/min; "
+              + ("ciclo completo" if res.completou else "ciclo incompleto"))
         if e["observacao"]:
             print(f"atenção: {e['observacao']}")
         if e["paginas"] == 0 and (e["bloqueios"] or e["erros"]):
@@ -134,6 +145,13 @@ def main() -> None:
         print(f"{c.itens} itens no catálogo; {c.vistos_hoje} com preço lido hoje")
         print(f"hoje: {c.fatias_hoje} de {c.fatias} fatias lidas" + (" (dia completo)" if c.dia_completo else ""))
         print("dias sem varredura completa: " + (", ".join(map(str, c.lacunas)) if c.lacunas else "nenhum"))
+        if c.mais_antiga_h is not None:
+            print(f"frescor: ciclo de {c.ciclo_horas} h; a passada completa mais velha tem {c.mais_antiga_h:.1f} h"
+                  f" (limite {varredura.limite_atraso(c.ciclo_horas):g} h); {c.atrasadas} fatias atrasadas"
+                  + (f", {c.nunca_lidas} nunca lidas" if c.nunca_lidas else ""))
+        pausa = varredura.pausa_vigente(conn)
+        if pausa:
+            print(f"pausa depois de bloqueio até {pausa.isoformat(timespec='minutes')}")
         n, fracoes = varredura.preenchimento(conn, varredura.inicio_do_dia())
         if n:
             print(f"detalhes dos {n} itens lidos hoje: " + ", ".join(
@@ -145,6 +163,8 @@ def main() -> None:
         ontem = db.hoje_brasil() - timedelta(days=1)
         if args.exigir_ontem and ontem in c.lacunas:
             raise SystemExit(f"{ontem} ficou sem varredura completa")
+        if args.exigir_frescor and c.atrasadas:
+            raise SystemExit(f"{c.atrasadas} fatias sem passada completa há mais de {varredura.limite_atraso(c.ciclo_horas):g} h")
         ultima = conn.execute("SELECT observacao FROM execucoes ORDER BY id DESC LIMIT 1").fetchone()
         if args.exigir_detalhes and ultima and varredura.AVISO_LAYOUT in (ultima[0] or ""):
             raise SystemExit(f"a última execução avisou: {ultima[0]}")

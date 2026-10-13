@@ -604,14 +604,24 @@
   }
 
   // ---------- como funciona ----------
+  function leitura(iso) {      // "13/10 às 14:05", no horário de Brasília
+    var d = new Date(iso);
+    if (isNaN(d)) return '';
+    var p = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+      .formatToParts(d).reduce(function (a, x) { a[x.type] = x.value; return a; }, {});
+    return p.day + '/' + p.month + ' às ' + p.hour + ':' + p.minute;
+  }
+
   function sobre() {
     titulo('Como funciona');
     META.then(function (m) {
       if (rotaAtual.v !== 'sobre') return;
       app.innerHTML = '<article class="prosa"><h1>Como funciona</h1>' +
         '<p class="mu" style="font-size:17px;margin-top:10px">Preços dos livros mais vendidos da Amazon.com.br, lidos todo dia' +
-        (m.ultima_coleta ? ' (última leitura em ' + L.dl(m.ultima_coleta) + ')' : '') + '. O site mostra os números; a decisão é sua.</p>' +
+        (m.lido_ate ? ' (preços lidos até ' + leitura(m.lido_ate) + ')' : m.ultima_coleta ? ' (última leitura em ' + L.dl(m.ultima_coleta) + ')' : '') +
+        '. O site mostra os números; a decisão é sua.</p>' +
         '<h2>Os números</h2><dl>' +
+        '<dt>Preço de cada dia</dt><dd>O último preço lido no dia. Se o preço muda mais de uma vez no mesmo dia, o gráfico mostra o do fim do dia.</dd>' +
         '<dt>Preço mais comum</dt><dd>A mediana dos preços dos últimos 90 dias. Aparece com ' + L.MIN_COMUM + ' dias de coleta.</dd>' +
         '<dt>Menor e maior</dt><dd>O menor e o maior preço dos últimos 90 dias.</dd>' +
         '<dt>Preço de capa</dt><dd>O preço "De:" que a Amazon mostra riscado.</dd>' +

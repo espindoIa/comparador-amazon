@@ -1,0 +1,55 @@
+# Espera até o instante da próxima leitura de uma sequência de coleta e dispara varredura.yml.
+#
+# O cron do GitHub atrasa em horas, então o anel de execuções não depende dele: ao fim de cada execução, varredura.yml
+# dispara este workflow com o instante calculado por scripts/proximo_ciclo.py. Um job do GitHub vive no máximo 6 h, e
+# com ciclos de 12 ou 24 h a espera é maior: ela dorme em saltos de ~5 h e agenda a si mesma de novo até chegar a hora.
+#
+# Só pode haver uma espera por sequência: o grupo de concorrência cancela a anterior quando outra chega (o salto que
+# passa a vez a si mesmo também cancela o anterior, que já cumpriu o seu papel).
+# A variável de repositório COLETA_PAUSADA=true encerra o anel.
+name: espera
+run-name: espera ${{ inputs.alvo }} até ${{ inputs.quando }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      alvo:
+        description: "Sequência de coleta (vendidos, vendidos-b ou vendidos-c)"
+        required: true
+      quando:
+        description: "Instante (UTC, ISO) em que a leitura deve começar"
+        required: true
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: espera-${{ inputs.alvo }}
+  cancel-in-progress: true
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  COLETA_PAUSADA: ${{ vars.COLETA_PAUSADA }}
+
+jobs:
+  espera:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Espera e passa a vez
+        env:
+          ALVO: ${{ inputs.alvo }}
+          QUANDO: ${{ inputs.quando }}
+          REF: ${{ github.ref_name }}
+        run: |
+          case "$ALVO" in vendidos|vendidos-b|vendidos-c) ;; *) echo "alvo desconhecido: $ALVO"; exit 1 ;; esac
+          if [ "$COLETA_PAUSADA" = true ]; then echo "coleta pausada (variável COLETA_PAUSADA)"; exit 0; fi
+          acao=$(python3 scripts/espera.py "$QUANDO")
+          if [ "$acao" = reencadear ]; then
+            gh workflow run espera.yml --repo "$GITHUB_REPOSITORY" --ref "$REF" -f alvo="$ALVO" -f quando="$QUANDO"
+          else
+            gh workflow run varredura.yml --repo "$GITHUB_REPOSITORY" --ref "$REF" -f alvo="$ALVO"
+          fi

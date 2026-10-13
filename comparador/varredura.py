@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import db
+from . import ritmo as modulo_ritmo
 from .busca import SEM_TETO, ItemBusca, LayoutDesconhecido, parse_busca, url_busca
 from .rede import PAUSA_APOS_BLOQUEIO, baixar_lote, guardar_html
 from .ritmo import Ritmo
@@ -115,6 +116,10 @@ CAMPOS_ESPERADOS = ("imagem", "autor", "obra")
 AVISO_LAYOUT = "o layout da página de busca pode ter mudado"
 PREENCHIMENTO_MIN = 0.8
 ITENS_MIN_PREENCHIMENTO = 200
+# Aviso de que a janela do ciclo acabou com fatias sem ler: a sequência não dá conta de uma passada no tempo do ciclo
+# (ritmo baixo, começo atrasado). O ciclo sobe um degrau (ritmo.aprender_ciclo), em vez de repetir a tentativa.
+JANELA_ESTOUROU = "a janela do ciclo terminou com fatias sem ler"
+FOLGA_JANELA_MIN = 20     # com menos que isto sobrando na janela, uma passada incompleta não terminará nela
 
 
 @dataclass
@@ -228,16 +233,38 @@ def inicio_do_dia(dia=None) -> str:
         timespec="seconds")
 
 
+def inicio_do_ciclo(horas: int, agora: datetime | None = None) -> str:
+    """Início (UTC ISO) da janela de `horas` horas que contém `agora`. As janelas partem da meia-noite de Brasília
+    (`horas` divide 24), então a primeira de cada dia começa junto com o dia."""
+    agora = agora or datetime.fromisoformat(db.agora())
+    local = agora.astimezone(db.BRASILIA)
+    meia_noite = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    k = int((local - meia_noite).total_seconds() // (horas * 3600))
+    return (meia_noite + timedelta(hours=k * horas)).astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
 # Uma fatia só conta como lida no dia se a passada COMEÇOU e terminou nele: uma passada que atravessa a
 # meia-noite tem as primeiras páginas (as dos livros mais vendidos) no dia anterior.
 _FEITA_NO_DIA = "ultima_passada >= :d AND (passada_iniciada_em IS NULL OR passada_iniciada_em >= :d)"
 
 
+def janela_estourou(conn: sqlite3.Connection, grupo: str, desde: str, horas: int) -> bool:
+    """A janela que começou em `desde` tem fatias sem ler e a primeira passada dela começou na primeira metade (um início
+    mais tarde é culpa da fila ou de uma pausa, não do ritmo): a sequência não dá conta de uma passada no tempo do ciclo."""
+    if proxima_fatia(conn, grupo, desde) is None:
+        return False
+    primeira = conn.execute("SELECT MIN(passada_iniciada_em) FROM fatias WHERE grupo = ? AND ativa = 1 "
+                            "AND passada_iniciada_em >= ?", (grupo, desde)).fetchone()[0]
+    return primeira is not None and datetime.fromisoformat(primeira) - datetime.fromisoformat(desde) <= timedelta(hours=horas / 2)
+
+
 def proximas_fatias(conn: sqlite3.Connection, grupo: str, desde: str, n: int = 1) -> list[Fatia]:
-    """Até `n` fatias distintas que ainda não foram lidas inteiras desde `desde` (passadas em andamento primeiro)."""
+    """Até `n` fatias distintas que ainda não foram lidas inteiras desde `desde`: as passadas em andamento primeiro,
+    depois as que estão há mais tempo sem passada completa (as nunca lidas antes de todas). Sem essa ordem, uma sequência
+    que não termina a janela recomeçaria sempre pelas faixas baratas e nunca chegaria às caras."""
     return [Fatia.de(r) for r in conn.execute(
         f"SELECT * FROM fatias WHERE grupo = :g AND ativa = 1 AND (ultima_passada IS NULL OR NOT ({_FEITA_NO_DIA})) "
-        "ORDER BY proxima_pagina = 1, preco_min, id LIMIT :n",
+        "ORDER BY proxima_pagina = 1, ultima_passada IS NOT NULL, ultima_passada, preco_min, id LIMIT :n",
         {"g": grupo, "d": desde, "n": n},
     )]
 
@@ -354,8 +381,12 @@ def varrer(
     dormir=time.sleep,
     relogio=time.monotonic,
     pasta_html: Path | None = None,
+    ciclo_horas: int | None = None,
 ) -> int:
     """Lê as fatias que faltam hoje até completar o dia ou acabar o tempo (ou `max_paginas`).
+
+    `ciclo_horas`: em vez do dia, a janela é de tantas horas (ver `inicio_do_ciclo`): uma fatia está "lida" se a passada
+    dela começou e terminou na janela atual. O dia (Brasília) fecha quando cada fatia teve uma passada completa dentro dele.
 
     Por padrão, a categoria `no` inteira, fatiada por preço. Com `vendidos` (lista de nós),
     os mais vendidos de cada um desses nós (até LIVROS_POR_FAIXA por faixa de preço), sem contar os
@@ -377,8 +408,11 @@ def varrer(
     # esconde o que não foi visto desde então (vendedores de fora que entraram antes do filtro).
     conn.execute("INSERT OR IGNORE INTO config (chave, valor) VALUES ('so_amazon_desde', ?)", (db.agora(),))
     conn.commit()
-    desde = inicio_do_dia()
-    if _fechar_dia_se_completo(conn, grupo, desde):
+    janela = (lambda: inicio_do_ciclo(ciclo_horas)) if ciclo_horas else inicio_do_dia
+    dia = inicio_do_dia()
+    _fechar_dia_se_completo(conn, grupo, dia)              # o dia pode já estar completo pelas passadas anteriores
+    desde = janela()
+    if proxima_fatia(conn, grupo, desde) is None:
         return None
     _recomecar_passadas_antigas(conn, grupo, desde)
     exec_id = conn.execute("INSERT INTO execucoes (iniciada_em) VALUES (?)", (db.agora(),)).lastrowid
@@ -472,11 +506,17 @@ def varrer(
     marco = 0
     while relogio() - inicio < minutos * 60:
         hoje = inicio_do_dia()
-        if hoje != desde:            # a execução atravessou a meia-noite (Brasília): começa o dia novo
-            _fechar_dia_se_completo(conn, grupo, desde)   # o que ficou completo antes da virada vale para o dia que acabou
-            desde = hoje
+        if hoje != dia:              # a execução atravessou a meia-noite (Brasília): começa o dia novo
+            _fechar_dia_se_completo(conn, grupo, dia)     # o que ficou completo antes da virada vale para o dia que acabou
+            dia = hoje
+        nova = janela()
+        if nova != desde:            # começou outra janela: as passadas em andamento valeriam metade em cada uma
+            if ciclo_horas and janela_estourou(conn, grupo, desde, ciclo_horas):
+                pl.avisos.append(JANELA_ESTOUROU)
+            desde = nova
             _recomecar_passadas_antigas(conn, grupo, desde)
-            pl.avisos.append("a execução atravessou a meia-noite; as passadas em andamento recomeçaram")
+            pl.avisos.append("a execução atravessou a meia-noite; as passadas em andamento recomeçaram" if not ciclo_horas
+                             else "a execução atravessou o fim do ciclo; as passadas em andamento recomeçaram")
         pistas = ritmo.pistas
         if max_paginas is not None:
             if pl.tentativas >= max_paginas:
@@ -514,7 +554,9 @@ def varrer(
         if espera > 0:
             dormir(espera)
 
-    _fechar_dia_se_completo(conn, grupo, desde)
+    if ciclo_horas and janela() != desde and janela_estourou(conn, grupo, desde, ciclo_horas):
+        pl.avisos.append(JANELA_ESTOUROU)          # a janela acabou durante o último lote
+    _fechar_dia_se_completo(conn, grupo, dia)
     if falta := detalhes_em_falta(pl.itens, pl.com):
         pl.avisos.append(f"poucos itens com {', '.join(falta)}: {AVISO_LAYOUT}")
     corridos = max((relogio() - inicio) / 60, 1e-9)
@@ -536,6 +578,10 @@ class Cobertura:
     fatias_hoje: int        # fatias já lidas por inteiro hoje
     dia_completo: bool
     lacunas: list           # dias (date) sem varredura completa, da primeira execução até ontem
+    ciclo_horas: int = 0
+    mais_antiga_h: float | None = None   # idade, em horas, da passada completa mais velha entre as fatias ativas
+    atrasadas: int = 0      # fatias ativas cuja última passada completa passou de limite_atraso(ciclo_horas)
+    nunca_lidas: int = 0
 
 
 CAMPOS_PREENCHIMENTO = {"imagem": "capa", "autor": "autor", "publicado": "data", "idioma": "idioma",
@@ -562,10 +608,93 @@ def ler_config(conn: sqlite3.Connection) -> dict:
     return {r[0]: r[1] for r in conn.execute("SELECT chave, valor FROM config")}
 
 
+
+
+
+def pausa_vigente(conn: sqlite3.Connection, agora: datetime | None = None) -> datetime | None:
+    """Até quando a coleta está em pausa depois de um bloqueio, ou None se não está."""
+    pausa = modulo_ritmo.pausa_ate(ler_config(conn))
+    return pausa if pausa and pausa > (agora or datetime.fromisoformat(db.agora())) else None
+
+
+def aprender_ciclo_no_banco(conn: sqlite3.Connection, execucao, completou: bool, agora: datetime | None = None,
+                            estourou_no_fim: bool = False) -> dict:
+    """Guarda no banco o ciclo e a pausa para a próxima execução (ver ritmo.aprender_ciclo)."""
+    agora = agora or datetime.fromisoformat(db.agora())
+    novo = modulo_ritmo.aprender_ciclo(
+        ler_config(conn), agora, execucao["paginas"], execucao["bloqueios"], execucao["erros"] + execucao["curtas"],
+        "interrompida" in (execucao["observacao"] or ""), completou,
+        estourou_no_fim or JANELA_ESTOUROU in (execucao["observacao"] or ""))
+    for chave, valor in novo.items():
+        conn.execute("INSERT INTO config (chave, valor) VALUES (?, ?) "
+                     "ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor", (chave, valor))
+    conn.commit()
+    return novo
+
+
+@dataclass
+class Resultado:
+    exec_id: int | None = None          # None: nada a fazer (a janela já estava completa) ou em pausa
+    pausa_ate: datetime | None = None   # não leu: há uma pausa depois de bloqueio
+    ciclo_horas: int = 0
+    ppm_inicial: float = 0.0
+    teto: float = 0.0
+    config_ritmo: dict = field(default_factory=dict)    # o que a execução mudou no teto guardado
+    config_ciclo: dict = field(default_factory=dict)    # ... e no ciclo e na pausa
+    completou: bool = False             # a janela (ciclo) ficou completa
+
+
+def executar(conn: sqlite3.Connection, sessao, *, no: str = NO_HQ_MANGA, vendidos=None, minutos: float = 60,
+             max_paginas: int | None = None, faixas=None, ritmo_inicial: float | None = None,
+             ritmo_max: float | None = None, teto_auto_max: float = modulo_ritmo.PPM_TETO_AUTO_MAX,
+             subir_a_cada: int = modulo_ritmo.A_CADA, ciclo_horas: int | None = None, ignorar_pausa: bool = False,
+             parar_na_falha: bool = False, pasta_html: Path | None = None, dormir=time.sleep,
+             relogio=time.monotonic, log=print) -> Resultado:
+    """Uma execução completa da coleta: confere a pausa depois de bloqueio, lê o que está na vez (`varrer`) e
+    guarda no banco o que aprendeu (teto de ritmo, ciclo, pausa). Sem `ritmo_max`/`ciclo_horas`, esses valores vêm do
+    banco e são aprendidos; com eles, ficam fixos e nada é guardado."""
+    criar_schema(conn)
+    config = ler_config(conn)
+    auto = ritmo_max is None
+    ciclo = ciclo_horas or modulo_ritmo.ciclo_guardado(config)
+    res = Resultado(ciclo_horas=ciclo)
+    if ciclo_horas is None and not ignorar_pausa and (pausa := pausa_vigente(conn)):
+        res.pausa_ate = pausa
+        return res
+    if auto:
+        inicio, teto = modulo_ritmo.ritmo_guardado(config, modulo_ritmo.PPM_TETO_PADRAO, maximo=teto_auto_max)
+    else:
+        inicio, teto = ritmo_inicial or modulo_ritmo.PPM_BASE, ritmo_max
+    if ritmo_inicial is not None:
+        inicio = ritmo_inicial
+    r = Ritmo(inicio, teto, a_cada=subir_a_cada)
+    res.ppm_inicial, res.teto = r.ppm, r.teto
+    log(f"ritmo: começa em {r.ppm:.0f} páginas/min, teto {r.teto:.0f}" + (" (teto guardado no banco)" if auto else "")
+        + f"; ciclo de {ciclo} h" + (" (guardado no banco)" if ciclo_horas is None else ""))
+    res.exec_id = varrer(conn, sessao, no=no, vendidos=vendidos, minutos=minutos, faixas=faixas, max_paginas=max_paginas,
+                         pasta_html=pasta_html, ritmo=r, parar_na_falha=parar_na_falha, dormir=dormir, relogio=relogio,
+                         ciclo_horas=ciclo)
+    grupo = GRUPO_VENDIDOS if vendidos is not None else no
+    res.completou = proxima_fatia(conn, grupo, inicio_do_ciclo(ciclo)) is None
+    if res.exec_id is None or parar_na_falha or max_paginas is not None:
+        return res
+    e = conn.execute("SELECT * FROM execucoes WHERE id = ?", (res.exec_id,)).fetchone()
+    if auto:
+        res.config_ritmo = aprender_ritmo(conn, r, res.teto, e, teto_auto_max)
+    if ciclo_horas is None:
+        # a janela está para acabar com a passada incompleta, sem que um bloqueio ou falha seja a causa
+        agora = datetime.fromisoformat(db.agora())
+        desde = inicio_do_ciclo(ciclo, agora)
+        fim = datetime.fromisoformat(desde) + timedelta(hours=ciclo)
+        limpa = not e["bloqueios"] and "interrompida" not in (e["observacao"] or "")
+        no_fim = limpa and fim - agora < timedelta(minutes=FOLGA_JANELA_MIN) and janela_estourou(conn, grupo, desde, ciclo)
+        res.config_ciclo = aprender_ciclo_no_banco(conn, e, res.completou, agora, estourou_no_fim=no_fim)
+    return res
+
+
 def aprender_ritmo(conn: sqlite3.Connection, r: Ritmo, teto_inicial: float, execucao,
                    maximo: float | None = None) -> dict:
     """Guarda no banco o teto e o último ritmo limpo para a próxima execução (ver ritmo.aprender)."""
-    from . import ritmo as modulo_ritmo
     novo = modulo_ritmo.aprender(ler_config(conn), db.hoje_brasil().isoformat(), r, teto_inicial,
                                  execucao["paginas"], execucao["bloqueios"], execucao["erros"] + execucao["curtas"],
                                  **({"maximo": maximo} if maximo is not None else {}))
@@ -574,6 +703,11 @@ def aprender_ritmo(conn: sqlite3.Connection, r: Ritmo, teto_inicial: float, exec
                      "ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor", (chave, valor))
     conn.commit()
     return novo
+
+
+def limite_atraso(ciclo_horas: int) -> float:
+    """Horas sem passada completa a partir das quais uma fatia está atrasada: dois ciclos mais folga para a passada."""
+    return 2 * ciclo_horas + 2
 
 
 def cobertura(conn: sqlite3.Connection, grupo: str = NO_HQ_MANGA) -> Cobertura:
@@ -593,7 +727,15 @@ def cobertura(conn: sqlite3.Connection, grupo: str = NO_HQ_MANGA) -> Cobertura:
             if dia not in completos:
                 lacunas.append(dia)
             dia += timedelta(days=1)
+    ciclo = modulo_ritmo.ciclo_guardado(ler_config(conn))
+    agora = datetime.fromisoformat(db.agora())
+    idades = [(agora - datetime.fromisoformat(r[0])).total_seconds() / 3600 for r in conn.execute(
+        "SELECT ultima_passada FROM fatias WHERE grupo = ? AND ativa = 1 AND ultima_passada IS NOT NULL", (grupo,))]
     return Cobertura(
+        ciclo_horas=ciclo,
+        mais_antiga_h=max(idades, default=None),
+        atrasadas=sum(1 for h in idades if h > limite_atraso(ciclo)),
+        nunca_lidas=um("SELECT COUNT(*) FROM fatias WHERE grupo = ? AND ativa = 1 AND ultima_passada IS NULL", grupo),
         itens=um("SELECT COUNT(*) FROM catalogo"),
         vistos_hoje=um("SELECT COUNT(*) FROM catalogo WHERE ultimo_visto >= ?", desde),
         fatias=um("SELECT COUNT(*) FROM fatias WHERE grupo = ? AND ativa = 1", grupo),
