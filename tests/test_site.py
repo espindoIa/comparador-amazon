@@ -819,8 +819,10 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.keyboard.press("Enter")
             pg.click("#res .row")                                                        # trocar de tela leva o foco ao título
             pg.wait_for_selector("#graf svg")
-            pg.wait_for_function("document.activeElement.tagName === 'H1'")
-            self.assertIn("paciente", pg.evaluate("document.activeElement.textContent"))
+            pg.wait_for_function("document.activeElement.matches('.livro[role=region]')")    # a região do livro, nomeada pelo h1
+            self.assertIn("paciente", pg.evaluate("document.getElementById(document.activeElement.getAttribute('aria-labelledby')).textContent"))
+            pg.keyboard.press("Tab")                                                     # o Tab seguinte chega na ação principal
+            self.assertIn("Ver na Amazon", pg.evaluate("document.activeElement.textContent"))
             self.assertIn("menor R$ 34,99", pg.get_attribute("#graf svg", "aria-label"))   # resumo do gráfico em texto
             pg.focus("#graf .graf")                                                      # gráfico pelo teclado
             pg.keyboard.press("End")
@@ -854,6 +856,9 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.focus("[data-remover='8535902775']")
             pg.keyboard.press("Enter")
             pg.wait_for_function("document.activeElement.dataset.remover === 'B0ABCDEFGH'")
+            pg.keyboard.press("Control+z")                                               # Ctrl+Z desfaz sem ir até o aviso
+            pg.wait_for_function("document.querySelectorAll('#lst [data-remover]').length === 2")
+            pg.wait_for_function("document.activeElement.dataset.remover === '8535902775'")
             pg.goto(f"{base}/?lista=,")                                                  # link de lista sem livros
             pg.wait_for_selector(".vazio h1")
             self.assertIn("Lista não encontrada", pg.inner_text("main"))

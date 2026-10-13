@@ -190,11 +190,11 @@
   window.addEventListener('resize', function () { clearTimeout(tEst); tEst = setTimeout(arrumarEstantes, 120); });
   // aviso rápido: com ação ("Desfazer"), fica 10 s, para dar tempo de chegar ao botão pelo teclado;
   // não some enquanto o ponteiro ou o foco estão nele, e Esc fecha
-  var tToast = null, msToast = 0;
+  var tToast = null, msToast = 0, desfazer = null;
   // fechado, o aviso só fica transparente (para a transição): o botão sai da ordem do Tab, e quem estava nele volta à tela
   function fecharToast() {
     var t = $('#toast'), bt = t.querySelector('button'), tinha = t.contains(document.activeElement);
-    clearTimeout(tToast); t.classList.remove('on');
+    clearTimeout(tToast); t.classList.remove('on'); desfazer = null;
     if (bt) bt.tabIndex = -1;
     if (tinha) focarTela(true);
   }
@@ -203,13 +203,20 @@
     var t = $('#toast');
     t.innerHTML = '<span>' + esc(msg) + '</span>' + (acao ? '<button type="button">' + esc(acao) + '</button>' : '');
     if (acao) t.querySelector('button').onclick = function () { fecharToast(); fn(); };
+    desfazer = acao === 'Desfazer' ? fn : null;
+    if (desfazer) t.querySelector('span').insertAdjacentHTML('beforeend', '<span class="vh">. Ctrl+Z desfaz.</span>');
     t.classList.add('on'); msToast = acao ? 10000 : 5000; contarToast();
   }
   (function () {
     var t = $('#toast'), pausa = function () { clearTimeout(tToast); }, segue = function () { if (t.classList.contains('on') && !t.matches(':hover') && !t.contains(document.activeElement)) contarToast(); };
     t.addEventListener('mouseenter', pausa); t.addEventListener('focusin', pausa);
     t.addEventListener('mouseleave', segue); t.addEventListener('focusout', function () { setTimeout(segue, 0); });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && t.classList.contains('on')) fecharToast(); });
+    document.addEventListener('keydown', function (e) {
+      if (!t.classList.contains('on')) return;
+      if (e.key === 'Escape') fecharToast();
+      // o aviso fica no fim da página; Ctrl/⌘+Z desfaz sem precisar chegar até ele (fora de campos de texto)
+      else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && desfazer && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); var f = desfazer; fecharToast(); f(); }
+    });
   })();
   function contador() { var n = Lista.ler().length; $('#cont').textContent = n ? String(n) : ''; }
   function titulo(t) { document.title = t ? t + ' · Preços de livros' : 'Preços de livros: histórico de preço de livros da Amazon'; }
@@ -248,7 +255,8 @@
     if (focoApos) { var c = app.querySelector(focoApos); focoApos = null; if (c) { focar = false; c.focus({ preventScroll: true }); return; } sempre = true; }
     if (!focar && !sempre) return;
     focar = false;
-    var h = app.querySelector('h1:not([hidden])') || app;
+    // [data-foco]: a tela indica um alvo melhor que o h1 (no livro, a região inteira, para o Tab passar pelas ações)
+    var h = app.querySelector('[data-foco]') || app.querySelector('h1:not([hidden])') || app;
     if (h !== app) h.tabIndex = -1;
     h.focus({ preventScroll: true });
   }
@@ -514,11 +522,11 @@
       var eds = l.eds || [[asin, l.f || 'Livro', f.preco]];
       app.innerHTML = '<button type="button" class="voltar" data-acao="voltar">' + ic('voltar', 's') + 'Voltar</button>' +
         (m.aviso ? '<p class="aviso">' + esc(m.aviso) + '</p>' : '') +
-        '<div class="livro"><aside class="l-lado">' + capa(o, 'g', true) +
+        '<div class="livro" role="region" aria-labelledby="l-tit" data-foco><aside class="l-lado">' + capa(o, 'g', true) +
         '<div class="acoes"><a class="btn pri" href="' + L.linkAmazon(asin) + '" target="_blank" rel="noopener noreferrer">Ver na Amazon ' + ic('ext', 's') + '</a>' +
         '<button type="button" class="btn salvar" data-salvar="' + asin + '"></button>' +
         '<button type="button" class="btn ico" data-acao="compartilhar" aria-label="Compartilhar">' + ic('share', 's') + '<span class="rot">Compartilhar</span></button></div></aside>' +
-        '<div class="l-corpo"><header class="l-cab"><h1>' + esc(o.t) + '</h1>' +
+        '<div class="l-corpo"><header class="l-cab"><h1 id="l-tit">' + esc(o.t) + '</h1>' +
         (o.autor ? '<p class="aut"><a href="./?q=' + encodeURIComponent(l.autor1 || o.autor) + '" data-r>' + esc(o.autor) + '</a></p>' : '') +
         '<p class="det">' + det.map(function (d) { return '<span>' + d + '</span>'; }).join('') + '</p>' +
         (l.gen ? '<p class="l-gens">' + l.gen.map(function (g) { return '<a href="./?g=' + g[0] + '" data-r>' + esc(g[1]) + '</a>'; }).join('') + '</p>' : '') + '</header>' +

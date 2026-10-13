@@ -48,7 +48,7 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 
 - As fontes ficam em `comparador/web/*.woff2` (subconjunto latino, que cobre ã, ç, é), com `font-display:swap` 🔒 e licença em `OFL.txt`.
 - Só a Cormorant tem `preload` (`crossorigin`).
-- `h1,h2` têm `font-synthesis:none`, e `b`/`strong` usam peso 600, que é o que existe. Assim o navegador não inventa negrito.
+- `h1,h2` têm `font-synthesis:none`, para o navegador não inventar negrito na Cormorant, que só tem 600. A face 600 da Crimson declara `font-weight:600 700`, então o negrito dela também usa o arquivo real.
 - O `body` continua com `--f`. Controles (`font:inherit`) não herdam serifa.
 - A página avulsa do comando `grafico` embute o CSS sem as fontes e cai na pilha de serifas do sistema.
 - Escala 🔒: `--fs-1` 12 … `--fs-12` 40 px (12 degraus, só cresce). Não existe `font-size` em px fora dela, a não ser no título da capa gerada (9 px, proporcional à capa).
@@ -89,6 +89,8 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
   - Toda troca de tela leva o foco ao `h1` dela, menos enquanto se digita na busca.
   - O controle recriado por `innerHTML` (chip, select, botão do preço-alvo) recebe o foco de volta. O que some recebe um substituto: ao remover um livro da lista, o foco vai ao remover da linha vizinha; em "Ver todos", ao primeiro livro que apareceu; em "Mostrar mais" (último), ao primeiro livro novo.
   - O aviso rápido fechado tira o botão da ordem do Tab.
+  - O aviso com "Desfazer" fica no fim da página: Ctrl/⌘+Z desfaz enquanto ele está aberto (fora de campos de texto), e o leitor de tela ouve a dica junto com o aviso.
+  - No livro, o foco da troca de tela vai à região `.livro` (nomeada pelo `h1`), que vem antes das ações no DOM; o Tab seguinte chega em "Ver na Amazon".
   - O erro de campo é `role="alert"`, ligado ao campo por `aria-describedby`, com ids únicos por livro.
 - **Leitor de tela:** a contagem da busca é anunciada numa região viva escondida (`#cont-res`), com espera de 0,8 s.
 - **Alvos de toque:** ≥ 40 px em tela de toque (`pointer:coarse`); campos e botões ao lado deles, 44 px 🔒.

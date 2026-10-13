@@ -38,7 +38,6 @@ body{margin:0;font:var(--fs-4)/1.5 var(--f);color:var(--fg);background:var(--bg)
 a{color:var(--ac);text-decoration:none}@media(hover:hover){a:hover{text-decoration:underline}}
 h1,h2,h3{line-height:1.2;margin:0;font-weight:600}
 h1,h2{font-family:var(--display);letter-spacing:0;font-synthesis:none}
-b,strong{font-weight:600}
 h1{font-size:var(--fs-10)}h2{font-size:var(--fs-8)}h3{font-size:var(--fs-4)}
 p{margin:0 0 .6em}
 button,input,select{font:inherit;color:inherit}
@@ -49,7 +48,7 @@ button,input,select{font:inherit;color:inherit}
 .pular{position:absolute;left:12px;top:-80px;z-index:60;background:var(--tinta);color:var(--tintaf);padding:10px 16px;border-radius:var(--r2);font-weight:600}
 .pular:focus{top:12px}
 /* o título que recebe o foco numa troca de tela (e o #app) não precisa de anel: não é um controle */
-#app:focus,h1[tabindex="-1"]:focus{outline:none}
+#app:focus,h1[tabindex="-1"]:focus,[data-foco]:focus{outline:none}
 svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 svg.i.s{width:16px;height:16px}
 
