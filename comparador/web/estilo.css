@@ -46,7 +46,7 @@ svg.i.s{width:16px;height:16px}
 .busca{position:relative;display:flex;align-items:center;max-width:580px;width:100%;justify-self:center}
 .busca svg{position:absolute;left:14px;color:var(--mu);pointer-events:none}
 .busca input{width:100%;height:44px;padding:0 42px;border:1px solid var(--ln2);border-radius:999px;background:var(--sf);font-size:16px;outline:none;-webkit-appearance:none;appearance:none;transition:border-color .15s,box-shadow .15s}
-.busca input::placeholder{color:var(--mu2)}
+.busca input::placeholder{color:var(--mu)}
 .busca input::-webkit-search-cancel-button{display:none}
 .busca input:focus{border-color:var(--ac);box-shadow:0 0 0 4px var(--acs)}
 .busca .limpa{position:absolute;right:6px;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:var(--mu);display:grid;place-items:center;cursor:pointer}
@@ -99,7 +99,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 .seg button[aria-pressed=true]{background:var(--sf);color:var(--fg);box-shadow:var(--sh1)}
 .seg button:disabled{opacity:.4;cursor:default}
 .sel{position:relative;display:inline-flex;align-items:center}
-.sel select{height:36px;padding:0 32px 0 12px;border:1px solid var(--ln2);border-radius:10px;background:var(--sf);font-size:14px;-webkit-appearance:none;appearance:none;cursor:pointer;max-width:100%}
+.sel select{height:36px;padding:0 32px 0 12px;border:1px solid var(--ln2);border-radius:10px;background:var(--sf);font-size:16px;-webkit-appearance:none;appearance:none;cursor:pointer;max-width:100%}
 .sel svg{position:absolute;right:10px;pointer-events:none;color:var(--mu)}
 
 /* ---------- etiquetas ---------- */
@@ -168,11 +168,12 @@ div.row:has(.esticar:hover){border-color:var(--ln2);box-shadow:var(--sh1)}
 .ferr .l2{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .faixa-preco{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .faixa-preco input::-webkit-inner-spin-button,.faixa-preco input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-.faixa-preco input{-moz-appearance:textfield;width:100px;height:36px;padding:0 10px;border:1px solid var(--ln2);border-radius:10px;background:var(--sf);font-size:14px}
+.faixa-preco input{-moz-appearance:textfield;width:100px;height:36px;padding:0 10px;border:1px solid var(--ln2);border-radius:10px;background:var(--sf);font-size:16px}
 .cont{font-size:14px;color:var(--mu);font-variant-numeric:tabular-nums}
 .ferr .sels{display:flex;gap:8px;flex-wrap:wrap}
 .sel select#gen{max-width:230px;text-overflow:ellipsis}
-@media(max-width:519px){.ferr .sels{width:100%}.ferr .sels .sel{flex:1;min-width:0}.ferr .sels select{width:100%}}
+/* Com 16px, "Todos os gêneros" mede ~135px; com a seta e a margem, cada select pede ~190px. Sem espaço para dois lado a lado (telas até uns 420px), a linha quebra, e o de gênero perde o teto de 230px para ficar da largura do outro. */
+@media(max-width:519px){.ferr .sels{width:100%}.ferr .sels .sel{flex:1 1 190px;min-width:0}.ferr .sels select,.sel select#gen{width:100%;max-width:none}}
 .busca-h{font-size:30px;margin:0 0 18px}
 @media(max-width:519px){.busca-h{font-size:25px}}
 .nota-busca{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;color:var(--mu);margin:0 0 12px}
@@ -193,7 +194,7 @@ div.row:has(.esticar:hover){border-color:var(--ln2);box-shadow:var(--sh1)}
 .gens{display:flex;flex-wrap:wrap;gap:8px}
 .gens a{display:inline-flex;align-items:baseline;gap:8px;padding:9px 14px;border:1px solid var(--ln);border-radius:var(--r2);background:var(--sf);color:var(--fg);font-size:14px;font-weight:500}
 .gens a:hover{border-color:var(--ln2);text-decoration:none;box-shadow:var(--sh1)}
-.gens span{color:var(--mu2);font-size:12px;font-variant-numeric:tabular-nums}
+.gens span{color:var(--mu);font-size:12px;font-variant-numeric:tabular-nums}
 
 /* ---------- página do livro ---------- */
 .voltar{display:inline-flex;align-items:center;gap:6px;color:var(--mu);font-weight:600;font-size:14px;margin:-6px 0 14px -6px;padding:6px 10px 6px 4px;border-radius:8px;background:none;border:0;cursor:pointer}
@@ -246,7 +247,7 @@ div.row:has(.esticar:hover){border-color:var(--ln2);box-shadow:var(--sh1)}
 .graf-h h2{font-size:19px}
 .graf{position:relative;margin:0 -4px;touch-action:pan-y;user-select:none;-webkit-user-select:none}
 .graf svg{display:block;width:100%;overflow:visible}
-.graf text{fill:var(--mu2);font-size:11.5px;font-variant-numeric:tabular-nums}
+.graf text{fill:var(--mu);font-size:11.5px;font-variant-numeric:tabular-nums}
 .graf .g{stroke:var(--ln);stroke-width:1}
 .graf .preco{fill:none;stroke:var(--ac);stroke-width:2.25;stroke-linejoin:round;stroke-linecap:round}
 .graf .area{fill:url(#gArea);stroke:none}
@@ -272,7 +273,7 @@ div.row:has(.esticar:hover){border-color:var(--ln2);box-shadow:var(--sh1)}
 .stats>div{background:var(--sf);padding:13px 18px;display:flex;flex-direction:column;gap:1px;min-width:0}
 .stats span{font-size:12px;color:var(--mu);font-weight:500}
 .stats b{font-size:18px;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-.stats small{font-size:12px;color:var(--mu2);font-variant-numeric:tabular-nums}
+.stats small{font-size:12px;color:var(--mu);font-variant-numeric:tabular-nums}
 @media(max-width:599px){.stats{grid-template-columns:1fr 1fr}}
 .ev-b{padding:16px 0;border-top:1px solid var(--ln)}.ev-b:first-of-type{border-top:0;padding-top:4px}
 .ev-b h3{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
@@ -287,15 +288,16 @@ details{font-size:14px;color:var(--mu);margin-top:8px}summary{cursor:pointer;fon
 /* ---------- lista ---------- */
 .lista-h{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin-bottom:18px}
 .lista-h h1{font-size:30px}
-.lista-h .ctl{display:flex;gap:8px;align-items:center}
-@media(max-width:599px){.lista-h>*{width:100%}.lista-h h1{font-size:26px}.lista-h .ctl .sel{flex:1}.lista-h .ctl .sel select{width:100%}}
+.lista-h .ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* Com 16px, "Adicionados por último" mede ~174px; com a seta e a margem, o select pede 230px. Sem essa largura ao lado, o botão desce para a linha de baixo. */
+@media(max-width:599px){.lista-h>*{width:100%}.lista-h h1{font-size:26px}.lista-h .ctl .sel{flex:1 1 230px}.lista-h .ctl .btn{flex:1 1 auto}.lista-h .ctl .sel select{width:100%}}
 .lista-h .ctl .btn{height:36px}
 .resumo{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;font-size:14px}
 .rm{position:relative;z-index:1}
 .alvo{position:relative;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:6px;font-size:13px}
 .alvo .lnk{font-size:13px;font-weight:600}
 .alvo-f{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.alvo-f input{width:110px;height:36px;padding:0 10px;border:1px solid var(--ln2);border-radius:10px;background:var(--sf);font-size:14px;-moz-appearance:textfield}
+.alvo-f input{width:110px;height:36px;padding:0 10px;border:1px solid var(--ln2);border-radius:10px;background:var(--sf);font-size:16px;-moz-appearance:textfield}
 .alvo-f input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .vazio{text-align:center;padding:56px 20px}
 .vazio .ic{width:56px;height:56px;border-radius:16px;background:var(--sf2);color:var(--fg);display:grid;place-items:center;margin:0 auto 18px}
