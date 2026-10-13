@@ -1,7 +1,9 @@
 import json
 import os
+import re
 import shutil
 import sqlite3
+import struct
 import subprocess
 import tempfile
 import threading
@@ -355,6 +357,81 @@ class TestSite(unittest.TestCase):
         for nome in ("lista.test.js", "busca.test.js"):
             r = subprocess.run([NODE, os.path.join(RAIZ, "tests", nome)], capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
+class TestIconesEManifesto(unittest.TestCase):
+    """O app instalado precisa de ícone PNG (o iOS ignora SVG no apple-touch-icon) e de um maskable com folga."""
+
+    def png(self, nome):
+        dados = (site.WEB / nome).read_bytes()
+        self.assertEqual(dados[:8], b"\x89PNG\r\n\x1a\n", nome)
+        largura, altura, _, tipo = struct.unpack(">IIBB", dados[16:26])
+        return largura, altura, tipo                                        # tipo: 2 = RGB (opaco), 6 = RGBA
+
+    def test_tamanhos_e_transparencia_de_cada_icone(self):
+        self.assertEqual(self.png("icone-180.png"), (180, 180, 2))            # apple-touch-icon: quadrado, sem transparência
+        self.assertEqual(self.png("icone-192.png"), (192, 192, 6))
+        self.assertEqual(self.png("icone-512.png"), (512, 512, 6))
+        self.assertEqual(self.png("icone-maskable-512.png"), (512, 512, 2))   # maskable: o Android recorta; sem transparência
+
+    def test_manifesto_lista_so_arquivos_que_existem_e_tem_um_maskable(self):
+        m = json.loads((site.WEB / "manifest.json").read_text(encoding="utf-8"))
+        for icone in m["icons"]:
+            self.assertTrue((site.WEB / icone["src"]).exists(), icone["src"])
+            if icone["type"] == "image/png":
+                lado = int(icone["sizes"].split("x")[0])
+                self.assertEqual(self.png(icone["src"])[:2], (lado, lado), icone["src"])
+        self.assertIn("maskable", [i["purpose"] for i in m["icons"]])
+        self.assertIn("any", [i["purpose"] for i in m["icons"] if i["type"] == "image/png"])
+        self.assertEqual(m["theme_color"], m["background_color"])             # o HTML já usa a cor da página nos dois temas
+
+    def test_site_gerado_leva_os_icones_e_o_apple_touch_icon_versionado(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            banco(d / "a.db", [("B000000001", "Livro", "Capa comum", [("2026-10-01", "2026-10-05", 5000, None)])])
+            site.construir([d / "a.db"], d / "out", Path(RAIZ) / "eventos.csv")
+            for nome in ("icone-180.png", "icone-192.png", "icone-512.png", "icone-maskable-512.png"):
+                self.assertTrue((d / "out" / nome).exists(), nome)
+            html = (d / "out" / "index.html").read_text(encoding="utf-8")
+            self.assertRegex(html, r'rel="apple-touch-icon" href="icone-180\.png\?v=[0-9a-f]{10}"')
+
+
+class TestFolhaDeEstilo(unittest.TestCase):
+    """Regras da folha que quebrariam em silêncio: tokens, hover em tela de toque, área segura."""
+
+    def setUp(self):
+        self.css = (site.WEB / "estilo.css").read_text(encoding="utf-8")
+        self.html = (site.WEB / "index.html").read_text(encoding="utf-8")
+        self.claro = re.search(r":root\{(.*?)color-scheme", self.css, re.S).group(1)
+        self.escuro = re.search(r"prefers-color-scheme:dark\)\{:root\{(.*?)\}\}", self.css, re.S).group(1)
+
+    @staticmethod
+    def tokens(bloco):
+        return set(re.findall(r"(--[a-z0-9]+):", bloco))
+
+    def test_toda_cor_do_tema_claro_e_redefinida_no_escuro(self):
+        cores = {t for t in self.tokens(self.claro) if t not in ("--r2", "--r3", "--f", "--serif")}
+        self.assertEqual(cores - self.tokens(self.escuro), set(), "token de cor sem versão escura")
+
+    def test_todo_var_usado_existe_e_todo_token_definido_e_usado(self):
+        usados = set(re.findall(r"var\((--[a-z0-9]+)\)", self.css))
+        definidos = self.tokens(self.claro) | self.tokens(self.escuro)
+        self.assertEqual(usados - definidos - {"--h"}, set(), "var() sem definição")               # --h vem inline, de app.js
+        self.assertEqual(definidos - usados, set(), "token definido e nunca usado")
+
+    def test_borda_de_campo_usa_o_token_proprio_e_nao_a_linha_decorativa(self):
+        for seletor in (".busca input{", ".sel select{", ".faixa-preco input{", ".alvo-f input{"):
+            regra = self.css[self.css.index(seletor):].split("}", 1)[0]
+            self.assertIn("border:1px solid var(--ln3)", regra, seletor)
+
+    def test_nenhum_hover_fora_do_media_de_ponteiro_com_hover(self):
+        for regra in re.findall(r"(?:^|\})\s*([^{}@]*:hover[^{}]*)\{", self.css):
+            self.fail(f"regra de :hover fora de @media(hover:hover): {regra.strip()}")
+        self.assertIn("@media(hover:hover){", self.css)
+
+    def test_area_segura_e_cobertura_nao_se_misturam(self):
+        # viewport-fit=cover sem env(safe-area-inset-*) deixa o conteúdo sob o entalhe; sem o cover, o navegador cuida
+        self.assertEqual("viewport-fit=cover" in self.html, "safe-area-inset" in self.css)
 
 
 @unittest.skipUnless(navegador(), "navegador não instalado")
