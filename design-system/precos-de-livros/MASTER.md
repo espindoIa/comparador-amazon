@@ -86,6 +86,7 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 | Carregando | `esqueleto(n)` / `.sk` | sem brilho com movimento reduzido |
 | Vazio e erro | `.vazio` (medalhão `--acs`/`--ac`), `erro(msg)` | sempre com ação |
 | Página 404 | `404.html` (GitHub Pages) | bloco `.vazio` com `h1` e "Ir para o início"; `<base>` calculada para funcionar em qualquer profundidade de endereço |
+| Prévia dos links | meta `og:*` no `index.html` | título e descrição sempre; `og:image` (o ícone de 512 px) e `og:url` só com endereço completo, que a publicação passa em `python -m comparador site --url` |
 | Aviso rápido | `#toast` | 5 s; 10 s com ação; pausa com ponteiro ou foco; Esc fecha |
 
 ## Acessibilidade (obrigatório)

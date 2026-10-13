@@ -54,11 +54,12 @@ jobs:
           done
           ls "$RUNNER_TEMP"/bancos/*.db > /dev/null   # falha se nenhum banco foi baixado
 
-      - name: Gera o site
-        run: python -m comparador site "$RUNNER_TEMP"/bancos/*.db --saida site
-
+      # Antes da geração: o endereço público entra na imagem de prévia dos links (og:image).
       - id: pages
         uses: actions/configure-pages@v5
+
+      - name: Gera o site
+        run: python -m comparador site "$RUNNER_TEMP"/bancos/*.db --saida site --url "${{ steps.pages.outputs.base_url }}"
 
       # Um banco incompleto ou um erro na geração não pode trocar o site bom por um quase vazio.
       - name: Confere se o site não encolheu

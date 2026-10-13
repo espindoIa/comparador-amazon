@@ -345,6 +345,26 @@ class TestSite(unittest.TestCase):
         self.assertRegex(html, r'src="app\.js\?v=[0-9a-f]{10}"')
         self.assertRegex(html, r'href="estilo\.css\?v=[0-9a-f]{10}"')
 
+    def test_previa_dos_links_so_com_endereco_completo(self):
+        banco(self.d / "a.db", [("B000000001", "Livro Um", None, [("2026-10-01", "2026-10-05", 5000, None)])])
+        site.construir([self.d / "a.db"], self.d / "sem")
+        self.assertNotIn("og:image", (self.d / "sem/index.html").read_text(encoding="utf-8"))
+        site.construir([self.d / "a.db"], self.d / "com", url="https://exemplo.github.io/comparador-amazon/")
+        html = (self.d / "com/index.html").read_text(encoding="utf-8")
+        self.assertRegex(html, r'<meta property="og:image" content="https://exemplo\.github\.io/comparador-amazon/icone-512\.png\?v=[0-9a-f]{10}">')
+        self.assertIn('<meta property="og:url" content="https://exemplo.github.io/comparador-amazon/">', html)
+        v = re.search(r'href="estilo\.css\?v=([0-9a-f]{10})"', html).group(1)
+        self.assertIn(f"icone-512.png?v={v}", html)                                   # a mesma versão dos outros arquivos
+        with self.assertRaises(ValueError):
+            site.construir([self.d / "a.db"], self.d / "ruim", url="exemplo.github.io")
+
+    def test_cli_site_com_url(self):
+        banco(self.d / "a.db", [("B000000001", "Livro Um", None, [("2026-10-01", "2026-10-05", 5000, None)])])
+        r = subprocess.run(["python", "-m", "comparador", "site", str(self.d / "a.db"), "--saida", str(self.d / "s"),
+                            "--url", "https://exemplo.github.io/comparador-amazon"], cwd=RAIZ, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('content="https://exemplo.github.io/comparador-amazon/icone-512.png?v=', (self.d / "s/index.html").read_text(encoding="utf-8"))
+
     def test_cli_site(self):
         banco(self.d / "a.db", [("B000000001", "Livro Um", None, [("2026-10-01", "2026-10-05", 5000, None)])])
         r = subprocess.run(["python", "-m", "comparador", "site", str(self.d / "a.db"), "--saida", str(self.d / "s")],

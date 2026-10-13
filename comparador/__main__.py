@@ -203,11 +203,13 @@ def main() -> None:
     w.add_argument("bancos", nargs="+", help="um ou mais bancos do catálogo")
     w.add_argument("--saida", default="site", help="pasta de saída (padrão: %(default)s)")
     w.add_argument("--eventos", default=None, help="datas de promoção, em CSV nome,inicio,fim (padrão: o eventos.csv do repositório)")
+    w.add_argument("--url", default=None, help="endereço público do site, para a imagem de prévia dos links compartilhados; "
+                                               "sem ele, os links aparecem sem imagem")
 
     args = p.parse_args()
     if args.cmd == "site":
         from . import site
-        meta = site.construir([Path(b) for b in args.bancos], Path(args.saida), _eventos(args))
+        meta = site.construir([Path(b) for b in args.bancos], Path(args.saida), _eventos(args), args.url)
         print(f"site em {args.saida}: {meta['itens']} livros")
         return
     if args.cmd in ("varrer", "catalogo"):
