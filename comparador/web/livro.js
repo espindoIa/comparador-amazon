@@ -158,7 +158,7 @@
       else if (e[1] > hoje && (!prox || e[1] < prox[1])) prox = e;
     });
     if (prox) blocos.push('<div class="ev-b ev-prox"><h3>' + esc(prox[0]) + '</h3><span>' + dl(prox[1]) + ' · daqui a ' + plural(prox[1] - hoje, 'dia', 'dias') + '</span></div>');
-    return blocos.length ? '<section class="card pad sec"><h2 style="font-size:var(--fs-7);margin-bottom:10px">Datas de promoção</h2>' + blocos.join('') + '</section>' : '';
+    return blocos.length ? '<section class="card pad sec"><h2 class="t2">Datas de promoção</h2>' + blocos.join('') + '</section>' : '';
   }
 
   // dados do gráfico: dias com faixa, trechos, eventos próximos e janela inicial
@@ -200,10 +200,11 @@
     var seg = pers.length || evs ? '<div class="seg" role="group" aria-label="Período">' + pers.map(function (p) { return '<button type="button" data-per="' + p[0] + '">' + p[1] + '</button>'; }).join('') +
       '<button type="button" data-per="0">Tudo</button>' + evs + '</div>' : '';
     el.innerHTML = '<div class="graf-h"><h2>' + esc(titulo || 'Histórico de preço') + '</h2>' + seg + '</div>' +
-      '<div class="graf"><div class="tip" hidden></div></div><div class="leg"><button type="button" class="fixo" tabindex="-1"><i></i>Preço</button>' +
+      '<div class="graf" tabindex="0" role="group" aria-label="' + esc(titulo || 'Histórico de preço') + '. Use as setas para ver o preço de cada dia."><div class="tip" hidden></div></div>' +
+      '<p class="vh" aria-live="polite"></p><div class="leg"><span class="fixo"><i></i>Preço</span>' +
       (temMed ? '<button type="button" class="lmed" data-op="med">Preço mais comum</button>' : '') +
       (G.capa ? '<button type="button" class="lcapa" data-op="capa">Preço de capa</button>' : '') + '</div>';
-    var box = el.querySelector('.graf'), tip = box.querySelector('.tip'), W = 0, H = 0, ML = 0, MR = 12, MT = 22, MB = 26, X, Y;
+    var box = el.querySelector('.graf'), tip = box.querySelector('.tip'), voz = el.querySelector('[aria-live]'), ki = -1, W = 0, H = 0, ML = 0, MR = 12, MT = 22, MB = 26, X, Y;
 
     function n1(x) { return Math.round(x * 10) / 10; }
     function draw() {
@@ -217,7 +218,7 @@
       ML = Math.max.apply(null, ms.map(function (m) { return brlCurto(m).length; })) * 6.6 + 10;
       X = function (o) { return ML + (o - v.a) / Math.max(1, v.b - v.a) * (W - ML - MR); };
       Y = function (c) { return MT + (1 - (c - lo) / (hi - lo)) * (BASE - MT); };
-      out.push('<svg width="' + W + '" height="' + H + '" role="img" aria-label="Gráfico do histórico de preço"><defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">' +
+      out.push('<svg width="' + W + '" height="' + H + '" role="img" aria-label="' + esc(resumo()) + '"><defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">' +
         '<stop offset="0" stop-color="var(--ac)" stop-opacity=".22"/><stop offset="1" stop-color="var(--ac)" stop-opacity="0"/></linearGradient>' +
         '<clipPath id="gRec"><rect x="' + ML + '" y="0" width="' + (W - ML - MR + 1) + '" height="' + H + '"/></clipPath></defs>');
       ms.forEach(function (m) { if (m < lo || m > hi) return; var y = n1(Y(m)); out.push('<line x1="' + ML + '" x2="' + (W - MR) + '" y1="' + y + '" y2="' + y + '" class="g"/><text x="' + (ML - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + brlCurto(m) + '</text>'); });
@@ -254,11 +255,24 @@
       var velho = box.querySelector('svg'); if (velho) velho.remove();
       box.insertAdjacentHTML('beforeend', out.join(''));
       painel();
+      if (ki >= 0 && document.activeElement === box) mostraDia(ki);
+    }
+    // índices (em G.dias) dos dias dentro do período mostrado
+    function visiveis() { var r = []; G.dias.forEach(function (q, j) { if (q[0] >= v.a && q[0] <= v.b) r.push(j); }); return r; }
+    // resumo em texto do período mostrado, para o leitor de tela
+    function resumo() {
+      var js = visiveis(); if (!js.length) return 'Gráfico do histórico de preço';
+      var ps = js.map(function (j) { return G.dias[j][1]; }), d0 = G.dias[js[0]][0], d1 = G.dias[js[js.length - 1]][0];
+      return 'Gráfico do histórico de preço de ' + dmes(d0, true) + ' a ' + dmes(d1, true) + ': menor ' + brl(Math.min.apply(null, ps)) +
+        ', maior ' + brl(Math.max.apply(null, ps)) + ', último ' + brl(ps[ps.length - 1]);
     }
     function mostra(e) {
-      var s = box.querySelector('svg'), r = s.getBoundingClientRect(), x = e.clientX - r.left, o = (x - ML) / (W - ML - MR) * (v.b - v.a) + v.a, b = null, bd = 1e9, bj = 0;
-      G.dias.forEach(function (q, j) { if (q[0] < v.a || q[0] > v.b) return; var k = Math.abs(q[0] - o); if (k < bd) { bd = k; b = q; bj = j; } });
-      if (!b) return;
+      var s = box.querySelector('svg'), r = s.getBoundingClientRect(), x = e.clientX - r.left, o = (x - ML) / (W - ML - MR) * (v.b - v.a) + v.a, bd = 1e9, bj = -1;
+      G.dias.forEach(function (q, j) { if (q[0] < v.a || q[0] > v.b) return; var k = Math.abs(q[0] - o); if (k < bd) { bd = k; bj = j; } });
+      if (bj >= 0) mostraDia(bj);
+    }
+    function mostraDia(bj) {
+      var s = box.querySelector('svg'), b = G.dias[bj]; ki = bj;
       var px = X(b[0]), py = Y(b[1]), c = s.querySelector('.cur'), p = s.querySelector('.curp');
       c.setAttribute('x1', px); c.setAttribute('x2', px); c.setAttribute('visibility', 'visible');
       p.setAttribute('cx', px); p.setAttribute('cy', py); p.setAttribute('visibility', 'visible');
@@ -266,8 +280,23 @@
       tip.hidden = false;
       var tw = tip.offsetWidth; tip.style.left = Math.max(tw / 2, Math.min(W - tw / 2, px)) + 'px';
       tip.style.top = Math.max(0, py - tip.offsetHeight - 14) + 'px';
+      return b;
     }
-    function esconde() { var s = box.querySelector('svg'); if (!s) return; s.querySelector('.cur').setAttribute('visibility', 'hidden'); s.querySelector('.curp').setAttribute('visibility', 'hidden'); tip.hidden = true; }
+    // teclado: setas andam de um dia observado para o outro, Home e End vão às pontas; o valor é anunciado
+    function tecla(e) {
+      var js = visiveis(), i = js.indexOf(ki), n;
+      if (!js.length) return;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') n = i < 0 ? js.length - 1 : Math.max(0, i - 1);
+      else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') n = i < 0 ? js.length - 1 : Math.min(js.length - 1, i + 1);
+      else if (e.key === 'Home') n = 0;
+      else if (e.key === 'End') n = js.length - 1;
+      else if (e.key === 'Escape') { esconde(); return; }
+      else return;
+      e.preventDefault();
+      var b = mostraDia(js[n]);
+      voz.textContent = brl(b[1]) + ' em ' + dmes(b[0], true);
+    }
+    function esconde() { ki = -1; var s = box.querySelector('svg'); if (!s) return; s.querySelector('.cur').setAttribute('visibility', 'hidden'); s.querySelector('.curp').setAttribute('visibility', 'hidden'); tip.hidden = true; }
     function painel() {
       el.querySelectorAll('[data-op]').forEach(function (b) { b.setAttribute('aria-pressed', opt[b.dataset.op] ? 'true' : 'false'); });
       el.querySelectorAll('[data-per]').forEach(function (b) { var n = +b.dataset.per, al = n === 0 ? (v.a === F0 && v.b === F1) : (v.a === Math.max(F0, UL - n + 1) && v.b === UL); b.setAttribute('aria-pressed', al ? 'true' : 'false'); });
@@ -275,7 +304,10 @@
     }
     box.addEventListener('pointermove', mostra);
     box.addEventListener('pointerdown', mostra);
-    box.addEventListener('pointerleave', esconde);
+    box.addEventListener('pointerleave', function () { if (!box.matches(':focus-visible')) esconde(); });
+    box.addEventListener('keydown', tecla);
+    box.addEventListener('focus', function () { var js = visiveis(); if (js.length && box.matches(':focus-visible')) mostraDia(js[js.length - 1]); });
+    box.addEventListener('blur', esconde);
     el.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b) return;
       if (b.dataset.op) { opt[b.dataset.op] = opt[b.dataset.op] ? 0 : 1; try { localStorage.setItem(NS, JSON.stringify(opt)); } catch (x) { } }

@@ -117,14 +117,16 @@
   }
 
   // ---------- peças de interface ----------
-  function matiz(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) % 360; return h; }
+  // cor da capa gerada: um dos tons de pano de encadernação (couro, vinho, verde, azul, ocre, ameixa), fixo por título
+  var PANOS = [20, 355, 150, 212, 36, 320];
+  function matiz(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) % 360; return PANOS[h % PANOS.length]; }
   function capa(o, cls, alt) {
     cls = 'cv' + (cls ? ' ' + cls : '');
     var tam = /\bg\b/.test(cls) ? 654 : /\bm\b/.test(cls) ? 436 : 218;   // altura da imagem (2x o tamanho na tela)
     if (o.img) return '<div class="' + cls + '" data-t="' + esc(o.t) + '"><img src="' + CAPA + encodeURIComponent(o.img) + '._AC_UY' + tam + '_.jpg" alt="' + (alt ? esc('Capa de ' + o.t) : '') + '" loading="lazy" decoding="async"></div>';
     return placeholder(o.t, cls);
   }
-  function placeholder(t, cls) { return '<div class="' + cls + ' ph" style="--h:' + matiz(t || '') + '" aria-hidden="true"><span>' + esc(t) + '</span></div>'; }
+  function placeholder(t, cls) { return '<div class="' + cls + ' ph" style="--h:' + matiz(t || '') + '" data-i="' + esc((t || '?').charAt(0).toUpperCase()) + '" aria-hidden="true"><span>' + esc(t) + '</span></div>'; }
   // capa que não carrega vira a capa gerada
   document.addEventListener('error', function (e) {
     var img = e.target; if (img.tagName !== 'IMG' || !img.parentNode || !img.parentNode.classList.contains('cv')) return;
@@ -160,8 +162,9 @@
     return '<div class="esq">' + new Array(n + 1).join(r) + '</div>';
   }
   function erro(msg) {
-    app.innerHTML = '<div class="erro"><div class="vazio"><div class="ic">' + ic('alerta') + '</div><h2>' + esc(msg) + '</h2><p>Verifique a conexão.</p>' +
+    app.innerHTML = '<div class="erro"><div class="vazio"><div class="ic">' + ic('alerta') + '</div><h1>' + esc(msg) + '</h1><p>Verifique a conexão.</p>' +
       '<button type="button" class="btn pri" data-acao="recarregar">Tentar de novo</button></div></div>';
+    focarTela();
   }
   // cartão de capa (estantes e grades): e = edição; ant = preço anterior (riscado), se houver
   // selo: texto sobre a capa (ex.: "no seu preço"); sem preço (e.preco = 0), o cartão não mostra preço
@@ -185,13 +188,37 @@
   }
   var tEst = null;
   window.addEventListener('resize', function () { clearTimeout(tEst); tEst = setTimeout(arrumarEstantes, 120); });
-  var tToast = null;
+  // aviso rápido: com ação ("Desfazer"), fica 10 s, para dar tempo de chegar ao botão pelo teclado;
+  // não some enquanto o ponteiro ou o foco estão nele, e Esc fecha
+  var tToast = null, msToast = 0, desfazer = null, ATALHO = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘Z' : 'Ctrl+Z';
+  // fechado, o aviso só fica transparente (para a transição): o botão sai da ordem do Tab, e quem estava nele volta à tela
+  function fecharToast() {
+    var t = $('#toast'), bt = t.querySelector('button'), tinha = t.contains(document.activeElement);
+    clearTimeout(tToast); t.classList.remove('on'); desfazer = null;
+    if (bt) bt.inert = true;                       // fora do Tab e do cursor do leitor de tela; a região viva continua
+    if (tinha) focarTela(true);
+  }
+  function contarToast() { clearTimeout(tToast); tToast = setTimeout(fecharToast, msToast); }
   function toast(msg, acao, fn) {
     var t = $('#toast');
     t.innerHTML = '<span>' + esc(msg) + '</span>' + (acao ? '<button type="button">' + esc(acao) + '</button>' : '');
-    if (acao) t.querySelector('button').onclick = function () { t.classList.remove('on'); fn(); };
-    t.classList.add('on'); clearTimeout(tToast); tToast = setTimeout(function () { t.classList.remove('on'); }, 5000);
+    if (acao) t.querySelector('button').onclick = function () { fecharToast(); fn(); };
+    desfazer = acao === 'Desfazer' ? fn : null;
+    // atalho visível onde há teclado (ponteiro com hover); o leitor de tela ouve a dica junto
+    if (desfazer) t.querySelector('span').insertAdjacentHTML('beforeend', matchMedia('(hover:hover)').matches ? ' <kbd class="atalho">' + ATALHO + '</kbd><span class="vh"> desfaz</span>' : '<span class="vh">. ' + ATALHO + ' desfaz.</span>');
+    t.classList.add('on'); msToast = acao ? 10000 : 5000; contarToast();
   }
+  (function () {
+    var t = $('#toast'), pausa = function () { clearTimeout(tToast); }, segue = function () { if (t.classList.contains('on') && !t.matches(':hover') && !t.contains(document.activeElement)) contarToast(); };
+    t.addEventListener('mouseenter', pausa); t.addEventListener('focusin', pausa);
+    t.addEventListener('mouseleave', segue); t.addEventListener('focusout', function () { setTimeout(segue, 0); });
+    document.addEventListener('keydown', function (e) {
+      if (!t.classList.contains('on')) return;
+      if (e.key === 'Escape') fecharToast();
+      // o aviso fica no fim da página; Ctrl/⌘+Z desfaz sem precisar chegar até ele (fora de campos de texto)
+      else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && desfazer && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); var f = desfazer; fecharToast(); f(); }
+    });
+  })();
   function contador() { var n = Lista.ler().length; $('#cont').textContent = n ? String(n) : ''; }
   function titulo(t) { document.title = t ? t + ' · Preços de livros' : 'Preços de livros: histórico de preço de livros da Amazon'; }
   function compartilhar(url, t) {
@@ -202,7 +229,7 @@
   }
 
   // ---------- rotas ----------
-  var rotaAtual = null, scrollAlvo = null;
+  var rotaAtual = null, scrollAlvo = null, focar = false;
   function rota() {
     var p = new URLSearchParams(location.search);
     if (p.has('livro')) return { v: 'livro', asin: (p.get('livro') || '').toUpperCase() };
@@ -211,13 +238,29 @@
     if (['q', 'f', 'i', 'g', 'o', 'de', 'ate'].some(function (k) { return p.get(k); })) return { v: 'busca' };
     return { v: 'inicio' };
   }
-  function ir(url, substituir) {
+  // semFoco: a troca veio da digitação na busca do cabeçalho, e o foco fica no campo
+  function ir(url, substituir, semFoco) {
     var st = history.state || {};
     history.replaceState({ y: scrollY, n: st.n || 0 }, '');
     history[substituir ? 'replaceState' : 'pushState']({ y: 0, n: (st.n || 0) + (substituir ? 0 : 1) }, '', url);
-    scrollAlvo = 0; desenhar();
+    scrollAlvo = 0; focar = !semFoco; desenhar();
   }
   function rolar() { if (scrollAlvo != null) { scrollTo(0, scrollAlvo); scrollAlvo = null; } }
+  // depois de uma troca de tela, o foco vai para o título da tela nova (ou para o conteúdo), para o leitor de tela
+  // anunciar a troca e o Tab seguir dali. Cada tela chama ao desenhar o conteúdo final (não o esqueleto).
+  // focoApos: seletor do controle que deve receber o foco quando a tela for redesenhada no lugar
+  // (ex.: o botão do preço-alvo que acabou de ser salvo), já que o controle antigo some com o innerHTML
+  var focoApos = null;
+  function focarEl(el) { if (el) { if (!/^(A|BUTTON|INPUT|SELECT)$/.test(el.tagName)) el.tabIndex = -1; el.focus({ preventScroll: true }); } return !!el; }
+  function focarTela(sempre) {
+    if (focoApos) { var c = app.querySelector(focoApos); focoApos = null; if (c) { focar = false; c.focus({ preventScroll: true }); return; } sempre = true; }
+    if (!focar && !sempre) return;
+    focar = false;
+    // [data-foco]: a tela indica um alvo melhor que o h1 (no livro, a região inteira, para o Tab passar pelas ações)
+    var h = app.querySelector('[data-foco]') || app.querySelector('h1:not([hidden])') || app;
+    if (h !== app) h.tabIndex = -1;
+    h.focus({ preventScroll: true });
+  }
   function voltar() { if ((history.state || {}).n > 0) history.back(); else ir('./'); }
   function desenhar() {
     var r = rota(); rotaAtual = r;
@@ -239,7 +282,8 @@
     Promise.all([destaques(), META, EVENTOS]).then(function (rs) {
       if (!aindaEm(r)) return;
       var x = rs[0], m = rs[1], ev = rs[2], out = [];
-      out.push('<section class="boas sec"><h1>Histórico de preço de livros</h1><p>' + m.itens.toLocaleString('pt-BR') +
+      var lido = m.lido_ate ? leitura(m.lido_ate) : '';
+      out.push('<section class="boas sec">' + (lido ? '<p class="sobre-t">Preços lidos até ' + lido + '</p>' : '') + '<h1>Histórico de preço de livros</h1><p>' + m.itens.toLocaleString('pt-BR') +
         ' livros da Amazon.com.br, com o preço lido todo dia.</p>' + (m.aviso ? '<p class="aviso">' + esc(m.aviso) + '</p>' : '') + '</section>');
       if (Lista.ler().length) out.push('<section class="sec" id="sua-lista"></section>');
       var rec = Lista.recentes();
@@ -248,7 +292,7 @@
       var prox = ev.filter(function (e) { return e[1] >= x.hoje; }).sort(function (a, b) { return a[1] - b[1]; })[0];
       if (prox) {
         var d = new Date((prox[1] - 719163) * 864e5), faltam = prox[1] - x.hoje;
-        out.push('<section class="sec card prox"><div class="dia"><b>' + d.getUTCDate() + '</b><small>' + L.dmes(prox[1]).split(' ')[1] + '</small></div><div><h3>' + esc(prox[0]) + '</h3><p>' +
+        out.push('<section class="sec card prox"><div class="dia"><b>' + d.getUTCDate() + '</b><small>' + L.dmes(prox[1]).split(' ')[1] + '</small></div><div><h2>' + esc(prox[0]) + '</h2><p>' +
           (faltam === 0 ? 'Hoje' : 'Daqui a ' + L.plural(faltam, 'dia', 'dias')) + '</p></div></section>');
       }
       out.push('<section class="sec" id="baixa"></section>');
@@ -262,7 +306,7 @@
       app.innerHTML = out.join('');
       secaoBaixa(x);
       arrumarEstantes();
-      rolar();
+      rolar(); focarTela();
       if ($('#sua-lista')) indiceCompleto().then(function (ix) { if (aindaEm(r)) suaLista(ix); });
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); });
   }
@@ -323,16 +367,25 @@
     var r = rotaAtual;
     if (!idx) { app.innerHTML = esqueleto(6); indice().then(function () { if (aindaEm(r)) busca(false); }, function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); }); return; }
     resultado = curta() ? { lista: [], cont: { fam: {}, i: {}, g: {} } } : buscar(idx);
-    if (!$('#ferr')) app.innerHTML = '<h1 class="busca-h" id="bh" hidden></h1><div class="ferr" id="ferr"></div><div aria-live="polite" class="cont" id="cont-res"></div><div id="res" style="margin-top:10px"></div>';
+    if (!$('#ferr')) app.innerHTML = '<h1 class="busca-h vh" id="bh"></h1><div class="ferr" id="ferr"></div><div aria-live="polite" class="vh" id="cont-res"></div><div id="res" style="margin-top:10px"></div>';
     // navegando por um gênero (sem texto): o nome do gênero vira o título da página
     var gi = S.g ? idx.genPorNo[S.g] : null, bh = $('#bh');
-    bh.hidden = gi == null || !!S.q.trim();
-    if (!bh.hidden) { bh.textContent = idx.gen[gi][1]; titulo(idx.gen[gi][1]); }
+    var porGenero = gi != null && !S.q.trim();
+    bh.classList.toggle('vh', !porGenero);
+    bh.textContent = porGenero ? idx.gen[gi][1] : S.q.trim() ? 'Busca: ' + S.q.trim() : 'Busca';
+    if (porGenero) titulo(idx.gen[gi][1]);
     // parte nova do índice enquanto a pessoa mexe num filtro (campo de preço, lista aberta): não refaz a barra
     if (!parte || !$('#ferr').contains(document.activeElement)) ferramentas();
-    resultados(); if (!parte) rolar();
+    resultados(); if (!parte) { rolar(); focarTela(); }
+  }
+  // o controle com foco na barra (chip, seletor) é recriado pelo innerHTML: devolve o foco ao controle equivalente
+  function seletorDe(el) {
+    if (el.id) return '#' + el.id;
+    var d = el.dataset;
+    return d.fam ? '[data-fam="' + d.fam + '"]' : d.idioma !== undefined ? '[data-idioma="' + d.idioma.replace(/"/g, '\\"') + '"]' : d.acao ? '[data-acao="' + d.acao + '"]' : null;
   }
   function ferramentas() {
+    var fe = $('#ferr'), ativo = document.activeElement, volta = fe && fe.contains(ativo) ? seletorDe(ativo) : null;
     var c = resultado.cont, chips = FAMILIAS.map(function (f) {
       return '<button type="button" class="chip" data-fam="' + f[0] + '" aria-pressed="' + !!S.fam[f[0]] + '">' + f[1] + (c.fam[f[0]] ? ' <span class="n">' + c.fam[f[0]].toLocaleString('pt-BR') + '</span>' : '') + '</button>';
     }).join('');
@@ -356,18 +409,19 @@
       (verPreco || faixa ? '<div class="faixa-preco"><span class="mu sm">Preço</span><input id="de" type="number" inputmode="decimal" min="0" step="1" placeholder="de R$" aria-label="Preço mínimo em reais" value="' + (S.de != null ? S.de / 100 : '') + '">' +
         '<span class="mu sm">até</span><input id="ate" type="number" inputmode="decimal" min="0" step="1" placeholder="até R$" aria-label="Preço máximo em reais" value="' + (S.ate != null ? S.ate / 100 : '') + '"></div>' : '') +
       '<div class="l2"><span></span><div class="sels">' + selGen + '<label class="sel"><span class="vh">Ordenar por</span><select id="ord">' + ords.map(function (o) { return '<option value="' + o[0] + '"' + (S.o === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' + ic('baixo', 's') + '</label></div></div>';
+    var nv = volta && ($('#ferr ' + volta) || $('#ferr .chip')); if (nv) nv.focus({ preventScroll: true });
   }
   function curta() { var t = S.q.trim(); return t.length === 1 && !L.asinDe(t) && !nFiltros() && S.o === 'rel'; }
   function resultados() {
     if (curta()) {
-      $('#ferr .l2 > span').innerHTML = ''; $('#cont-res').textContent = '';
+      $('#ferr .l2 > span').innerHTML = ''; anunciarContagem('');
       $('#res').innerHTML = '<p class="nota-busca">Continue digitando…</p>';
       return;
     }
     var r = resultado.lista, el = $('#res'), n = r.length, sv = salvos(), carregando = !idx.completo;
     $('#ferr .l2 > span').innerHTML = '<span class="cont">' + (n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro' : ' livros') + (carregando ? ' até agora' : '') : '') + '</span>' +
       (nFiltros() ? ' <button type="button" class="btn gh sm" data-acao="limpar-filtros">Limpar filtros</button>' : '');
-    $('#cont-res').textContent = '';
+    anunciarContagem(carregando ? '' : n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro encontrado' : ' livros encontrados') : 'Nenhum livro encontrado');
     var nota = resultado.correcao ? '<p class="nota-busca">Mostrando resultados para <b>' + esc(resultado.correcao) + '</b></p>' :
       resultado.parcial ? '<p class="nota-busca">Nenhum livro tem todas as palavras. Estes têm a maior parte delas.</p>' : '';
     var status = carregando ? '<p class="nota-busca carregando" role="status"><span class="giro" aria-hidden="true"></span>Buscando no restante do catálogo…</p>' :
@@ -384,6 +438,12 @@
       (n > mostrados ? '<div class="mais"><button type="button" class="btn sm" data-acao="mais" id="mais">Mostrar mais</button></div>' : '');
     observarMais();
   }
+  // a contagem vai para uma região viva (só para leitor de tela), com espera, para não anunciar a cada tecla
+  var tCont = null;
+  function anunciarContagem(txt) {
+    clearTimeout(tCont);
+    tCont = setTimeout(function () { var el = $('#cont-res'); if (el && el.textContent !== txt) el.textContent = txt; }, txt ? 800 : 0);
+  }
   var obs = null;
   function observarMais() {
     if (!('IntersectionObserver' in window)) return;
@@ -394,13 +454,17 @@
     if (!resultado || !$('#res')) return;
     var antes = mostrados, sv = salvos(); mostrados += 30;
     $('#res .lst').insertAdjacentHTML('beforeend', resultado.lista.slice(antes, mostrados).map(function (x) { return linhaObra(x.o, x.eds, sv); }).join(''));
-    if (mostrados >= resultado.lista.length) { var m = $('#res .mais'); if (m) m.remove(); }
+    if (mostrados >= resultado.lista.length) {
+      var m = $('#res .mais');
+      if (m) { var tinha = m.contains(document.activeElement); m.remove(); if (tinha) focarEl($('#res .lst').children[antes].querySelector('a')); }
+    }
   }
-  function aplicarBusca() {
+  // digitando: veio do campo de busca do cabeçalho; a troca de tela não tira o foco dele
+  function aplicarBusca(digitando) {
     var url = urlBusca();
-    if (url === './') { if (rotaAtual && rotaAtual.v === 'busca') ir('./', true); return; }
+    if (url === './') { if (rotaAtual && rotaAtual.v === 'busca') ir('./', true, digitando); return; }
     if (rotaAtual && rotaAtual.v === 'busca') { history.replaceState(history.state, '', url); mostrados = 30; scrollTo(0, 0); busca(false); }
-    else ir(url);
+    else ir(url, false, digitando);
   }
   var tBusca = null;
   q.addEventListener('input', function () {
@@ -408,10 +472,13 @@
     clearTimeout(tBusca);
     tBusca = setTimeout(function () {
       if (!rotaAtual || rotaAtual.v !== 'busca') S = VAZIO();
-      S.q = q.value; aplicarBusca();
+      S.q = q.value; aplicarBusca(true);
     }, 150);
   });
-  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = VAZIO(); S.q = q.value; aplicarBusca(); q.blur(); });
+  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = VAZIO(); var antes = rotaAtual; S.q = q.value; focar = true; aplicarBusca();
+    if (rotaAtual.v === 'busca') { if (idx) focarTela(); }       // sem o índice, a busca foca ao desenhar os resultados
+    else if (rotaAtual === antes) focar = false;                  // campo vazio fora da busca: nada muda de tela
+  });
   q.addEventListener('keydown', function (e) { if (e.key === 'Escape') { q.value = ''; q.dispatchEvent(new Event('input')); } });
   $('#limpa').addEventListener('click', function () { q.value = ''; q.focus(); q.dispatchEvent(new Event('input')); });
   document.addEventListener('keydown', function (e) {
@@ -420,10 +487,12 @@
   app.addEventListener('change', function (e) {
     if (e.target.id === 'ord') { S.o = e.target.value; aplicarBusca(); }
     else if (e.target.id === 'gen') { S.g = e.target.value; aplicarBusca(); }
-    else if (e.target.id === 'ordl') { ordemLista = e.target.value; lista(); }
+    else if (e.target.id === 'ordl') { ordemLista = e.target.value; focoApos = '#ordl'; lista(); }
   });
   var tPreco = null;
   app.addEventListener('input', function (e) {
+    var fa = e.target.closest('[data-alvo-f]');
+    if (fa) { var ec = fa.querySelector('.erro-campo'); if (ec) ec.remove(); e.target.removeAttribute('aria-invalid'); e.target.removeAttribute('aria-describedby'); return; }
     if (e.target.id !== 'de' && e.target.id !== 'ate') return;
     var v = parseFloat(String(e.target.value).replace(',', '.'));
     S[e.target.id] = isFinite(v) && v >= 0 ? Math.round(v * 100) : null;
@@ -458,11 +527,11 @@
       var eds = l.eds || [[asin, l.f || 'Livro', f.preco]];
       app.innerHTML = '<button type="button" class="voltar" data-acao="voltar">' + ic('voltar', 's') + 'Voltar</button>' +
         (m.aviso ? '<p class="aviso">' + esc(m.aviso) + '</p>' : '') +
-        '<div class="livro"><aside class="l-lado">' + capa(o, 'g', true) +
+        '<div class="livro" role="region" aria-labelledby="l-tit" data-foco><aside class="l-lado">' + capa(o, 'g', true) +
         '<div class="acoes"><a class="btn pri" href="' + L.linkAmazon(asin) + '" target="_blank" rel="noopener noreferrer">Ver na Amazon ' + ic('ext', 's') + '</a>' +
         '<button type="button" class="btn salvar" data-salvar="' + asin + '"></button>' +
         '<button type="button" class="btn ico" data-acao="compartilhar" aria-label="Compartilhar">' + ic('share', 's') + '<span class="rot">Compartilhar</span></button></div></aside>' +
-        '<div class="l-corpo"><header class="l-cab"><h1>' + esc(o.t) + '</h1>' +
+        '<div class="l-corpo"><header class="l-cab"><h1 id="l-tit">' + esc(o.t) + '</h1>' +
         (o.autor ? '<p class="aut"><a href="./?q=' + encodeURIComponent(l.autor1 || o.autor) + '" data-r>' + esc(o.autor) + '</a></p>' : '') +
         '<p class="det">' + det.map(function (d) { return '<span>' + d + '</span>'; }).join('') + '</p>' +
         (l.gen ? '<p class="l-gens">' + l.gen.map(function (g) { return '<a href="./?g=' + g[0] + '" data-r>' + esc(g[1]) + '</a>'; }).join('') + '</p>' : '') + '</header>' +
@@ -478,7 +547,7 @@
       botaoSalvar();
       arrumarEstantes();
       L.grafico($('#graf'), L.dadosGrafico(tr, ev));
-      rolar();
+      rolar(); focarTela();
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar este livro'); });
   }
   function botaoSalvar() {
@@ -502,8 +571,9 @@
   }
   function naoEncontrado() {
     titulo('Livro não encontrado');
-    app.innerHTML = '<div class="vazio"><div class="ic">' + ic('livro') + '</div><h2>Livro não encontrado</h2><p>Ele não está entre os livros acompanhados.</p>' +
+    app.innerHTML = '<div class="vazio"><div class="ic">' + ic('livro') + '</div><h1>Livro não encontrado</h1><p>Ele não está entre os livros acompanhados.</p>' +
       '<a class="btn pri" href="./" data-r>Ir para o início</a></div>';
+    focarTela();
   }
 
   // ---------- minha lista ----------
@@ -552,7 +622,7 @@
       app.innerHTML = '<div class="vazio"><div class="ic">' + ic('salvar') + '</div><h1>Sua lista está vazia</h1>' +
         '<p>Salve livros para ver o preço de todos aqui e o que mudou desde a sua última visita.</p>' +
         '<button type="button" class="btn pri" data-acao="buscar">' + ic('busca', 's') + 'Buscar livros</button></div>';
-      return;
+      focarTela(); return;
     }
     if (!$('#lst')) app.innerHTML = '<div class="lista-h"><div><h1>Minha lista</h1><p class="mu" style="margin:4px 0 0">' + L.plural(asins.length, 'livro', 'livros') + '</p></div></div>' + esqueleto(Math.min(asins.length, 5));
     carregarItens(asins).then(function (rs) {
@@ -584,13 +654,17 @@
           (mais ? '<span class="pill up">▲ ' + L.plural(mais, 'ficou mais caro', 'ficaram mais caros') + '</span>' : '') : '') +
           (noAlvo ? '<span class="pill dn">' + L.plural(noAlvo, 'chegou no seu preço', 'chegaram no seu preço') + '</span>' : '') + '</div>' : '') +
         '<ul class="lst" id="lst">' + v.map(function (i) { return linhaLista(i, base, true, alv); }).join('') + '</ul>';
-      rolar();
+      rolar(); focarTela();
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar sua lista'); });
   }
   function listaCompartilhada(texto) {
     var r = rotaAtual, asins = Lista.extrair(texto.split(',').join(' ')).slice(0, 200);
     titulo('Lista compartilhada');
-    if (!asins.length) return naoEncontrado();
+    if (!asins.length) {
+      app.innerHTML = '<div class="vazio"><div class="ic">' + ic('salvar') + '</div><h1>Lista não encontrada</h1><p>O link não tem nenhum livro. Confira se ele foi copiado inteiro.</p>' +
+        '<a class="btn pri" href="./" data-r>Ir para o início</a></div>';
+      return focarTela();
+    }
     app.innerHTML = esqueleto(Math.min(asins.length, 5));
     carregarItens(asins).then(function (rs) {
       if (!aindaEm(r)) return;
@@ -600,6 +674,7 @@
         (novos ? '<button type="button" class="btn pri" data-acao="importar" data-asins="' + asins.join(',') + '">' + ic('salvar', 's') + 'Adicionar à minha lista' + (novos < asins.length ? ' (' + novos + ' novos)' : '') + '</button>' :
           '<a class="btn" href="./?lista" data-r>Todos já estão na sua lista</a>') + '</div>' +
         '<ul class="lst">' + itens.map(function (i) { return linhaLista(i, null, false); }).join('') + '</ul>';
+      rolar(); focarTela();
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar a lista'); });
   }
 
@@ -633,46 +708,59 @@
         '<li>Dias sem coleta ficam em branco no gráfico.</li><li>O preço pode mudar a qualquer momento. Confira na loja.</li></ul>' +
         '<h2>Privacidade</h2><p>Não há conta. A sua lista fica só no seu navegador.</p>' +
         '<p class="mu sm">Este site não tem vínculo com a Amazon.</p></article>';
-      rolar();
+      rolar(); focarTela();
     });
   }
 
   // ---------- eventos globais ----------
   document.addEventListener('click', function (e) {
+    if (e.target.closest('.pular')) { e.preventDefault(); focarTela(true); return; }
     var a = e.target.closest('a[data-r]');
     if (a && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) { e.preventDefault(); ir(a.getAttribute('href'), a.hasAttribute('data-sub')); return; }
     var b = e.target.closest('button'); if (!b) return;
     var acao = b.dataset.acao;
     if (b.dataset.fam) { if (S.fam[b.dataset.fam]) delete S.fam[b.dataset.fam]; else S.fam[b.dataset.fam] = 1; aplicarBusca(); }
     else if (b.dataset.idioma !== undefined) { S.i = S.i === b.dataset.idioma ? '' : b.dataset.idioma; aplicarBusca(); }
-    else if (b.dataset.baixa !== undefined) { filtroBaixa = b.dataset.baixa; baixaTudo = false; destaques().then(function (x) { secaoBaixa(x); }); }
+    else if (b.dataset.baixa !== undefined) { filtroBaixa = b.dataset.baixa; baixaTudo = false; destaques().then(function (x) { secaoBaixa(x); focarEl($('[data-baixa="' + filtroBaixa + '"]')); }); }
     else if (b.dataset.salvar) {
       var na = Lista.alternar(b.dataset.salvar); botaoSalvar(); contador();
       toast(na ? 'Salvo na sua lista' : 'Removido da sua lista', na ? 'Ver lista' : null, function () { ir('./?lista'); });
     } else if (b.dataset.remover) {
-      var asin = b.dataset.remover, pos = Lista.ler().indexOf(asin);
-      Lista.remover(asin); contador(); lista();
-      toast('Removido da sua lista', 'Desfazer', function () { Lista.inserir(asin, pos); contador(); if (rotaAtual.v === 'lista') lista(); });
+      var asin = b.dataset.remover, pos = Lista.ler().indexOf(asin), li = b.closest('li');
+      var viz = li && (li.nextElementSibling || li.previousElementSibling), vb = viz && viz.querySelector('[data-remover]');
+      Lista.remover(asin); contador();
+      if (vb) focoApos = '[data-remover="' + vb.dataset.remover + '"]'; else focar = true;     // sem vizinha: lista vazia, foco no título
+      lista();
+      toast('Removido da sua lista', 'Desfazer', function () { Lista.inserir(asin, pos); contador(); if (rotaAtual.v === 'lista') { focoApos = '[data-remover="' + asin + '"]'; lista(); } });
     }
     else if (acao === 'mais') maisResultados();
     else if (acao === 'preco') { verPreco = !verPreco; if (!verPreco) { S.de = S.ate = null; aplicarBusca(); } else { ferramentas(); resultados(); var i = $('#de'); if (i) i.focus(); } }
-    else if (acao === 'limpar-filtros') { S.fam = {}; S.i = ''; S.g = ''; S.de = S.ate = null; verPreco = false; aplicarBusca(); }
-    else if (acao === 'baixa-tudo') { baixaTudo = true; destaques().then(function (x) { secaoBaixa(x); }); }
+    else if (acao === 'limpar-filtros') { var fora = !b.closest('#ferr'); S.fam = {}; S.i = ''; S.g = ''; S.de = S.ate = null; verPreco = false; aplicarBusca(); if (fora) focarEl($('#ferr .chip')); }
+    else if (acao === 'baixa-tudo') {
+      // o foco vai ao 1º livro que estava escondido (no computador a estante mostra só uma fileira; no celular, os 12)
+      var est0 = $('#baixa .estante'), vis = est0 ? [].filter.call(est0.children, function (c) { return !c.inert; }).length : 0;
+      baixaTudo = true; destaques().then(function (x) { secaoBaixa(x); focarEl($('#baixa .grade').children[vis] || $('#baixa h2')); });
+    }
     else if (acao === 'voltar') voltar();
     else if (acao === 'abrir-estante') {
       var sec = b.closest('section'), est = sec && sec.querySelector('.estante');
+      var novo = est && [].filter.call(est.children, function (c) { return c.inert; })[0];
       if (est) { est.className = 'grade'; [].forEach.call(est.children, function (c) { c.inert = false; }); }
-      b.remove();
+      b.remove(); focarEl(novo || (sec && sec.querySelector('h2')));
     }
-    else if (acao === 'limpar-recentes') { Lista.limparRecentes(); var sr = b.closest('section'); if (sr) sr.remove(); }
+    else if (acao === 'limpar-recentes') {
+      Lista.limparRecentes(); var sr = b.closest('section'), prox = sr && sr.nextElementSibling;
+      if (sr) sr.remove();
+      focarEl((prox && prox.querySelector('h2, a, button')) || app.querySelector('h1'));
+    }
     else if (b.dataset.alvo) {
       var ali = b.closest('.alvo'), at = Lista.alvos()[b.dataset.alvo];
-      ali.innerHTML = '<form class="alvo-f" data-alvo-f="' + b.dataset.alvo + '"><label class="vh" for="alvo-v">Preço-alvo em reais</label>' +
-        '<input id="alvo-v" type="number" inputmode="decimal" min="0" step="0.01" placeholder="R$" value="' + (at ? (at / 100).toFixed(2) : '') + '">' +
+      ali.innerHTML = '<form class="alvo-f" data-alvo-f="' + b.dataset.alvo + '"><label class="vh" for="alvo-v-' + b.dataset.alvo + '">Preço-alvo em reais</label>' +
+        '<input id="alvo-v-' + b.dataset.alvo + '" type="number" inputmode="decimal" min="0" step="0.01" placeholder="R$" value="' + (at ? (at / 100).toFixed(2) : '') + '">' +
         '<button type="submit" class="btn sm pri">Salvar</button>' + (at ? '<button type="button" class="btn sm gh" data-acao="tirar-alvo">Tirar</button>' : '') + '</form>';
       ali.querySelector('input').focus();
     }
-    else if (acao === 'tirar-alvo') { Lista.definirAlvo(b.closest('form').dataset.alvoF, 0); lista(); }
+    else if (acao === 'tirar-alvo') { var ta = b.closest('form').dataset.alvoF; Lista.definirAlvo(ta, 0); focoApos = '[data-alvo="' + ta + '"]'; lista(); }
     else if (acao === 'buscar') { q.focus(); scrollTo(0, 0); }
     else if (acao === 'recarregar') location.reload();
     else if (acao === 'compartilhar') compartilhar(location.href, document.title);
@@ -682,11 +770,21 @@
   app.addEventListener('submit', function (e) {
     var f = e.target.closest('[data-alvo-f]'); if (!f) return;
     e.preventDefault();
-    var v = parseFloat(String(f.querySelector('input').value).replace(',', '.'));
-    Lista.definirAlvo(f.dataset.alvoF, isFinite(v) && v > 0 ? Math.round(v * 100) : 0);
+    var inp = f.querySelector('input'), v = parseFloat(String(inp.value).replace(',', '.'));
+    // valor vazio ou inválido não apaga o alvo em silêncio: avisa junto do campo (tirar o alvo é o botão "Tirar")
+    if (!(isFinite(v) && v > 0)) {
+      var er = f.querySelector('.erro-campo');
+      var eid = 'alvo-erro-' + f.dataset.alvoF;
+      if (er) er.remove();                                  // reinserido, para o alerta ser anunciado de novo
+      f.insertAdjacentHTML('beforeend', '<p class="erro-campo" id="' + eid + '" role="alert">Digite um preço maior que zero.</p>');
+      inp.setAttribute('aria-invalid', 'true'); inp.setAttribute('aria-describedby', eid); inp.focus();
+      return;
+    }
+    Lista.definirAlvo(f.dataset.alvoF, Math.round(v * 100));
+    focoApos = '[data-alvo="' + f.dataset.alvoF + '"]';
     lista();
   });
-  window.addEventListener('popstate', function () { scrollAlvo = (history.state || {}).y || 0; desenhar(); });
+  window.addEventListener('popstate', function () { scrollAlvo = (history.state || {}).y || 0; focar = true; desenhar(); });
   window.addEventListener('storage', function (e) { if (e.key === 'lista_v1') { contador(); if (rotaAtual.v === 'lista' && !rotaAtual.comp) lista(); } });
 
   // ---------- início ----------

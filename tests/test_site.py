@@ -410,7 +410,7 @@ class TestFolhaDeEstilo(unittest.TestCase):
         return set(re.findall(r"(--[a-z0-9]+):", bloco))
 
     def test_toda_cor_do_tema_claro_e_redefinida_no_escuro(self):
-        cores = {t for t in self.tokens(self.claro) if not t.startswith(("--fs-", "--r")) and t not in ("--f", "--serif")}
+        cores = {t for t in self.tokens(self.claro) if not t.startswith(("--fs-", "--r")) and t not in ("--f", "--serif", "--display")}
         self.assertEqual(cores - self.tokens(self.escuro), set(), "token de cor sem versão escura")
 
     def test_todo_var_usado_existe_e_todo_token_definido_e_usado(self):
@@ -474,6 +474,39 @@ class TestFolhaDeEstilo(unittest.TestCase):
     def test_hover_de_campo_escurece_a_borda_em_vez_de_clarear(self):
         regra = re.search(r"\.sel select:hover[^{]*\{([^}]*)\}", self.css).group(1)
         self.assertEqual(regra, "border-color:var(--mu)")                     # --mu2 era mais claro que --ln3 no claro e igual a ele no escuro
+
+    def test_contraste_dos_pares_de_texto_nos_dois_temas(self):
+        def lum(h):
+            c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            c = [x / 12.92 if x <= .03928 else ((x + .055) / 1.055) ** 2.4 for x in c]
+            return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+
+        def razao(a, b):
+            a, b = lum(a), lum(b)
+            return (max(a, b) + .05) / (min(a, b) + .05)
+
+        def hexa(h):
+            return "#" + "".join(ch * 2 for ch in h[1:]) if len(h) == 4 else h
+
+        for nome, bloco in (("claro", self.claro), ("escuro", self.escuro)):
+            t = {k: hexa(v) for k, v in re.findall(r"(--[a-z0-9]+):(#[0-9a-f]{3,6})(?=[;}])", bloco)}
+            pares = [(f, b) for f in ("--fg", "--mu", "--ac", "--dn", "--up", "--wr", "--med") for b in ("--bg", "--sf", "--sf2")]
+            pares += [("--dn", "--dns"), ("--up", "--ups"), ("--wr", "--wrs"), ("--ac", "--acs"), ("--prif", "--pri"), ("--tintaf", "--tinta"), ("--sf", "--ac")]                     # --sf sobre --ac: chip ligado e contador
+            for f, b in pares:
+                self.assertGreaterEqual(razao(t[f], t[b]), 4.5, f"{nome}: {f} sobre {b}")
+            for b in ("--bg", "--sf"):                                            # contorno de campo: 3:1 (WCAG 1.4.11)
+                self.assertGreaterEqual(razao(t["--ln3"], t[b]), 3, f"{nome}: --ln3 sobre {b}")
+
+    def test_fontes_do_site_existem_sao_copiadas_e_trocam_sem_esperar(self):
+        faces = re.findall(r"@font-face\{([^}]*)\}", self.css)
+        self.assertEqual(len(faces), 4)
+        for f in faces:
+            arquivo = re.search(r"url\(([\w.-]+)\)", f).group(1)
+            self.assertTrue((site.WEB / arquivo).exists(), arquivo)
+            self.assertIn(arquivo, site.ARQUIVOS_WEB)
+            self.assertIn("font-display:swap", f)
+        self.assertIn("OFL.txt", site.ARQUIVOS_WEB)
+        self.assertIn('href="cormorant-600.woff2" as="font" type="font/woff2" crossorigin', self.html)
 
     def test_area_segura_e_cobertura_nao_se_misturam(self):
         # viewport-fit=cover sem env(safe-area-inset-*) deixa o conteúdo sob o entalhe; sem o cover, o navegador cuida
@@ -704,14 +737,14 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.goto(f"{base}/?lista")                                                   # preço-alvo na lista
             pg.wait_for_selector("#lst .row b")
             pg.click("[data-alvo]")
-            pg.fill("#alvo-v", "35")
+            pg.fill(".alvo-f input", "35")
             pg.click(".alvo-f [type=submit]")
             pg.wait_for_selector(".alvo .mu")
             self.assertIn("Seu preço: R$ 35,00", pg.inner_text("#lst"))
             self.assertIn("faltam R$ 5,00", pg.inner_text("#lst"))
             pg.click("[data-alvo]")
-            pg.fill("#alvo-v", "40")
-            pg.press("#alvo-v", "Enter")
+            pg.fill(".alvo-f input", "40")
+            pg.press(".alvo-f input", "Enter")
             pg.wait_for_selector(".alvo .pill.dn")
             self.assertIn("chegou no seu preço", pg.inner_text(".resumo"))
             b.close()
@@ -751,8 +784,84 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.wait_for_selector("#graf svg")
             self.assertIn("livro=8535902775", pg.url)
             pg.goto(f"{base}/?livro=ZZZZZZZZZZ")
-            pg.wait_for_selector(".vazio h2")
+            pg.wait_for_selector(".vazio h1")
             self.assertIn("Livro não encontrado", pg.inner_text("main"))
+            b.close()
+        self.assertEqual(erros, [])
+
+    def test_teclado_e_leitor_de_tela(self):
+        from playwright.sync_api import sync_playwright
+        base = self._servir([("8535902775", "A paciente silenciosa", "Capa comum",
+                              [("2026-09-01", "2026-09-20", 3999, 6490), ("2026-09-21", "2026-10-20", 3499, 6490)]),
+                             ("B0ABCDEFGH", "Outro livro", "Kindle", [("2026-10-01", "2026-10-20", 1999, None)])])
+        ativo = "(() => { const a = document.activeElement; return a.id || a.className || a.tagName; })()"
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            pg = b.new_page()
+            erros = []
+            pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.goto(f"{base}/")
+            pg.evaluate("localStorage.clear()")
+            pg.goto(f"{base}/")
+            pg.wait_for_selector(".boas h1")
+            pg.keyboard.press("Tab")                                                     # o primeiro Tab chega no link de pular
+            self.assertEqual(pg.evaluate(ativo), "pular")
+            pg.keyboard.press("Enter")
+            self.assertEqual(pg.evaluate("document.activeElement.textContent"), pg.inner_text(".boas h1"))
+            pg.fill("#q", "paciente")                                                    # digitar não tira o foco do campo
+            pg.wait_for_selector("#res .row")
+            self.assertEqual(pg.evaluate(ativo), "q")
+            pg.wait_for_function("document.querySelector('#cont-res').textContent === '1 livro encontrado'")
+            pg.focus("[data-fam=k]")                                                     # o chip recriado pela barra mantém o foco
+            pg.keyboard.press("Enter")
+            pg.wait_for_selector("[data-fam=k][aria-pressed=true]")
+            self.assertEqual(pg.evaluate("document.activeElement.dataset.fam"), "k")
+            pg.keyboard.press("Enter")
+            pg.click("#res .row")                                                        # trocar de tela leva o foco ao título
+            pg.wait_for_selector("#graf svg")
+            pg.wait_for_function("document.activeElement.matches('.livro[role=region]')")    # a região do livro, nomeada pelo h1
+            self.assertIn("paciente", pg.evaluate("document.getElementById(document.activeElement.getAttribute('aria-labelledby')).textContent"))
+            pg.keyboard.press("Tab")                                                     # o Tab seguinte chega na ação principal
+            self.assertIn("Ver na Amazon", pg.evaluate("document.activeElement.textContent"))
+            self.assertIn("menor R$ 34,99", pg.get_attribute("#graf svg", "aria-label"))   # resumo do gráfico em texto
+            pg.focus("#graf .graf")                                                      # gráfico pelo teclado
+            pg.keyboard.press("End")
+            self.assertFalse(pg.is_hidden("#graf .tip"))
+            self.assertIn("R$ 34,99", pg.inner_text("#graf .tip"))
+            pg.keyboard.press("Home")
+            self.assertIn("R$ 39,99", pg.inner_text("#graf [aria-live]"))
+            pg.click("[data-salvar]")                                                    # aviso rápido fecha com Esc
+            pg.wait_for_selector("#toast.on")
+            pg.keyboard.press("Escape")
+            pg.wait_for_selector("#toast:not(.on)", state="attached")
+            pg.goto(f"{base}/?lista")                                                    # preço-alvo inválido não apaga o alvo
+            pg.wait_for_selector("#lst .row b")
+            pg.click("[data-alvo]")
+            pg.fill(".alvo-f input", "30")
+            pg.press(".alvo-f input", "Enter")
+            pg.wait_for_selector(".alvo .mu")
+            self.assertEqual(pg.evaluate("document.activeElement.dataset.alvo"), "8535902775")   # o foco volta ao botão
+            pg.click("[data-alvo]")
+            pg.fill(".alvo-f input", "0")
+            pg.press(".alvo-f input", "Enter")
+            pg.wait_for_selector(".erro-campo")
+            self.assertEqual(pg.get_attribute(".alvo-f input", "aria-invalid"), "true")
+            self.assertEqual(pg.get_attribute(".erro-campo", "role"), "alert")             # o erro é anunciado
+            pg.goto(f"{base}/?lista")
+            pg.wait_for_selector("#lst .row b")
+            self.assertIn("Seu preço: R$ 30,00", pg.inner_text("#lst"))
+            pg.evaluate("localStorage.setItem('lista_v1', JSON.stringify(['8535902775', 'B0ABCDEFGH']))")
+            pg.goto(f"{base}/?lista")                                                    # remover leva o foco à linha vizinha
+            pg.wait_for_selector("#lst [data-remover='8535902775']")
+            pg.focus("[data-remover='8535902775']")
+            pg.keyboard.press("Enter")
+            pg.wait_for_function("document.activeElement.dataset.remover === 'B0ABCDEFGH'")
+            pg.keyboard.press("Control+z")                                               # Ctrl+Z desfaz sem ir até o aviso
+            pg.wait_for_function("document.querySelectorAll('#lst [data-remover]').length === 2")
+            pg.wait_for_function("document.activeElement.dataset.remover === '8535902775'")
+            pg.goto(f"{base}/?lista=,")                                                  # link de lista sem livros
+            pg.wait_for_selector(".vazio h1")
+            self.assertIn("Lista não encontrada", pg.inner_text("main"))
             b.close()
         self.assertEqual(erros, [])
 
