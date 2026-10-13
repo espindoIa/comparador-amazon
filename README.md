@@ -48,6 +48,9 @@ O `varrer` lê só pelo navegador (`--cliente auto`): se ele não abrir, para e 
 cliente. `--cliente curl` e `--cliente requests` existem, mas a Amazon costuma bloqueá-los, e um bloqueio grava no
 banco uma pausa de horas.
 
+`varrer --dry-run` confere as opções e mostra o plano (ritmo, ciclo, pausa, fatias, cliente) sem abrir o
+navegador, sem pedir nada à Amazon e sem gravar no banco.
+
 Testes:
 
 ```bash

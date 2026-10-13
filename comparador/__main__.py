@@ -3,10 +3,84 @@
 from __future__ import annotations
 
 import argparse
-from datetime import timedelta
+import math
+import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import db, rede, ritmo, varredura
+from . import cliente_http, db, rede, ritmo, varredura
+
+
+def _numero_positivo(texto: str) -> float:
+    try:
+        v = float(texto)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{texto!r} não é um número") from None
+    if not (math.isfinite(v) and v > 0):
+        raise argparse.ArgumentTypeError(f"deve ser maior que 0 (veio {texto})")
+    return v
+
+
+def _inteiro_positivo(texto: str) -> int:
+    try:
+        v = int(texto)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{texto!r} não é um número inteiro") from None
+    if v < 1:
+        raise argparse.ArgumentTypeError(f"deve ser pelo menos 1 (veio {texto})")
+    return v
+
+
+def _opcoes_de_coleta(args) -> tuple[list[str] | None, list[tuple[int, int]] | None]:
+    """Os nós (--vendidos, --generos, --particao) e as faixas de preço (--faixas) pedidos; encerra se não valem."""
+    try:
+        vendidos = varredura.nos_vendidos(args.generos, args.particao) if args.vendidos else None
+        faixas = varredura.faixas_de_precos(args.faixas.split(",")) if args.faixas else None
+    except ValueError as e:
+        raise SystemExit(f"opção inválida: {e}")
+    return vendidos, faixas
+
+
+def _plano(args, vendidos, faixas) -> None:
+    """--dry-run: o que o `varrer` faria com estas opções. Não abre o navegador, não pede nada à Amazon e não grava:
+    o banco só é lido, e só se já existir."""
+    existe = Path(args.db).exists()
+    config: dict = {}
+    if existe:
+        conn = db.abrir_leitura(args.db, "catálogo")
+        try:
+            config = varredura.ler_config(conn)
+        except sqlite3.OperationalError:       # banco sem a tabela config: o varrer nunca rodou nele
+            pass
+        finally:
+            conn.close()
+    r = varredura.ritmo_da_execucao(config, ritmo_inicial=args.ritmo, ritmo_max=args.ritmo_max,
+                                    teto_auto_max=args.teto_auto_max, subir_a_cada=args.subir_a_cada)
+    print("dry-run: nada foi lido da Amazon nem gravado")
+    print(f"banco: {args.db}" + (" (aberto só para leitura)" if existe else " (ainda não existe; o varrer o criaria)"))
+    print(varredura.descrever_ritmo(r, args.ritmo_max is None, args.ciclo_horas or ritmo.ciclo_guardado(config),
+                                    args.ciclo_horas is None))
+    pausa = ritmo.pausa_ate(config)
+    if not pausa or pausa <= datetime.fromisoformat(db.agora()):
+        print("pausa: nenhuma")
+    elif args.ciclo_horas is None and not args.ignorar_pausa:
+        print(f"pausa: até {pausa.isoformat(timespec='minutes')} (bloqueio recente); o varrer não leria nada. "
+              "Para ler assim mesmo: --ignorar-pausa")
+    else:
+        print(f"pausa: até {pausa.isoformat(timespec='minutes')}, ignorada por {'--ignorar-pausa' if args.ignorar_pausa else '--ciclo-horas'}")
+    if vendidos is None:
+        print(f"fatias: categoria {args.no}")
+    else:
+        n = len(faixas or varredura.FAIXAS_VENDIDOS)
+        print(f"fatias: {len(vendidos)} gêneros × {n} faixas de preço = {len(vendidos) * n}")
+    print(f"orçamento: {args.minutos:g} min" + (f"; para depois de {args.max_paginas} requisições" if args.max_paginas else "")
+          + ("; para na primeira falha" if args.parar_na_falha else ""))
+    problema = cliente_http.problema_do_cliente(args.cliente)
+    print(f"cliente: {args.cliente}"
+          + (" (o módulo playwright está instalado; o Chrome ou Edge só é procurado na execução)"
+             if not problema and args.cliente in ("auto", "navegador") else ""))
+    if problema:
+        raise SystemExit(f"a execução pararia aqui: {problema}")
 
 
 def main() -> None:
@@ -20,21 +94,21 @@ def main() -> None:
     v.add_argument("--vendidos", action="store_true",
                    help="em vez da categoria --no, os ~2.000 livros mais vendidos (com preço) de cada "
                         "um dos 29 gêneros de Livros, em 9 faixas de preço (~13 mil páginas por passada)")
-    v.add_argument("--minutos", type=float, default=150, help="orçamento de tempo (padrão: %(default)s)")
-    v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
+    v.add_argument("--minutos", type=_numero_positivo, default=150, help="orçamento de tempo (padrão: %(default)s)")
+    v.add_argument("--max-paginas", type=_inteiro_positivo, help="para depois de N requisições (para testes)")
     v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto",
                    help="como ler as páginas (padrão: %(default)s = só o navegador; se ele não abrir, para e diz por quê). "
                         "curl e requests só quando pedidos: a Amazon costuma bloqueá-los, e um bloqueio grava no banco "
                         "uma pausa de horas")
-    v.add_argument("--ritmo", type=float, default=None,
+    v.add_argument("--ritmo", type=_numero_positivo, default=None,
                    help="páginas por minuto no começo (padrão: 80%% do último ritmo limpo guardado no banco, "
                         f"ou {ritmo.PPM_BASE:g}, o ritmo medido sem bloqueios)")
-    v.add_argument("--ritmo-max", type=float, default=None,
+    v.add_argument("--ritmo-max", type=_numero_positivo, default=None,
                    help="teto de páginas por minuto programadas (o real fica ~10-20%% abaixo): o ritmo sobe aos "
                         "poucos até ele enquanto não há falha e recua nas falhas. Sem esta opção, o teto é o que "
                         f"está guardado no banco (começa em {ritmo.PPM_TETO_PADRAO:g}) e sobe 25%% por dia "
                         f"limpo até {ritmo.PPM_TETO_AUTO_MAX:g} (ou até --teto-auto-max); com ela, o valor é fixo e nada é aprendido")
-    v.add_argument("--teto-auto-max", type=float, default=ritmo.PPM_TETO_AUTO_MAX,
+    v.add_argument("--teto-auto-max", type=_numero_positivo, default=ritmo.PPM_TETO_AUTO_MAX,
                    help="até onde o teto guardado no banco pode subir sozinho (padrão: %(default)g). Vale também sobre um "
                         "teto já guardado acima dele. Com várias sequências em paralelo, é o limite de cada uma; "
                         "só vale sem --ritmo-max")
@@ -51,8 +125,11 @@ def main() -> None:
                         "ciclo fica fixo e nada é aprendido")
     v.add_argument("--ignorar-pausa", action="store_true",
                    help="lê mesmo durante a pausa que segue um bloqueio (horas, de propósito: cada execução cai num IP novo)")
-    v.add_argument("--subir-a-cada", type=int, default=ritmo.A_CADA,
+    v.add_argument("--subir-a-cada", type=_inteiro_positivo, default=ritmo.A_CADA,
                    help="páginas boas seguidas para cada subida de 25%% do ritmo (padrão: %(default)s)")
+    v.add_argument("--dry-run", action="store_true",
+                   help="confere as opções e mostra o que a execução faria (ritmo, ciclo, pausa, fatias, cliente), sem "
+                        "abrir o navegador, sem pedir nada à Amazon e sem gravar no banco")
     v.add_argument("--parar-na-falha", action="store_true",
                    help="termina na primeira falha (bloqueio, erro ou página curta), sem insistir; para medir "
                         "até que ritmo a coleta passa limpa")
@@ -84,6 +161,13 @@ def main() -> None:
         meta = site.construir([Path(b) for b in args.bancos], Path(args.saida), Path(args.eventos))
         print(f"site em {args.saida}: {meta['itens']} livros")
         return
+    if args.cmd == "varrer":
+        if args.ritmo is not None and args.ritmo_max is not None and args.ritmo > args.ritmo_max:
+            v.error(f"--ritmo ({args.ritmo:g}) passa de --ritmo-max ({args.ritmo_max:g}), que deveria ser o teto fixo")
+        vendidos, faixas = _opcoes_de_coleta(args)
+        if args.dry_run:
+            _plano(args, vendidos, faixas)
+            return
     conn = db.conectar(args.db)
     if args.cmd in ("varrer", "catalogo"):
         varredura.criar_schema(conn)
@@ -107,11 +191,6 @@ def main() -> None:
         saida.write_text(relatorio.pagina(titulo or asin, asin, trechos, eventos, relatorio.aviso(conn)), encoding="utf-8")
         print(f"gráfico em {saida}")
     elif args.cmd == "varrer":
-        try:
-            vendidos = varredura.nos_vendidos(args.generos, args.particao) if args.vendidos else None
-            faixas = varredura.faixas_de_precos(args.faixas.split(",")) if args.faixas else None
-        except ValueError as e:
-            raise SystemExit(f"opção inválida: {e}")
         if args.ciclo_horas is None and not args.ignorar_pausa and (pausa := varredura.pausa_vigente(conn)):
             print(f"em pausa até {pausa.isoformat(timespec='minutes')} (bloqueio recente); nada a fazer. "
                   "Para ler assim mesmo: --ignorar-pausa")
