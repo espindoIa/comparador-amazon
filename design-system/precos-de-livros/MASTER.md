@@ -67,7 +67,7 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 - **Capa gerada** (sem imagem): pano de encadernação, com o matiz escolhido entre couro, vinho, verde, azul, ocre e ameixa (`PANOS` em `app.js`), e filete dourado.
   - Na capa pequena da lista vai só a inicial.
 - **Um acento só:** marrom e âmbar. As datas de promoção usam o âmbar translúcido, sem cor nova. Verde e vermelho são semânticos (caiu/subiu), não acento; `--med` e `--wr`, frios, existem para não se confundir com a marca.
-- **Grão de papel:** `body::before` com ruído SVG (`feTurbulence`) na opacidade `--grao`, atrás do conteúdo (`--zpapel`), sem clique; some no alto contraste e na impressão.
+- **Grão de papel:** `body::before` fixo (cobre a janela) com ruído SVG (`feTurbulence`) na opacidade `--grao`, atrás do conteúdo (`--zpapel`), sem clique; some no alto contraste e na impressão.
 - **Sombras quentes** (`--sh1`, `--sh2`, `--shc`) só no que flutua ou responde: hover de linha e de gênero, dica do gráfico, aviso rápido, capas, segmento ligado. Cartão em repouso (`.card`, `.row`, `.ferr`) tem só borda `--ln`.
 - **Camadas:** `--zpapel` −1, `--zacima` 1, `--ztip` 2, `--zhdr` 20, `--ztoast` 50, `--zpular` 60. Não existe `z-index` solto 🔒.
 - **Quebra de linha:** `h1,h2,h3` com `text-wrap:balance`; `p,dd,li` com `text-wrap:pretty`; parágrafo de abertura até 60ch.
@@ -109,6 +109,6 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 - Texto em `--mu2`; borda de campo em `--ln2`.
 - Cormorant em texto pequeno; serifa em controle ou em preço.
 - Cor como único sinal (preço caiu/subiu, série do gráfico).
-- `style="..."` nos modelos em JS, a não ser larguras/alturas do esqueleto e o `--h` da capa gerada 🔒; hover fora de `@media(hover:hover)` 🔒.
+- `style="..."` nos modelos em JS, a não ser o tamanho e a posição das peças do esqueleto (`width`, `height`, `margin-top`) e o `--h` da capa gerada 🔒; hover fora de `@media(hover:hover)` 🔒.
 - Emoji como ícone: os ícones são SVG de traço (`IC` em `app.js`).
 - Fontes externas (Google), carrossel, depoimentos, CTA de landing page.

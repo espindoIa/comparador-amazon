@@ -245,7 +245,9 @@
     history[substituir ? 'replaceState' : 'pushState']({ y: 0, n: (st.n || 0) + (substituir ? 0 : 1) }, '', url);
     scrollAlvo = 0; focar = !semFoco; desenhar();
   }
-  function rolar() { if (scrollAlvo != null) { scrollTo({ top: scrollAlvo, behavior: 'instant' }); scrollAlvo = null; } }   // instantâneo mesmo com scroll-behavior:smooth
+  // rolagem instantânea mesmo com scroll-behavior:smooth; navegador que não conhece 'instant' recusa o objeto e cai no scrollTo simples
+  function pular(y) { try { scrollTo({ top: y, behavior: 'instant' }); } catch (e) { scrollTo(0, y); } }
+  function rolar() { if (scrollAlvo != null) { pular(scrollAlvo); scrollAlvo = null; } }
   // depois de uma troca de tela, o foco vai para o título da tela nova (ou para o conteúdo), para o leitor de tela
   // anunciar a troca e o Tab seguir dali. Cada tela chama ao desenhar o conteúdo final (não o esqueleto).
   // focoApos: seletor do controle que deve receber o foco quando a tela for redesenhada no lugar
@@ -463,7 +465,7 @@
   function aplicarBusca(digitando) {
     var url = urlBusca();
     if (url === './') { if (rotaAtual && rotaAtual.v === 'busca') ir('./', true, digitando); return; }
-    if (rotaAtual && rotaAtual.v === 'busca') { history.replaceState(history.state, '', url); mostrados = 30; scrollTo({ top: 0, behavior: 'instant' }); busca(false); }
+    if (rotaAtual && rotaAtual.v === 'busca') { history.replaceState(history.state, '', url); mostrados = 30; pular(0); busca(false); }
     else ir(url, false, digitando);
   }
   var tBusca = null;
