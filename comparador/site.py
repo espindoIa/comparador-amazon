@@ -240,11 +240,15 @@ def ler_banco(caminho: Path, livros: dict[str, dict]) -> str:
         detalhes = ", ".join(c if c in colunas else f"NULL AS {c}" for c in DETALHES)   # bancos antigos não têm
         for r in conn.execute(f"SELECT asin, titulo, formato, no, ultimo_visto, {detalhes} FROM catalogo"):
             l = livros.setdefault(r["asin"], {"t": None, "f": None, "u": 0, "h": [], "v": False, "g": set()})
-            l["t"] = l["t"] or r["titulo"]
-            l["f"] = l["f"] or r["formato"]
-            for c in DETALHES:
-                l[c] = l.get(c) or r[c]
             u = dia_brasil(r["ultimo_visto"]).toordinal()
+            # O mesmo livro pode estar em mais de um banco (uma sequência de coleta passou a lê-lo, ou ele está em gêneros de
+            # duas): a linha vista por último manda, e a mais velha só preenche o que falta. Assim, o banco que deixou de
+            # ler o livro não sobrepõe a nota, a capa ou o título que o outro atualiza todo dia.
+            valor = (lambda novo, antigo: novo or antigo) if u > l["u"] else (lambda novo, antigo: antigo or novo)  # noqa: E731
+            l["t"] = valor(r["titulo"], l["t"])
+            l["f"] = valor(r["formato"], l["f"])
+            for c in DETALHES:
+                l[c] = valor(r[c], l.get(c))
             l["u"] = max(l["u"], u)
             l["v"] = l["v"] or corte is None or u >= corte     # visível na busca
             if r["no"] in GENEROS:
