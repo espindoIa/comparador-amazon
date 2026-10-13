@@ -23,12 +23,14 @@ def main() -> None:
     v.add_argument("--minutos", type=float, default=150, help="orçamento de tempo (padrão: %(default)s)")
     v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
     v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
-    v.add_argument("--ritmo", type=float, default=ritmo.PPM_BASE,
-                   help="páginas por minuto no começo (padrão: %(default)s, o ritmo medido sem bloqueios)")
-    v.add_argument("--ritmo-max", type=float, default=ritmo.PPM_TETO_PADRAO,
-                   help="teto de páginas por minuto programadas (o real fica ~20%% abaixo com 2 ou 3 requisições "
-                        "ao mesmo tempo): o ritmo sobe aos poucos até ele enquanto não há falha e recua nas falhas "
-                        "(padrão: %(default)s)")
+    v.add_argument("--ritmo", type=float, default=None,
+                   help="páginas por minuto no começo (padrão: 80%% do último ritmo limpo guardado no banco, "
+                        f"ou {ritmo.PPM_BASE:g}, o ritmo medido sem bloqueios)")
+    v.add_argument("--ritmo-max", type=float, default=None,
+                   help="teto de páginas por minuto programadas (o real fica ~10-20%% abaixo): o ritmo sobe aos "
+                        "poucos até ele enquanto não há falha e recua nas falhas. Sem esta opção, o teto é o que "
+                        f"está guardado no banco (começa em {ritmo.PPM_TETO_PADRAO:g}) e sobe 25%% por dia "
+                        f"limpo até {ritmo.PPM_TETO_AUTO_MAX:g}; com ela, o valor é fixo e nada é aprendido")
     v.add_argument("--faixas", help="com --vendidos: bordas das faixas de preço em reais, ex.: 0,20,30,40,50,60,80,120,200 "
                                     "(padrão: " + ",".join(f"{a / 100:g}" for a, _ in varredura.FAIXAS_VENDIDOS) + ")")
     v.add_argument("--generos", help="com --vendidos: só estes nós, separados por vírgula (padrão: o ranking geral e os 29 gêneros)")
@@ -90,11 +92,17 @@ def main() -> None:
             faixas = varredura.faixas_de_precos(args.faixas.split(",")) if args.faixas else None
         except ValueError as e:
             raise SystemExit(f"opção inválida: {e}")
+        auto = args.ritmo_max is None
+        config = varredura.ler_config(conn)
+        inicio, teto = ritmo.ritmo_guardado(config, ritmo.PPM_TETO_PADRAO) if auto else (args.ritmo or ritmo.PPM_BASE, args.ritmo_max)
+        if args.ritmo is not None:
+            inicio = args.ritmo
+        r = ritmo.Ritmo(inicio, teto, a_cada=args.subir_a_cada)
+        print(f"ritmo: começa em {r.ppm:.0f} páginas/min, teto {r.teto:.0f}" + (" (teto guardado no banco)" if auto else ""))
         sessao = rede.nova_sessao(args.cliente)
         try:
             eid = varredura.varrer(conn, sessao, no=args.no, vendidos=vendidos, minutos=args.minutos, faixas=faixas,
-                                   max_paginas=args.max_paginas, pasta_html=Path("data/html"),
-                                   ritmo=ritmo.Ritmo(args.ritmo, args.ritmo_max, a_cada=args.subir_a_cada),
+                                   max_paginas=args.max_paginas, pasta_html=Path("data/html"), ritmo=r,
                                    parar_na_falha=args.parar_na_falha)
         finally:
             if hasattr(sessao, "fechar"):
@@ -103,6 +111,10 @@ def main() -> None:
             print(f"{db.hoje_brasil()}: varredura do dia já está completa; nada a fazer")
             return
         e = conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
+        if auto and not args.parar_na_falha and args.max_paginas is None:
+            mudou = varredura.aprender_ritmo(conn, r, teto, e)
+            if "ritmo_teto" in mudou:
+                print(f"ritmo: teto guardado no banco passa de {teto:.0f} para {float(mudou['ritmo_teto']):.0f}")
         print(f"execução {eid}: {e['paginas']} páginas, {e['itens']} preços, {e['bloqueios']} bloqueios, "
               f"{e['erros']} erros, {e['curtas']} páginas curtas, {e['ppm']} páginas/min")
         if e["observacao"]:

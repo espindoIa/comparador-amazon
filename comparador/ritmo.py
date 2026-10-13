@@ -11,8 +11,8 @@ inteira na leitura seguinte) e não devem corroer o ritmo do dia:
 - bloqueio (captcha, HTTP 500/503) ou falha leve repetida (outra em menos de `JANELA_REPETIDA` páginas
   boas): o ritmo cai para o mínimo e o teto passa a ser 70% do ritmo em que ela aconteceu.
 
-O ritmo é "programado": com 2 ou 3 requisições por lote, o ritmo real fica ~20% abaixo (cada lote
-espera a mais lenta). Medido: 120 programadas = ~80 reais; 61 programadas = ~46 reais.
+O ritmo é "programado": cada lote espera a requisição mais lenta, então o real fica abaixo (~10% a 60 programadas,
+~15% a 90 com 6 pistas). Medido: 120 programadas com 3 pistas = ~80 reais; 60 programadas com 2 pistas = ~55 reais.
 """
 
 from __future__ import annotations
@@ -23,9 +23,15 @@ import random
 PPM_BASE = 21.0          # medido em out/2026 com pausa de 1–3 s: 0 bloqueios em ~11 mil páginas
 PPM_RECUO = 8.0          # depois de um bloqueio: parecido com a pausa 3x maior que existia antes
 PPM_TETO_PADRAO = 60.0   # ~46 páginas/min reais; o limpo medido foi 120 programadas (~80 reais) por ~9 min
-PPM_POR_PISTA = 45.0     # uma requisição por vez dá até ~45 páginas/min (cada uma leva ~0,9 s)
-PISTAS_MAX = 4
+# Cada lote começa uma requisição por pista, espaçadas no tempo, e só o lote seguinte começa quando a mais
+# lenta termina. Se a requisição leva mais que o intervalo entre elas (~0,9 s contra 0,67 s a 90 por minuto),
+# o lote estoura e o ritmo real fica abaixo do programado; com mais pistas por lote a perda diminui (simulado com
+# a latência medida: a 90 programadas, 2 pistas dão ~68 reais e 6 dão ~78; a 60, 2 dão ~53 e 4 dão ~54).
+# As requisições continuam espaçadas: não são rajada, e o ritmo que a Amazon vê é o programado, no máximo.
+PPM_POR_PISTA = 15.0
+PISTAS_MAX = 8
 PPM_MAXIMO = 120.0       # limite absoluto, qualquer que seja a configuração
+PPM_TETO_AUTO_MAX = 90.0  # até onde o teto sobe sozinho, de dia em dia (ver `aprender`); o resto é decisão de quem roda
 SUBIDA = 1.25            # a cada `a_cada` páginas boas seguidas, o ritmo sobe 25%
 A_CADA = 100
 FATOR_TETO_APOS_FALHA = 0.7
@@ -46,7 +52,9 @@ class Ritmo:
     @property
     def pistas(self) -> int:
         """Quantas requisições podem estar em andamento ao mesmo tempo."""
-        return min(PISTAS_MAX, max(1, math.ceil(self.ppm / PPM_POR_PISTA)))
+        if self.ppm <= PPM_BASE:           # o ritmo de sempre (medido uma de cada vez): uma pista só
+            return 1
+        return min(PISTAS_MAX, max(2, math.ceil(self.ppm / PPM_POR_PISTA)))
 
     @property
     def intervalo(self) -> float:
@@ -88,3 +96,52 @@ class Ritmo:
             self.ppm = min(self.ppm, PPM_RECUO)
         else:
             self.ppm = max(PPM_RECUO, self.ppm / 2)
+
+
+# ---------- teto que se ajusta de um dia para o outro ----------
+# O teto não é fixo: fica guardado no banco (tabela config, que viaja na release) e sobe 25% por dia em que a
+# coleta rodou limpa no teto, até PPM_TETO_AUTO_MAX. Depois de um bloqueio (ou de falha repetida) cai para o
+# que o freio da execução deixou e fica parado por DIAS_DE_ESPERA dias. Assim cada dia de coleta (~14 mil
+# páginas) é a evidência para o próximo passo, e quem roda pode baixar o teto com `--ritmo-max`.
+PASSO_TETO = 1.25
+DIAS_DE_ESPERA = 3
+PAGINAS_MIN_EVIDENCIA = 2000     # páginas lidas na execução para ela valer como evidência de subida
+FALHAS_LEVES_POR_MIL = 0.5       # erros + páginas curtas por mil páginas aceitos numa execução "limpa" (medido: 0,2)
+AO_RETOMAR = 0.8                 # a execução seguinte começa a 80% do último ritmo limpo (e sobe de novo)
+
+
+def ritmo_guardado(config: dict, padrao_teto: float, base: float = PPM_BASE) -> tuple[float, float]:
+    """(ritmo inicial, teto) para uma execução, a partir de `config` (chave -> texto)."""
+    def num(k, d):
+        try:
+            return float(config[k])
+        except (KeyError, ValueError):
+            return d
+    teto = min(PPM_MAXIMO, max(PPM_RECUO, num("ritmo_teto", padrao_teto)))
+    inicio = num("ritmo_ultimo_limpo", 0.0) * AO_RETOMAR
+    return min(teto, max(base, inicio)), teto
+
+
+def aprender(config: dict, hoje: str, ritmo: "Ritmo", teto_inicial: float, paginas: int, bloqueios: int,
+             leves: int) -> dict:
+    """Novos valores de config depois de uma execução. `hoje` = AAAA-MM-DD (Brasília). Só devolve o que mudou."""
+    novo: dict = {}
+    if ritmo.teto < teto_inicial - 1e-9 or bloqueios:
+        novo["ritmo_teto"] = f"{max(PPM_RECUO, min(ritmo.teto, teto_inicial)):.1f}"
+        novo["ritmo_espera_ate"] = _somar_dias(hoje, DIAS_DE_ESPERA)
+        novo["ritmo_ultimo_limpo"] = ""
+        return novo
+    limpa = paginas >= PAGINAS_MIN_EVIDENCIA and leves * 1000 <= FALHAS_LEVES_POR_MIL * paginas
+    if limpa:
+        novo["ritmo_ultimo_limpo"] = f"{ritmo.ppm:.1f}"
+    no_teto = ritmo.ppm >= 0.95 * ritmo.teto
+    esperando = config.get("ritmo_espera_ate", "") > hoje
+    if limpa and no_teto and not esperando and config.get("ritmo_subiu_em", "") < hoje and ritmo.teto < PPM_TETO_AUTO_MAX:
+        novo["ritmo_teto"] = f"{min(PPM_TETO_AUTO_MAX, ritmo.teto * PASSO_TETO):.1f}"
+        novo["ritmo_subiu_em"] = hoje
+    return novo
+
+
+def _somar_dias(dia: str, n: int) -> str:
+    from datetime import date, timedelta
+    return (date.fromisoformat(dia) + timedelta(days=n)).isoformat()
