@@ -48,7 +48,7 @@ button,input,select{font:inherit;color:inherit}
 .pular{position:absolute;left:12px;top:-80px;z-index:60;background:var(--tinta);color:var(--tintaf);padding:10px 16px;border-radius:var(--r2);font-weight:600}
 .pular:focus{top:12px}
 /* o título que recebe o foco numa troca de tela (e o #app) não precisa de anel: não é um controle */
-#app:focus,h1[tabindex="-1"]:focus,[data-foco]:focus{outline:none}
+#app:focus,h1[tabindex="-1"]:focus,h2[tabindex="-1"]:focus,[data-foco]:focus{outline:none}
 svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 svg.i.s{width:16px;height:16px}
 
@@ -105,7 +105,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 .chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding:2px;margin:-2px}
 .chips::-webkit-scrollbar{display:none}
 .chip{flex:none;display:inline-flex;transition:border-color .15s,transform .1s;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--ln3);background:var(--sf);font-size:var(--fs-3);font-weight:500;cursor:pointer;white-space:nowrap}
-@media(hover:hover){.chip:hover{border-color:var(--mu2)}}
+@media(hover:hover){.chip:hover{border-color:var(--mu)}}
 .chip[aria-pressed=true]{background:var(--ac);border-color:var(--ac);color:var(--sf)}
 .chip:active,.leg button:active{transform:scale(.98)}.ib:active{background:var(--sf3)}.seg button:active:not([aria-pressed=true]){background:var(--sf3)}
 .chip .n{color:var(--mu);font-size:var(--fs-1);font-variant-numeric:tabular-nums}.chip[aria-pressed=true] .n{color:inherit}
@@ -342,6 +342,7 @@ details{font-size:var(--fs-3);color:var(--mu);margin-top:8px}summary{cursor:poin
 /* ---------- avisos rápidos e carregamento ---------- */
 .toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;background:var(--tinta);color:var(--tintaf);padding:12px 16px;border-radius:var(--r2);box-shadow:var(--sh2);display:flex;align-items:center;gap:16px;font-size:var(--fs-3);z-index:50;transition:opacity .2s,transform .2s;max-width:calc(100% - 32px);pointer-events:none}
 .toast.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.toast .atalho{font:600 var(--fs-1)/1 var(--f);opacity:.75;margin-left:6px;padding:2px 5px;border:1px solid currentColor;border-radius:var(--r0)}
 .toast button{border:0;background:none;color:inherit;font-weight:700;cursor:pointer;padding:4px;text-decoration:underline;text-underline-offset:3px}
 .sk{background:linear-gradient(90deg,var(--sf2) 25%,var(--sf3) 50%,var(--sf2) 75%);background-size:200% 100%;animation:sk 1.2s infinite linear;border-radius:var(--r1)}
 @keyframes sk{to{background-position:-200% 0}}

@@ -190,12 +190,12 @@
   window.addEventListener('resize', function () { clearTimeout(tEst); tEst = setTimeout(arrumarEstantes, 120); });
   // aviso rápido: com ação ("Desfazer"), fica 10 s, para dar tempo de chegar ao botão pelo teclado;
   // não some enquanto o ponteiro ou o foco estão nele, e Esc fecha
-  var tToast = null, msToast = 0, desfazer = null;
+  var tToast = null, msToast = 0, desfazer = null, ATALHO = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘Z' : 'Ctrl+Z';
   // fechado, o aviso só fica transparente (para a transição): o botão sai da ordem do Tab, e quem estava nele volta à tela
   function fecharToast() {
     var t = $('#toast'), bt = t.querySelector('button'), tinha = t.contains(document.activeElement);
     clearTimeout(tToast); t.classList.remove('on'); desfazer = null;
-    if (bt) bt.tabIndex = -1;
+    if (bt) bt.inert = true;                       // fora do Tab e do cursor do leitor de tela; a região viva continua
     if (tinha) focarTela(true);
   }
   function contarToast() { clearTimeout(tToast); tToast = setTimeout(fecharToast, msToast); }
@@ -204,7 +204,8 @@
     t.innerHTML = '<span>' + esc(msg) + '</span>' + (acao ? '<button type="button">' + esc(acao) + '</button>' : '');
     if (acao) t.querySelector('button').onclick = function () { fecharToast(); fn(); };
     desfazer = acao === 'Desfazer' ? fn : null;
-    if (desfazer) t.querySelector('span').insertAdjacentHTML('beforeend', '<span class="vh">. Ctrl+Z desfaz.</span>');
+    // atalho visível onde há teclado (ponteiro com hover); o leitor de tela ouve a dica junto
+    if (desfazer) t.querySelector('span').insertAdjacentHTML('beforeend', matchMedia('(hover:hover)').matches ? ' <kbd class="atalho">' + ATALHO + '</kbd>' : '<span class="vh">. ' + ATALHO + ' desfaz.</span>');
     t.classList.add('on'); msToast = acao ? 10000 : 5000; contarToast();
   }
   (function () {
@@ -474,7 +475,10 @@
       S.q = q.value; aplicarBusca(true);
     }, 150);
   });
-  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = VAZIO(); S.q = q.value; focar = true; aplicarBusca(); if (rotaAtual.v === 'busca') focarTela(); });
+  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = VAZIO(); S.q = q.value; focar = true; aplicarBusca();
+    if (rotaAtual.v === 'busca') { if (idx) focarTela(); }       // sem o índice, a busca foca ao desenhar os resultados
+    else if (urlBusca() === './') focar = false;                  // campo vazio fora da busca: nada muda de tela
+  });
   q.addEventListener('keydown', function (e) { if (e.key === 'Escape') { q.value = ''; q.dispatchEvent(new Event('input')); } });
   $('#limpa').addEventListener('click', function () { q.value = ''; q.focus(); q.dispatchEvent(new Event('input')); });
   document.addEventListener('keydown', function (e) {
@@ -487,7 +491,8 @@
   });
   var tPreco = null;
   app.addEventListener('input', function (e) {
-    if (e.target.closest('[data-alvo-f]')) { e.target.removeAttribute('aria-invalid'); return; }
+    var fa = e.target.closest('[data-alvo-f]');
+    if (fa) { var ec = fa.querySelector('.erro-campo'); if (ec) ec.remove(); e.target.removeAttribute('aria-invalid'); e.target.removeAttribute('aria-describedby'); return; }
     if (e.target.id !== 'de' && e.target.id !== 'ate') return;
     var v = parseFloat(String(e.target.value).replace(',', '.'));
     S[e.target.id] = isFinite(v) && v >= 0 ? Math.round(v * 100) : null;
@@ -731,7 +736,11 @@
     else if (acao === 'mais') maisResultados();
     else if (acao === 'preco') { verPreco = !verPreco; if (!verPreco) { S.de = S.ate = null; aplicarBusca(); } else { ferramentas(); resultados(); var i = $('#de'); if (i) i.focus(); } }
     else if (acao === 'limpar-filtros') { var fora = !b.closest('#ferr'); S.fam = {}; S.i = ''; S.g = ''; S.de = S.ate = null; verPreco = false; aplicarBusca(); if (fora) focarEl($('#ferr .chip')); }
-    else if (acao === 'baixa-tudo') { baixaTudo = true; destaques().then(function (x) { secaoBaixa(x); focarEl($('#baixa .grade').children[12] || $('#baixa h2')); }); }   // o 1º livro que apareceu
+    else if (acao === 'baixa-tudo') {
+      // o foco vai ao 1º livro que estava escondido (no computador a estante mostra só uma fileira; no celular, os 12)
+      var est0 = $('#baixa .estante'), vis = est0 ? [].filter.call(est0.children, function (c) { return !c.inert; }).length : 0;
+      baixaTudo = true; destaques().then(function (x) { secaoBaixa(x); focarEl($('#baixa .grade').children[vis] || $('#baixa h2')); });
+    }
     else if (acao === 'voltar') voltar();
     else if (acao === 'abrir-estante') {
       var sec = b.closest('section'), est = sec && sec.querySelector('.estante');
@@ -766,7 +775,8 @@
     if (!(isFinite(v) && v > 0)) {
       var er = f.querySelector('.erro-campo');
       var eid = 'alvo-erro-' + f.dataset.alvoF;
-      if (!er) f.insertAdjacentHTML('beforeend', '<p class="erro-campo" id="' + eid + '" role="alert">Digite um preço maior que zero.</p>');
+      if (er) er.remove();                                  // reinserido, para o alerta ser anunciado de novo
+      f.insertAdjacentHTML('beforeend', '<p class="erro-campo" id="' + eid + '" role="alert">Digite um preço maior que zero.</p>');
       inp.setAttribute('aria-invalid', 'true'); inp.setAttribute('aria-describedby', eid); inp.focus();
       return;
     }

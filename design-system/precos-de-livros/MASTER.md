@@ -55,7 +55,7 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
   - `h1` da tela: `--fs-12` no início e em "Como funciona", `--fs-11` no livro, `--fs-10` na lista e na busca.
   - No celular o `h1` desce 1 a 3 degraus.
   - `h2` de seção: `--fs-8`. Exceção: o `h2` pequeno do cartão de promoção (`.prox`, 16 px) usa `--f`, porque a Cormorant não serve abaixo de 20 px.
-  - Toda tela tem um `h1`, que recebe o foco: na busca por texto ele é só para leitor de tela (`.vh`, "Busca: …"); erro, não encontrado e lista vazia usam `h1` no bloco `.vazio`.
+  - Toda tela tem um `h1`, que nomeia a tela e recebe o foco (no livro, a região `.livro` nomeada por ele): na busca por texto ele é só para leitor de tela (`.vh`, "Busca: …"); erro, não encontrado e lista vazia usam `h1` no bloco `.vazio`.
 
 ## Forma
 - Raios 🔒: `--r0` 4 (capa), `--r1` 8 (controle pequeno), `--r2` 12 (botão, aviso), `--r3` 16 (cartão); `999px` para pílula e chip.
@@ -72,7 +72,7 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 | Peça | Classe | Estados |
 |---|---|---|
 | Botão | `.btn` (+ `.pri` âmbar, `.sm`, `.gh`, `.ico`) | hover (`@media(hover:hover)` 🔒), `:active` scale .98, `aria-pressed`, foco |
-| Chip de filtro | `.chip` | contorno `--ln3` (3:1, como os campos); ligado = fundo `--ac` com texto `--sf`; hover; `:active` |
+| Chip de filtro | `.chip` | contorno `--ln3` (3:1, como os campos), escurece para `--mu` no hover; ligado = fundo `--ac` com texto `--sf`; `:active` |
 | Seletor de período | `.seg button` | ligado = fundo `--sf` com sombra |
 | Pílula de preço | `.pill` `.dn` `.up` `.wr` | só leitura |
 | Campo e select | `.busca input`, `.sel select`, `.faixa-preco input`, `.alvo-f input` | contorno `--ln3` 🔒, 16 px (o iPhone não amplia), hover escurece a borda 🔒, erro com `aria-invalid` (borda `--up`) e `.erro-campo` embaixo |
@@ -84,12 +84,12 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 ## Acessibilidade (obrigatório)
 - **Foco e navegação**
   - Foco visível: `:focus-visible` com 2 px de `--ac`.
-  - O título que recebe foco numa troca de tela não mostra anel.
+  - O título (`h1`/`h2` com `tabindex=-1`) ou a região que recebe foco por programa não mostra anel: não é um controle.
   - Link "Pular para o conteúdo" no começo.
-  - Toda troca de tela leva o foco ao `h1` dela, menos enquanto se digita na busca.
+  - Toda troca de tela leva o foco ao título dela (o `h1`, ou um alvo marcado com `data-foco`), menos enquanto se digita na busca.
   - O controle recriado por `innerHTML` (chip, select, botão do preço-alvo) recebe o foco de volta. O que some recebe um substituto: ao remover um livro da lista, o foco vai ao remover da linha vizinha; em "Ver todos", ao primeiro livro que apareceu; em "Mostrar mais" (último), ao primeiro livro novo.
   - O aviso rápido fechado tira o botão da ordem do Tab.
-  - O aviso com "Desfazer" fica no fim da página: Ctrl/⌘+Z desfaz enquanto ele está aberto (fora de campos de texto), e o leitor de tela ouve a dica junto com o aviso.
+  - O aviso com "Desfazer" fica no fim da página: Ctrl+Z (⌘Z no Mac) desfaz enquanto ele está aberto (fora de campos de texto). O atalho aparece no aviso onde há teclado, e o leitor de tela ouve a dica. Fechado, o botão fica `inert`.
   - No livro, o foco da troca de tela vai à região `.livro` (nomeada pelo `h1`), que vem antes das ações no DOM; o Tab seguinte chega em "Ver na Amazon".
   - O erro de campo é `role="alert"`, ligado ao campo por `aria-describedby`, com ids únicos por livro.
 - **Leitor de tela:** a contagem da busca é anunciada numa região viva escondida (`#cont-res`), com espera de 0,8 s.
