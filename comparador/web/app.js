@@ -162,7 +162,7 @@
     return '<div class="esq">' + new Array(n + 1).join(r) + '</div>';
   }
   function erro(msg) {
-    app.innerHTML = '<div class="erro"><div class="vazio"><div class="ic">' + ic('alerta') + '</div><h2>' + esc(msg) + '</h2><p>Verifique a conexão.</p>' +
+    app.innerHTML = '<div class="erro"><div class="vazio"><div class="ic">' + ic('alerta') + '</div><h1>' + esc(msg) + '</h1><p>Verifique a conexão.</p>' +
       '<button type="button" class="btn pri" data-acao="recarregar">Tentar de novo</button></div></div>';
     focarTela();
   }
@@ -191,7 +191,13 @@
   // aviso rápido: com ação ("Desfazer"), fica 10 s, para dar tempo de chegar ao botão pelo teclado;
   // não some enquanto o ponteiro ou o foco estão nele, e Esc fecha
   var tToast = null, msToast = 0;
-  function fecharToast() { clearTimeout(tToast); $('#toast').classList.remove('on'); }
+  // fechado, o aviso só fica transparente (para a transição): o botão sai da ordem do Tab, e quem estava nele volta à tela
+  function fecharToast() {
+    var t = $('#toast'), bt = t.querySelector('button'), tinha = t.contains(document.activeElement);
+    clearTimeout(tToast); t.classList.remove('on');
+    if (bt) bt.tabIndex = -1;
+    if (tinha) focarTela(true);
+  }
   function contarToast() { clearTimeout(tToast); tToast = setTimeout(fecharToast, msToast); }
   function toast(msg, acao, fn) {
     var t = $('#toast');
@@ -237,6 +243,7 @@
   // focoApos: seletor do controle que deve receber o foco quando a tela for redesenhada no lugar
   // (ex.: o botão do preço-alvo que acabou de ser salvo), já que o controle antigo some com o innerHTML
   var focoApos = null;
+  function focarEl(el) { if (el) { if (!/^(A|BUTTON|INPUT|SELECT)$/.test(el.tagName)) el.tabIndex = -1; el.focus({ preventScroll: true }); } return !!el; }
   function focarTela(sempre) {
     if (focoApos) { var c = app.querySelector(focoApos); focoApos = null; if (c) { focar = false; c.focus({ preventScroll: true }); return; } sempre = true; }
     if (!focar && !sempre) return;
@@ -351,11 +358,13 @@
     var r = rotaAtual;
     if (!idx) { app.innerHTML = esqueleto(6); indice().then(function () { if (aindaEm(r)) busca(false); }, function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); }); return; }
     resultado = curta() ? { lista: [], cont: { fam: {}, i: {}, g: {} } } : buscar(idx);
-    if (!$('#ferr')) app.innerHTML = '<h1 class="busca-h" id="bh" hidden></h1><div class="ferr" id="ferr"></div><div aria-live="polite" class="vh" id="cont-res"></div><div id="res" style="margin-top:10px"></div>';
+    if (!$('#ferr')) app.innerHTML = '<h1 class="busca-h vh" id="bh"></h1><div class="ferr" id="ferr"></div><div aria-live="polite" class="vh" id="cont-res"></div><div id="res" style="margin-top:10px"></div>';
     // navegando por um gênero (sem texto): o nome do gênero vira o título da página
     var gi = S.g ? idx.genPorNo[S.g] : null, bh = $('#bh');
-    bh.hidden = gi == null || !!S.q.trim();
-    if (!bh.hidden) { bh.textContent = idx.gen[gi][1]; titulo(idx.gen[gi][1]); }
+    var porGenero = gi != null && !S.q.trim();
+    bh.classList.toggle('vh', !porGenero);
+    bh.textContent = porGenero ? idx.gen[gi][1] : S.q.trim() ? 'Busca: ' + S.q.trim() : 'Busca';
+    if (porGenero) titulo(idx.gen[gi][1]);
     // parte nova do índice enquanto a pessoa mexe num filtro (campo de preço, lista aberta): não refaz a barra
     if (!parte || !$('#ferr').contains(document.activeElement)) ferramentas();
     resultados(); if (!parte) { rolar(); focarTela(); }
@@ -403,7 +412,7 @@
     var r = resultado.lista, el = $('#res'), n = r.length, sv = salvos(), carregando = !idx.completo;
     $('#ferr .l2 > span').innerHTML = '<span class="cont">' + (n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro' : ' livros') + (carregando ? ' até agora' : '') : '') + '</span>' +
       (nFiltros() ? ' <button type="button" class="btn gh sm" data-acao="limpar-filtros">Limpar filtros</button>' : '');
-    anunciarContagem(carregando && !n ? '' : n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro encontrado' : ' livros encontrados') : 'Nenhum livro encontrado');
+    anunciarContagem(carregando ? '' : n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro encontrado' : ' livros encontrados') : 'Nenhum livro encontrado');
     var nota = resultado.correcao ? '<p class="nota-busca">Mostrando resultados para <b>' + esc(resultado.correcao) + '</b></p>' :
       resultado.parcial ? '<p class="nota-busca">Nenhum livro tem todas as palavras. Estes têm a maior parte delas.</p>' : '';
     var status = carregando ? '<p class="nota-busca carregando" role="status"><span class="giro" aria-hidden="true"></span>Buscando no restante do catálogo…</p>' :
@@ -436,7 +445,10 @@
     if (!resultado || !$('#res')) return;
     var antes = mostrados, sv = salvos(); mostrados += 30;
     $('#res .lst').insertAdjacentHTML('beforeend', resultado.lista.slice(antes, mostrados).map(function (x) { return linhaObra(x.o, x.eds, sv); }).join(''));
-    if (mostrados >= resultado.lista.length) { var m = $('#res .mais'); if (m) m.remove(); }
+    if (mostrados >= resultado.lista.length) {
+      var m = $('#res .mais');
+      if (m) { var tinha = m.contains(document.activeElement); m.remove(); if (tinha) focarEl($('#res .lst').children[antes].querySelector('a')); }
+    }
   }
   // digitando: veio do campo de busca do cabeçalho; a troca de tela não tira o foco dele
   function aplicarBusca(digitando) {
@@ -454,7 +466,7 @@
       S.q = q.value; aplicarBusca(true);
     }, 150);
   });
-  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = VAZIO(); S.q = q.value; aplicarBusca(); q.blur(); });
+  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = VAZIO(); S.q = q.value; focar = true; aplicarBusca(); if (rotaAtual.v === 'busca') focarTela(); });
   q.addEventListener('keydown', function (e) { if (e.key === 'Escape') { q.value = ''; q.dispatchEvent(new Event('input')); } });
   $('#limpa').addEventListener('click', function () { q.value = ''; q.focus(); q.dispatchEvent(new Event('input')); });
   document.addEventListener('keydown', function (e) {
@@ -467,6 +479,7 @@
   });
   var tPreco = null;
   app.addEventListener('input', function (e) {
+    if (e.target.closest('[data-alvo-f]')) { e.target.removeAttribute('aria-invalid'); return; }
     if (e.target.id !== 'de' && e.target.id !== 'ate') return;
     var v = parseFloat(String(e.target.value).replace(',', '.'));
     S[e.target.id] = isFinite(v) && v >= 0 ? Math.round(v * 100) : null;
@@ -545,7 +558,7 @@
   }
   function naoEncontrado() {
     titulo('Livro não encontrado');
-    app.innerHTML = '<div class="vazio"><div class="ic">' + ic('livro') + '</div><h2>Livro não encontrado</h2><p>Ele não está entre os livros acompanhados.</p>' +
+    app.innerHTML = '<div class="vazio"><div class="ic">' + ic('livro') + '</div><h1>Livro não encontrado</h1><p>Ele não está entre os livros acompanhados.</p>' +
       '<a class="btn pri" href="./" data-r>Ir para o início</a></div>';
     focarTela();
   }
@@ -634,7 +647,11 @@
   function listaCompartilhada(texto) {
     var r = rotaAtual, asins = Lista.extrair(texto.split(',').join(' ')).slice(0, 200);
     titulo('Lista compartilhada');
-    if (!asins.length) return naoEncontrado();
+    if (!asins.length) {
+      app.innerHTML = '<div class="vazio"><div class="ic">' + ic('salvar') + '</div><h1>Lista não encontrada</h1><p>O link não tem nenhum livro. Confira se ele foi copiado inteiro.</p>' +
+        '<a class="btn pri" href="./" data-r>Ir para o início</a></div>';
+      return focarTela();
+    }
     app.innerHTML = esqueleto(Math.min(asins.length, 5));
     carregarItens(asins).then(function (rs) {
       if (!aindaEm(r)) return;
@@ -644,7 +661,7 @@
         (novos ? '<button type="button" class="btn pri" data-acao="importar" data-asins="' + asins.join(',') + '">' + ic('salvar', 's') + 'Adicionar à minha lista' + (novos < asins.length ? ' (' + novos + ' novos)' : '') + '</button>' :
           '<a class="btn" href="./?lista" data-r>Todos já estão na sua lista</a>') + '</div>' +
         '<ul class="lst">' + itens.map(function (i) { return linhaLista(i, null, false); }).join('') + '</ul>';
-      focarTela();
+      rolar(); focarTela();
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar a lista'); });
   }
 
@@ -691,30 +708,38 @@
     var acao = b.dataset.acao;
     if (b.dataset.fam) { if (S.fam[b.dataset.fam]) delete S.fam[b.dataset.fam]; else S.fam[b.dataset.fam] = 1; aplicarBusca(); }
     else if (b.dataset.idioma !== undefined) { S.i = S.i === b.dataset.idioma ? '' : b.dataset.idioma; aplicarBusca(); }
-    else if (b.dataset.baixa !== undefined) { filtroBaixa = b.dataset.baixa; baixaTudo = false; destaques().then(function (x) { secaoBaixa(x); }); }
+    else if (b.dataset.baixa !== undefined) { filtroBaixa = b.dataset.baixa; baixaTudo = false; destaques().then(function (x) { secaoBaixa(x); focarEl($('[data-baixa="' + filtroBaixa + '"]')); }); }
     else if (b.dataset.salvar) {
       var na = Lista.alternar(b.dataset.salvar); botaoSalvar(); contador();
       toast(na ? 'Salvo na sua lista' : 'Removido da sua lista', na ? 'Ver lista' : null, function () { ir('./?lista'); });
     } else if (b.dataset.remover) {
-      var asin = b.dataset.remover, pos = Lista.ler().indexOf(asin);
-      Lista.remover(asin); contador(); focar = true; lista();
+      var asin = b.dataset.remover, pos = Lista.ler().indexOf(asin), li = b.closest('li');
+      var viz = li && (li.nextElementSibling || li.previousElementSibling), vb = viz && viz.querySelector('[data-remover]');
+      Lista.remover(asin); contador();
+      if (vb) focoApos = '[data-remover="' + vb.dataset.remover + '"]'; else focar = true;     // sem vizinha: lista vazia, foco no título
+      lista();
       toast('Removido da sua lista', 'Desfazer', function () { Lista.inserir(asin, pos); contador(); if (rotaAtual.v === 'lista') { focoApos = '[data-remover="' + asin + '"]'; lista(); } });
     }
     else if (acao === 'mais') maisResultados();
     else if (acao === 'preco') { verPreco = !verPreco; if (!verPreco) { S.de = S.ate = null; aplicarBusca(); } else { ferramentas(); resultados(); var i = $('#de'); if (i) i.focus(); } }
-    else if (acao === 'limpar-filtros') { S.fam = {}; S.i = ''; S.g = ''; S.de = S.ate = null; verPreco = false; aplicarBusca(); }
-    else if (acao === 'baixa-tudo') { baixaTudo = true; destaques().then(function (x) { secaoBaixa(x); }); }
+    else if (acao === 'limpar-filtros') { var fora = !b.closest('#ferr'); S.fam = {}; S.i = ''; S.g = ''; S.de = S.ate = null; verPreco = false; aplicarBusca(); if (fora) focarEl($('#ferr .chip')); }
+    else if (acao === 'baixa-tudo') { baixaTudo = true; destaques().then(function (x) { secaoBaixa(x); focarEl($('#baixa .grade').children[12] || $('#baixa h2')); }); }   // o 1º livro que apareceu
     else if (acao === 'voltar') voltar();
     else if (acao === 'abrir-estante') {
       var sec = b.closest('section'), est = sec && sec.querySelector('.estante');
+      var novo = est && [].filter.call(est.children, function (c) { return c.inert; })[0];
       if (est) { est.className = 'grade'; [].forEach.call(est.children, function (c) { c.inert = false; }); }
-      b.remove();
+      b.remove(); focarEl(novo || (sec && sec.querySelector('h2')));
     }
-    else if (acao === 'limpar-recentes') { Lista.limparRecentes(); var sr = b.closest('section'); if (sr) sr.remove(); }
+    else if (acao === 'limpar-recentes') {
+      Lista.limparRecentes(); var sr = b.closest('section'), prox = sr && sr.nextElementSibling;
+      if (sr) sr.remove();
+      focarEl((prox && prox.querySelector('h2, a, button')) || app.querySelector('h1'));
+    }
     else if (b.dataset.alvo) {
       var ali = b.closest('.alvo'), at = Lista.alvos()[b.dataset.alvo];
-      ali.innerHTML = '<form class="alvo-f" data-alvo-f="' + b.dataset.alvo + '"><label class="vh" for="alvo-v">Preço-alvo em reais</label>' +
-        '<input id="alvo-v" type="number" inputmode="decimal" min="0" step="0.01" placeholder="R$" value="' + (at ? (at / 100).toFixed(2) : '') + '">' +
+      ali.innerHTML = '<form class="alvo-f" data-alvo-f="' + b.dataset.alvo + '"><label class="vh" for="alvo-v-' + b.dataset.alvo + '">Preço-alvo em reais</label>' +
+        '<input id="alvo-v-' + b.dataset.alvo + '" type="number" inputmode="decimal" min="0" step="0.01" placeholder="R$" value="' + (at ? (at / 100).toFixed(2) : '') + '">' +
         '<button type="submit" class="btn sm pri">Salvar</button>' + (at ? '<button type="button" class="btn sm gh" data-acao="tirar-alvo">Tirar</button>' : '') + '</form>';
       ali.querySelector('input').focus();
     }
@@ -732,8 +757,9 @@
     // valor vazio ou inválido não apaga o alvo em silêncio: avisa junto do campo (tirar o alvo é o botão "Tirar")
     if (!(isFinite(v) && v > 0)) {
       var er = f.querySelector('.erro-campo');
-      if (!er) { f.insertAdjacentHTML('beforeend', '<p class="erro-campo" id="alvo-erro">Digite um preço maior que zero.</p>'); }
-      inp.setAttribute('aria-invalid', 'true'); inp.setAttribute('aria-describedby', 'alvo-erro'); inp.focus();
+      var eid = 'alvo-erro-' + f.dataset.alvoF;
+      if (!er) f.insertAdjacentHTML('beforeend', '<p class="erro-campo" id="' + eid + '" role="alert">Digite um preço maior que zero.</p>');
+      inp.setAttribute('aria-invalid', 'true'); inp.setAttribute('aria-describedby', eid); inp.focus();
       return;
     }
     Lista.definirAlvo(f.dataset.alvoF, Math.round(v * 100));

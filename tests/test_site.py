@@ -491,7 +491,7 @@ class TestFolhaDeEstilo(unittest.TestCase):
         for nome, bloco in (("claro", self.claro), ("escuro", self.escuro)):
             t = {k: hexa(v) for k, v in re.findall(r"(--[a-z0-9]+):(#[0-9a-f]{3,6})(?=[;}])", bloco)}
             pares = [(f, b) for f in ("--fg", "--mu", "--ac", "--dn", "--up", "--wr", "--med") for b in ("--bg", "--sf", "--sf2")]
-            pares += [("--dn", "--dns"), ("--up", "--ups"), ("--wr", "--wrs"), ("--ac", "--acs"), ("--prif", "--pri"), ("--tintaf", "--tinta")]
+            pares += [("--dn", "--dns"), ("--up", "--ups"), ("--wr", "--wrs"), ("--ac", "--acs"), ("--prif", "--pri"), ("--tintaf", "--tinta"), ("--sf", "--ac")]                     # --sf sobre --ac: chip ligado e contador
             for f, b in pares:
                 self.assertGreaterEqual(razao(t[f], t[b]), 4.5, f"{nome}: {f} sobre {b}")
             for b in ("--bg", "--sf"):                                            # contorno de campo: 3:1 (WCAG 1.4.11)
@@ -737,14 +737,14 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.goto(f"{base}/?lista")                                                   # preço-alvo na lista
             pg.wait_for_selector("#lst .row b")
             pg.click("[data-alvo]")
-            pg.fill("#alvo-v", "35")
+            pg.fill(".alvo-f input", "35")
             pg.click(".alvo-f [type=submit]")
             pg.wait_for_selector(".alvo .mu")
             self.assertIn("Seu preço: R$ 35,00", pg.inner_text("#lst"))
             self.assertIn("faltam R$ 5,00", pg.inner_text("#lst"))
             pg.click("[data-alvo]")
-            pg.fill("#alvo-v", "40")
-            pg.press("#alvo-v", "Enter")
+            pg.fill(".alvo-f input", "40")
+            pg.press(".alvo-f input", "Enter")
             pg.wait_for_selector(".alvo .pill.dn")
             self.assertIn("chegou no seu preço", pg.inner_text(".resumo"))
             b.close()
@@ -784,7 +784,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.wait_for_selector("#graf svg")
             self.assertIn("livro=8535902775", pg.url)
             pg.goto(f"{base}/?livro=ZZZZZZZZZZ")
-            pg.wait_for_selector(".vazio h2")
+            pg.wait_for_selector(".vazio h1")
             self.assertIn("Livro não encontrado", pg.inner_text("main"))
             b.close()
         self.assertEqual(erros, [])
@@ -835,18 +835,28 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.goto(f"{base}/?lista")                                                    # preço-alvo inválido não apaga o alvo
             pg.wait_for_selector("#lst .row b")
             pg.click("[data-alvo]")
-            pg.fill("#alvo-v", "30")
-            pg.press("#alvo-v", "Enter")
+            pg.fill(".alvo-f input", "30")
+            pg.press(".alvo-f input", "Enter")
             pg.wait_for_selector(".alvo .mu")
             self.assertEqual(pg.evaluate("document.activeElement.dataset.alvo"), "8535902775")   # o foco volta ao botão
             pg.click("[data-alvo]")
-            pg.fill("#alvo-v", "0")
-            pg.press("#alvo-v", "Enter")
+            pg.fill(".alvo-f input", "0")
+            pg.press(".alvo-f input", "Enter")
             pg.wait_for_selector(".erro-campo")
-            self.assertEqual(pg.get_attribute("#alvo-v", "aria-invalid"), "true")
+            self.assertEqual(pg.get_attribute(".alvo-f input", "aria-invalid"), "true")
+            self.assertEqual(pg.get_attribute(".erro-campo", "role"), "alert")             # o erro é anunciado
             pg.goto(f"{base}/?lista")
             pg.wait_for_selector("#lst .row b")
             self.assertIn("Seu preço: R$ 30,00", pg.inner_text("#lst"))
+            pg.evaluate("localStorage.setItem('lista_v1', JSON.stringify(['8535902775', 'B0ABCDEFGH']))")
+            pg.goto(f"{base}/?lista")                                                    # remover leva o foco à linha vizinha
+            pg.wait_for_selector("#lst [data-remover='8535902775']")
+            pg.focus("[data-remover='8535902775']")
+            pg.keyboard.press("Enter")
+            pg.wait_for_function("document.activeElement.dataset.remover === 'B0ABCDEFGH'")
+            pg.goto(f"{base}/?lista=,")                                                  # link de lista sem livros
+            pg.wait_for_selector(".vazio h1")
+            self.assertIn("Lista não encontrada", pg.inner_text("main"))
             b.close()
         self.assertEqual(erros, [])
 

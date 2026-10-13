@@ -34,6 +34,7 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 | `--med` | linha do preço mais comum | `#2f6b7a` | `#6fc3d2` |
 | `--capa` | linha do preço de capa | `#9a8e80` | `#85796a` |
 | `--ev` / `--evl` | faixa e nome das datas de promoção | violeta translúcido | violeta claro |
+| `--filete` | filete dourado da capa gerada (decorativo) | âmbar translúcido | âmbar translúcido |
 
 - `--wr` e `--med` ficam em tons frios de propósito: em âmbar ou laranja se confundiriam com a marca.
 - Verde e vermelho nunca aparecem sozinhos. Vêm sempre com texto ("12% abaixo do comum") ou seta (▼ ▲).
@@ -53,7 +54,8 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 - Escala 🔒: `--fs-1` 12 … `--fs-12` 40 px (12 degraus, só cresce). Não existe `font-size` em px fora dela, a não ser no título da capa gerada (9 px, proporcional à capa).
   - `h1` da tela: `--fs-12` no início e em "Como funciona", `--fs-11` no livro, `--fs-10` na lista e na busca.
   - No celular o `h1` desce 1 a 3 degraus.
-  - `h2` de seção: `--fs-8`.
+  - `h2` de seção: `--fs-8`. Exceção: o `h2` pequeno do cartão de promoção (`.prox`, 16 px) usa `--f`, porque a Cormorant não serve abaixo de 20 px.
+  - Toda tela tem um `h1`, que recebe o foco: na busca por texto ele é só para leitor de tela (`.vh`, "Busca: …"); erro, não encontrado e lista vazia usam `h1` no bloco `.vazio`.
 
 ## Forma
 - Raios 🔒: `--r0` 4 (capa), `--r1` 8 (controle pequeno), `--r2` 12 (botão, aviso), `--r3` 16 (cartão); `999px` para pílula e chip.
@@ -70,7 +72,7 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 | Peça | Classe | Estados |
 |---|---|---|
 | Botão | `.btn` (+ `.pri` âmbar, `.sm`, `.gh`, `.ico`) | hover (`@media(hover:hover)` 🔒), `:active` scale .98, `aria-pressed`, foco |
-| Chip de filtro | `.chip` | ligado = fundo `--ac`; hover; `:active` |
+| Chip de filtro | `.chip` | contorno `--ln3` (3:1, como os campos); ligado = fundo `--ac` com texto `--sf`; hover; `:active` |
 | Seletor de período | `.seg button` | ligado = fundo `--sf` com sombra |
 | Pílula de preço | `.pill` `.dn` `.up` `.wr` | só leitura |
 | Campo e select | `.busca input`, `.sel select`, `.faixa-preco input`, `.alvo-f input` | contorno `--ln3` 🔒, 16 px (o iPhone não amplia), hover escurece a borda 🔒, erro com `aria-invalid` (borda `--up`) e `.erro-campo` embaixo |
@@ -85,7 +87,9 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
   - O título que recebe foco numa troca de tela não mostra anel.
   - Link "Pular para o conteúdo" no começo.
   - Toda troca de tela leva o foco ao `h1` dela, menos enquanto se digita na busca.
-  - O controle recriado por `innerHTML` (chip, select, botão do preço-alvo) recebe o foco de volta.
+  - O controle recriado por `innerHTML` (chip, select, botão do preço-alvo) recebe o foco de volta. O que some recebe um substituto: ao remover um livro da lista, o foco vai ao remover da linha vizinha; em "Ver todos", ao primeiro livro que apareceu; em "Mostrar mais" (último), ao primeiro livro novo.
+  - O aviso rápido fechado tira o botão da ordem do Tab.
+  - O erro de campo é `role="alert"`, ligado ao campo por `aria-describedby`, com ids únicos por livro.
 - **Leitor de tela:** a contagem da busca é anunciada numa região viva escondida (`#cont-res`), com espera de 0,8 s.
 - **Alvos de toque:** ≥ 40 px em tela de toque (`pointer:coarse`); campos e botões ao lado deles, 44 px 🔒.
 - **Alto contraste:** `forced-colors` dá contorno aos estados ligados e ao botão principal.
