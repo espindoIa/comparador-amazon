@@ -429,6 +429,15 @@ class TestFolhaDeEstilo(unittest.TestCase):
             self.fail(f"regra de :hover fora de @media(hover:hover): {regra.strip()}")
         self.assertIn("@media(hover:hover){", self.css)
 
+    def test_anel_do_link_so_some_onde_o_anel_da_linha_funciona(self):
+        # sem :has, a regra da linha é descartada: se a que tira o anel do link valesse sozinha, o link ficaria sem foco visível
+        self.assertIn("@supports selector(:has(*)){div.row:has(.esticar:focus-visible){", self.css)
+        self.assertIn(".row .esticar:focus-visible{outline:none}}", self.css)
+
+    def test_hover_de_campo_escurece_a_borda_em_vez_de_clarear(self):
+        regra = re.search(r"\.sel select:hover[^{]*\{([^}]*)\}", self.css).group(1)
+        self.assertEqual(regra, "border-color:var(--mu)")                     # --mu2 era mais claro que --ln3 no claro e igual a ele no escuro
+
     def test_area_segura_e_cobertura_nao_se_misturam(self):
         # viewport-fit=cover sem env(safe-area-inset-*) deixa o conteúdo sob o entalhe; sem o cover, o navegador cuida
         self.assertEqual("viewport-fit=cover" in self.html, "safe-area-inset" in self.css)
