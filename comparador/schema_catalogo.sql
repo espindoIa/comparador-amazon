@@ -35,8 +35,18 @@ CREATE TABLE IF NOT EXISTS catalogo (
     imagem         TEXT,                        -- código da capa (m.media-amazon.com/images/I/<código>._AC_UY218_.jpg)
     publicado      TEXT,                        -- AAAA-MM-DD
     idioma         TEXT,                        -- "Português", quando a Amazon informa
-    obra           TEXT                         -- ASIN do card da busca: formatos do mesmo card = mesma obra
+    obra           TEXT,                        -- ASIN do card da busca: formatos do mesmo card = mesma obra
+    nota           INTEGER,                     -- média das avaliações em décimos (4,6 estrelas = 46), a mais recente
+    avaliacoes     INTEGER                      -- quantas avaliações, a contagem mais recente
 );
+
+-- Gêneros em que cada item já apareceu (o mesmo livro pode estar em mais de um). `catalogo.no`
+-- guarda só o primeiro nó em que o item foi visto, muitas vezes o ranking geral de Livros.
+CREATE TABLE IF NOT EXISTS generos (
+    asin TEXT NOT NULL,
+    no   TEXT NOT NULL,
+    PRIMARY KEY (asin, no)
+) WITHOUT ROWID;
 
 -- Histórico por intervalos: uma linha por "período com o mesmo preço". Só cresce
 -- quando o preço muda (ou depois de um buraco de observação), não a cada visita.

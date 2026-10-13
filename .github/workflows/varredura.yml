@@ -16,8 +16,10 @@
 #   que faltou (o progresso é salvo a cada página) ou terminam em segundos.
 # - Cada categoria roda num servidor separado (matrix), com IP diferente.
 # - O banco fica em assets da release "catalogo" (não no git): cada execução publica uma
-#   cópia nova com data no nome e só então apaga as antigas (mantém 14 por categoria).
+#   cópia nova com data no nome e só então apaga as antigas. Ficam as 14 mais recentes e a
+#   última de cada um dos 30 dias anteriores (scripts/podar_copias.py; ~10–20 MB cada).
 # - A primeira execução do dia falha (e o GitHub avisa por e-mail) se ONTEM ficou incompleto.
+# - Qualquer execução falha se os cards vierem sem capa ou autor (sinal de layout novo da Amazon).
 name: varredura
 
 on:
@@ -106,18 +108,17 @@ jobs:
             exit 0
           fi
           ANTES=""; [ -f "$RUNNER_TEMP/antes.db" ] && ANTES="$RUNNER_TEMP/antes.db"
-          python scripts/verificar_banco.py "$DB" $ANTES --tabela catalogo --tabela historico --tabela dias
+          python scripts/verificar_banco.py "$DB" $ANTES --tabela catalogo --tabela historico --tabela dias --tabela generos
           nome="catalogo-${ALVO}-$(date -u +%Y-%m-%d-%H%M).db.gz"
           gzip -c "$DB" > "$RUNNER_TEMP/$nome"
           gh release view catalogo >/dev/null 2>&1 || gh release create catalogo --latest=false \
             --title "Catálogo (dados da varredura)" \
             --notes "Bancos SQLite gerados pelo workflow varredura, um por categoria. Baixe o mais recente."
           gh release upload catalogo "$RUNNER_TEMP/$nome"
-          # Só depois do upload: apaga as cópias além das 14 mais recentes desta categoria
+          # Só depois do upload: apaga as cópias desta categoria que não precisam ficar
           # (e as de testes antigos, sem a categoria no nome).
-          gh release view catalogo --json assets --jq '.assets[].name' > "$RUNNER_TEMP/assets"
-          { grep -E "^catalogo-${ALVO}-[0-9-]+\.db\.gz$" "$RUNNER_TEMP/assets" | sort | head -n -14
-            grep -E '^catalogo-[0-9]{4}-[0-9-]+\.db\.gz$' "$RUNNER_TEMP/assets"; } \
+          gh release view catalogo --json assets --jq '.assets[].name' \
+            | python scripts/podar_copias.py --alvo "$ALVO" \
             | while read -r velho; do gh release delete-asset catalogo "$velho" --yes; done
 
       - name: Cobertura
@@ -127,7 +128,7 @@ jobs:
           [ -f "$DB" ] || exit 0
           EXIGIR=""; [ "$PRIMEIRA_DO_DIA" = "true" ] && EXIGIR="--exigir-ontem"
           if [ "$ALVO" = vendidos ]; then QUAL=(--vendidos); else QUAL=(--no "$ALVO"); fi
-          python -m comparador --db "$DB" catalogo "${QUAL[@]}" $EXIGIR | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m comparador --db "$DB" catalogo "${QUAL[@]}" $EXIGIR --exigir-detalhes | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Opcional: check no healthchecks.io (período 1 dia, tolerância 1 dia).
       - name: Avisa o healthchecks.io

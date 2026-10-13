@@ -12,6 +12,11 @@ on:
   schedule:
     - cron: "17 10 * * *"     # 07:17 em Brasília
   workflow_dispatch:
+    inputs:
+      forcar:
+        description: "Publicar mesmo se o site novo tiver bem menos livros que o atual"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -58,7 +63,19 @@ jobs:
       - name: Gera o site
         run: python -m comparador site "$RUNNER_TEMP"/bancos/*.db --saida site
 
-      - uses: actions/configure-pages@v5
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      # Um banco incompleto ou um erro na geração não pode trocar o site bom por um quase vazio.
+      - name: Confere se o site não encolheu
+        if: ${{ !inputs.forcar }}
+        run: |
+          if ! curl -fsS -m 30 --retry 2 -o "$RUNNER_TEMP/meta-atual.json" "${{ steps.pages.outputs.base_url }}/dados/meta.json"; then
+            echo "sem o meta.json do site no ar (primeira publicação?); seguindo"
+            rm -f "$RUNNER_TEMP/meta-atual.json"
+          fi
+          python scripts/conferir_site.py site/dados/meta.json "$RUNNER_TEMP/meta-atual.json"
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

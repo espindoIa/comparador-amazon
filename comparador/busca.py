@@ -54,6 +54,8 @@ class ItemBusca:
     publicado: str | None = None    # AAAA-MM-DD (a Amazon só mostra dia, mês e ano)
     idioma: str | None = None       # "Português", quando o card diz "Edição Português"
     obra: str | None = None         # ASIN do card: os formatos do mesmo card são a mesma obra
+    nota: int | None = None         # média das avaliações em décimos (4,6 de 5 estrelas = 46), do card
+    avaliacoes: int | None = None   # quantas avaliações o card tem ("1.801 classificações")
 
 
 @dataclass
@@ -104,15 +106,24 @@ _MESES = {m: i for i, m in enumerate(
     ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"), 1)}
 _DATA_RE = re.compile(r"^(\d{1,2}) (\w{3})\.? (\d{4})$")
 _IMAGEM_RE = re.compile(r"/images/I/([\w%+-]+?)\.")
+_NOTA_RE = re.compile(r"^(\d),(\d) de 5 estrelas")
+_AVALIACOES_RE = re.compile(r"^([\d.]+) classificaç(?:ão|ões)$")
 
 
 def _detalhes(card) -> dict:
-    """Autor, data, idioma e capa do card (a linha cinza sob o título: "Edição Português | por X | 5 ago. 2024")."""
+    """Autor, data, idioma, capa e avaliações do card (a linha cinza sob o título: "Edição Português | por X | 5 ago. 2024")."""
     out: dict = {}
     img = card.select_one("img.s-image")
     m = _IMAGEM_RE.search(img.get("src", "")) if img else None
     if m:
         out["imagem"] = m.group(1)
+    # Avaliações: "4,6 de 5 estrelas, detalhes da classificação" e "1.801 classificações" (aria-label).
+    for el in card.select("[aria-label]"):
+        rotulo = " ".join(el["aria-label"].split())
+        if "nota" not in out and (n := _NOTA_RE.match(rotulo)):
+            out["nota"] = int(n.group(1)) * 10 + int(n.group(2))
+        elif "avaliacoes" not in out and (n := _AVALIACOES_RE.match(rotulo)):
+            out["avaliacoes"] = int(n.group(1).replace(".", ""))
     h2 = card.select_one("h2")
     bloco = h2.find_parent(class_="s-title-instructions-style") if h2 else None
     linha = bloco.select_one(".a-row.a-color-secondary") if bloco else None

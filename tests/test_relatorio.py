@@ -74,6 +74,15 @@ class TestDados(unittest.TestCase):
             r = rodar("catalogo")                            # o workflow depende destes comandos
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("itens no catálogo", r.stdout)
+            self.assertEqual(rodar("catalogo", "--exigir-detalhes").returncode, 0)
+            c = sqlite3.connect(f"{d}/c.db")
+            c.execute("INSERT INTO execucoes (iniciada_em, observacao) VALUES ('2026-10-12T03:41:00+00:00', ?)",
+                      (f"dia completo; poucos itens com capa: {varredura.AVISO_LAYOUT}",))
+            c.commit()
+            c.close()
+            r = rodar("catalogo", "--exigir-detalhes")      # layout mudou: o workflow falha e avisa
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("poucos itens com capa", r.stderr)
 
 
 @unittest.skipUnless(NODE, "node não instalado")
