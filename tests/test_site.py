@@ -81,6 +81,51 @@ class TestSite(unittest.TestCase):
         self.assertEqual(len(h["B000000001"]["h"]), 1)           # os dois históricos viraram um trecho só
         self.assertEqual(len(json.loads((self.d / "out/dados/eventos.json").read_text())), 2)
 
+    def test_livro_que_muda_de_sequencia_de_coleta_mantem_o_historico_e_ganha_o_preco_novo(self):
+        # "vendidos" lia todos os gêneros; depois da divisão, "vendidos-b" lê o de X e o de Y e o antigo para de vê-los
+        banco(self.d / "vendidos.db", [("B000000001", "Livro X", "Capa comum", [("2026-10-01", "2026-10-05", 5000, None)]),
+                                       ("B000000002", "Livro Y", "Capa comum", [("2026-10-01", "2026-10-05", 4000, None)]),
+                                       ("B000000003", "Livro Z", "Capa comum", [("2026-10-01", "2026-10-12", 3000, None)])])
+        banco(self.d / "vendidos-b.db", [("B000000001", "Livro X", "Capa comum", [("2026-10-12", "2026-10-12", 5000, None)]),
+                                         ("B000000002", "Livro Y", "Capa comum", [("2026-10-12", "2026-10-12", 3500, None)])])
+        meta = site.construir([self.d / "vendidos.db", self.d / "vendidos-b.db"], self.d / "out", Path(RAIZ) / "eventos.csv")
+        self.assertEqual(meta["itens"], 3)
+        ed = edicoes(self.d / "out")
+        self.assertEqual(len(historico(self.d / "out", "B000000001")["h"]), 1)         # mesmo preço: um trecho só
+        self.assertEqual([t[2] for t in historico(self.d / "out", "B000000002")["h"]], [4000, 3500])
+        self.assertEqual([ed["B000000002"][1][2], ed["B000000002"][1][4]], [3500, 0])  # preço do banco que lê hoje
+        self.assertEqual(ed["B000000003"][1][4], 0)                                    # o que o banco antigo ainda lê
+
+    def test_detalhes_da_leitura_mais_nova_valem_em_qualquer_ordem_dos_bancos(self):
+        # o banco "velho" parou de ler o livro no dia 5; o "novo" o lê todo dia (e hoje veio sem capa e sem autor)
+        banco(self.d / "velho.db", [("B000000001", "Título velho", "Capa comum", [("2026-10-01", "2026-10-05", 5000, None)])])
+        banco(self.d / "novo.db", [("B000000001", "Título novo", "Capa comum", [("2026-10-12", "2026-10-12", 5000, None)])])
+        for nome, sql in (("velho", "UPDATE catalogo SET avaliacoes = 10, nota = 40, autor = 'Ana', imagem = 'img-velha'"),
+                          ("novo", "UPDATE catalogo SET avaliacoes = 500, nota = 45, autor = NULL, imagem = NULL")):
+            c = sqlite3.connect(self.d / f"{nome}.db")
+            c.execute(sql)
+            c.commit()
+            c.close()
+        for ordem in (("velho", "novo"), ("novo", "velho")):
+            saida = self.d / f"out-{ordem[0]}"
+            site.construir([self.d / f"{n}.db" for n in ordem], saida, Path(RAIZ) / "eventos.csv")
+            obra, _ = edicoes(saida)["B000000001"]
+            # título, nota e avaliações do mais novo; o que ele não trouxe (autor, capa) vem do mais velho
+            self.assertEqual((obra[0], obra[1], obra[2], obra[6], obra[7]), ("Título novo", "Ana", "img-velha", 45, 500), ordem)
+
+    def test_mesmo_livro_lido_por_duas_sequencias_em_dias_diferentes_tem_uma_queda_so(self):
+        # as duas leram R$ 50 até o dia 6; a sequência B viu o preço novo no dia 7 e a A só no dia 8
+        a = [("2026-10-01", "2026-10-06", 5000, None), ("2026-10-08", "2026-10-08", 4000, None)]
+        b = [("2026-10-01", "2026-10-06", 5000, None), ("2026-10-07", "2026-10-08", 4000, None)]
+        banco(self.d / "a.db", [("B000000001", "Livro Um", "Capa comum", a)])
+        banco(self.d / "b.db", [("B000000001", "Livro Um", "Capa comum", b)])
+        site.construir([self.d / "a.db", self.d / "b.db"], self.d / "out", Path(RAIZ) / "eventos.csv")
+        h = historico(self.d / "out", "B000000001")["h"]
+        self.assertEqual([t[2] for t in h], [5000, 4000])                        # uma mudança só
+        destaques = json.loads((self.d / "out/dados/destaques.json").read_text(encoding="utf-8"))
+        self.assertEqual([b[0] for b in destaques["baixa"]], ["B000000001"])     # e a queda aparece uma vez
+        self.assertEqual(edicoes(self.d / "out")["B000000001"][1][2], 4000)
+
     def test_detalhes_do_livro_vao_para_o_indice_e_o_historico(self):
         banco(self.d / "a.db", [("B000000001", "Livro Um", "Capa dura", [("2026-10-01", "2026-10-05", 5000, None)]),
                                 ("B000000002", "Livro Dois", "Kindle", [("2026-10-01", "2026-10-05", 900, None)])])

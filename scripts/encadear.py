@@ -2,8 +2,9 @@
 
 Uso: python scripts/encadear.py BANCO --desde INSTANTE_UTC [--encadeadas N]
 
-O GitHub atrasa as execuções agendadas em horas, e um dia de coleta leva mais de uma execução (~14 mil
-páginas, ~165 min cada). Encadear leva o dia até o fim em sequência, sem esperar. Sai com 0 e escreve
+O GitHub atrasa as execuções agendadas em horas, e um dia de coleta pode levar mais de uma execução
+(cada sequência de coleta lê ~4,4 mil páginas por passada; a execução tem 165 min). Encadear leva o dia até o fim
+em sequência, sem esperar. Cada sequência (banco) decide por conta própria. Sai com 0 e escreve
 "sim" se deve encadear; com 10 e escreve o motivo se não deve. Só encadeia se TUDO isto vale:
 - o dia (Brasília) ainda não está completo;
 - esta execução (a que começou depois de --desde) leu páginas de verdade e terminou limpa: 0 bloqueios, sem

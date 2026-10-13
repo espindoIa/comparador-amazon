@@ -58,6 +58,8 @@ FAIXAS_VENDIDOS = [(0, 1999), (2000, 2999), (3000, 3999), (4000, 4999), (5000, 5
 # esta quantidade ou até o limite de páginas acima.
 LIVROS_POR_FAIXA = 1000
 GRUPO_VENDIDOS = "vendidos"
+# Ranking geral de Livros. Não é mais lido por padrão: custava 675 páginas por passada (4,9%) para 565 livros (0,29% do
+# catálogo) que não estão em nenhum gênero. Continua aceito em --generos.
 NO_LIVROS = "6740748011"
 # Gêneros de Livros (subcategorias diretas), lidos da página da Amazon em out/2026.
 GENEROS = {
@@ -74,6 +76,19 @@ GENEROS = {
     "7874675011": "Religião e Espiritualidade", "7882388011": "Romance", "7882415011": "Saúde e Família",
     "7882554011": "Turismo e Guias de Viagem", "7882627011": "Livros Internacionais",
     "7841279011": "Jovens e Adolescentes",
+}
+# Os 29 gêneros divididos em três sequências de coleta, uma por servidor do GitHub (job da matrix de varredura.yml).
+# O nome é o do alvo: cada sequência tem o seu banco (catalogo-<nome>-<data>.db.gz) e o site junta os três pelo ASIN.
+# Divisão pelas páginas de uma passada completa (banco de 13/10/2026, passada completa: 13.795 páginas, 675 delas no
+# ranking geral): 4.387, 4.395 e 4.338 para as três sequências, cada uma com um terço da passada.
+# Os nomes terminam em letra: um sufixo numérico casaria com o padrão de nomes dos outros alvos nos scripts da release.
+PARTICOES_VENDIDOS = {
+    "vendidos": ("7872854011", "7841296011", "7841731011", "7843925011", "7842837011",
+                 "12764254011", "7842741011", "7843068011", "7843064011", "7882627011"),
+    "vendidos-b": ("7841795011", "7842641011", "7872552011", "7842710011", "7872687011",
+                   "7874461011", "7882388011", "7882415011", "7882554011", "7841279011"),
+    "vendidos-c": ("7841521011", "7841720011", "7874340011", "7843058011", "7841775011",
+                   "7844001011", "7872829011", "7873971011", "7874675011"),
 }
 PRECO_MAXIMO = SEM_TETO       # centavos: teto da última fatia
 FAIXAS_INICIAIS = [0, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 6000, 8000,
@@ -167,22 +182,30 @@ def faixas_de_precos(bordas_em_reais) -> list[tuple[int, int]]:
     return [(x, y - 1) for x, y in zip(b, b[1:])] + [(b[-1], SEM_TETO)]
 
 
-def nos_vendidos(generos: str | None = None) -> list[str]:
-    """Nós lidos na varredura dos mais vendidos: o ranking geral e todos os gêneros, ou só os de `generos`
-    (códigos separados por vírgula)."""
-    todos = [NO_LIVROS, *GENEROS]
+def nos_vendidos(generos: str | None = None, particao: str | None = None) -> list[str]:
+    """Nós lidos na varredura dos mais vendidos: os 29 gêneros (sem o ranking geral de Livros), só os de uma
+    `particao` (ver PARTICOES_VENDIDOS) ou só os de `generos` (códigos separados por vírgula; aqui o ranking
+    geral ainda pode ser pedido)."""
+    if generos and particao:
+        raise ValueError("use só uma das opções: gêneros ou partição")
+    if particao:
+        if particao not in PARTICOES_VENDIDOS:
+            raise ValueError(f"partição desconhecida: {particao}")
+        return list(PARTICOES_VENDIDOS[particao])
     if not generos:
-        return todos
+        return list(GENEROS)
     pedidos = [g.strip() for g in generos.split(",") if g.strip()]
-    desconhecidos = [g for g in pedidos if g not in todos]
+    desconhecidos = [g for g in pedidos if g != NO_LIVROS and g not in GENEROS]
     if desconhecidos:
         raise ValueError(f"gênero desconhecido: {', '.join(desconhecidos)}")
     return pedidos
 
 
 def semear_vendidos(conn: sqlite3.Connection, nos, faixas=None) -> None:
-    """Uma fatia "mais vendidos" por categoria e faixa de `faixas` (padrão FAIXAS_VENDIDOS); acrescenta
-    as que faltarem e desativa as de faixas que não estão mais na lista (o histórico fica)."""
+    """Uma fatia "mais vendidos" por categoria de `nos` e faixa de `faixas` (padrão FAIXAS_VENDIDOS);
+    acrescenta as que faltarem e deixa ativas só as desses nós e dessas faixas (o histórico e as fatias
+    desativadas ficam no banco: se um nó voltar à lista, a fatia dele volta a valer)."""
+    nos = list(nos)
     faixas = list(faixas or FAIXAS_VENDIDOS)
     agora = db.agora()
     conn.executemany(
@@ -192,8 +215,9 @@ def semear_vendidos(conn: sqlite3.Connection, nos, faixas=None) -> None:
     )
     atual = "(" + " OR ".join(["(preco_min = ? AND preco_max = ?)"] * len(faixas)) + ")"
     valores = [v for f in faixas for v in f]
-    conn.execute(f"UPDATE fatias SET ativa = {atual} WHERE grupo = ? AND ordem = 'vendidos'",
-                 (*valores, GRUPO_VENDIDOS))
+    conn.execute(f"UPDATE fatias SET ativa = {atual} AND no IN ({', '.join('?' * len(nos))}) "
+                 "WHERE grupo = ? AND ordem = 'vendidos'",
+                 (*valores, *nos, GRUPO_VENDIDOS))
     conn.commit()
 
 
@@ -538,11 +562,13 @@ def ler_config(conn: sqlite3.Connection) -> dict:
     return {r[0]: r[1] for r in conn.execute("SELECT chave, valor FROM config")}
 
 
-def aprender_ritmo(conn: sqlite3.Connection, r: Ritmo, teto_inicial: float, execucao) -> dict:
+def aprender_ritmo(conn: sqlite3.Connection, r: Ritmo, teto_inicial: float, execucao,
+                   maximo: float | None = None) -> dict:
     """Guarda no banco o teto e o último ritmo limpo para a próxima execução (ver ritmo.aprender)."""
     from . import ritmo as modulo_ritmo
     novo = modulo_ritmo.aprender(ler_config(conn), db.hoje_brasil().isoformat(), r, teto_inicial,
-                                 execucao["paginas"], execucao["bloqueios"], execucao["erros"] + execucao["curtas"])
+                                 execucao["paginas"], execucao["bloqueios"], execucao["erros"] + execucao["curtas"],
+                                 **({"maximo": maximo} if maximo is not None else {}))
     for chave, valor in novo.items():
         conn.execute("INSERT INTO config (chave, valor) VALUES (?, ?) "
                      "ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor", (chave, valor))

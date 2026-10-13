@@ -1,5 +1,6 @@
 # Publica o site (busca por título, histórico de cada livro e lista de desejos) no GitHub Pages.
-# Os dados vêm dos bancos mais recentes na release "catalogo". Roda depois de cada varredura e
+# Os dados vêm dos bancos mais recentes na release "catalogo": um por sequência de coleta (vendidos,
+# vendidos-b e vendidos-c), que o site junta pelo ASIN. Roda depois de cada varredura e
 # uma vez por dia, para o site nunca ficar muito atrás dos preços.
 #
 # Configuração, uma vez só: Settings → Pages → Build and deployment → Source: "GitHub Actions".
@@ -50,7 +51,7 @@ jobs:
       - name: Baixa os bancos mais recentes (release catalogo)
         run: |
           mkdir -p "$RUNNER_TEMP/bancos"
-          for alvo in vendidos; do
+          for alvo in vendidos vendidos-b vendidos-c; do
             python scripts/catalogo_release.py baixar "$alvo" "$RUNNER_TEMP/bancos/$alvo.db"
           done
           ls "$RUNNER_TEMP"/bancos/*.db > /dev/null   # falha se nenhum banco foi baixado

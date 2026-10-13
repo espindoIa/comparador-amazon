@@ -101,8 +101,8 @@ class Ritmo:
 # ---------- teto que se ajusta de um dia para o outro ----------
 # O teto não é fixo: fica guardado no banco (tabela config, que viaja na release) e sobe 25% por dia em que a
 # coleta rodou limpa no teto, até PPM_TETO_AUTO_MAX. Depois de um bloqueio (ou de falha repetida) cai para o
-# que o freio da execução deixou e fica parado por DIAS_DE_ESPERA dias. Assim cada dia de coleta (~14 mil
-# páginas) é a evidência para o próximo passo, e quem roda pode baixar o teto com `--ritmo-max`.
+# que o freio da execução deixou e fica parado por DIAS_DE_ESPERA dias. Assim cada dia de coleta (~4,4 mil
+# páginas por sequência) é a evidência para o próximo passo, e quem roda pode baixar o teto com `--ritmo-max`.
 PASSO_TETO = 1.25
 DIAS_DE_ESPERA = 3
 PAGINAS_MIN_EVIDENCIA = 2000     # páginas lidas na execução para ela valer como evidência de subida
@@ -110,21 +110,24 @@ FALHAS_LEVES_POR_MIL = 0.5       # erros + páginas curtas por mil páginas acei
 AO_RETOMAR = 0.8                 # a execução seguinte começa a 80% do último ritmo limpo (e sobe de novo)
 
 
-def ritmo_guardado(config: dict, padrao_teto: float, base: float = PPM_BASE) -> tuple[float, float]:
-    """(ritmo inicial, teto) para uma execução, a partir de `config` (chave -> texto)."""
+def ritmo_guardado(config: dict, padrao_teto: float, base: float = PPM_BASE,
+                   maximo: float = PPM_TETO_AUTO_MAX) -> tuple[float, float]:
+    """(ritmo inicial, teto) para uma execução, a partir de `config` (chave -> texto). O teto guardado nunca
+    passa de `maximo`: quem baixa o limite (várias sequências em paralelo) vale mesmo sobre um teto já guardado."""
     def num(k, d):
         try:
             return float(config[k])
         except (KeyError, ValueError):
             return d
-    teto = min(PPM_MAXIMO, max(PPM_RECUO, num("ritmo_teto", padrao_teto)))
+    teto = min(PPM_MAXIMO, maximo, max(PPM_RECUO, num("ritmo_teto", padrao_teto)))
     inicio = num("ritmo_ultimo_limpo", 0.0) * AO_RETOMAR
     return min(teto, max(base, inicio)), teto
 
 
 def aprender(config: dict, hoje: str, ritmo: "Ritmo", teto_inicial: float, paginas: int, bloqueios: int,
-             leves: int) -> dict:
-    """Novos valores de config depois de uma execução. `hoje` = AAAA-MM-DD (Brasília). Só devolve o que mudou."""
+             leves: int, maximo: float = PPM_TETO_AUTO_MAX) -> dict:
+    """Novos valores de config depois de uma execução. `hoje` = AAAA-MM-DD (Brasília). Só devolve o que mudou.
+    O teto sobe sozinho até `maximo`, no máximo."""
     novo: dict = {}
     if ritmo.teto < teto_inicial - 1e-9 or bloqueios:
         novo["ritmo_teto"] = f"{max(PPM_RECUO, min(ritmo.teto, teto_inicial)):.1f}"
@@ -136,8 +139,8 @@ def aprender(config: dict, hoje: str, ritmo: "Ritmo", teto_inicial: float, pagin
         novo["ritmo_ultimo_limpo"] = f"{ritmo.ppm:.1f}"
     no_teto = ritmo.ppm >= 0.95 * ritmo.teto
     esperando = config.get("ritmo_espera_ate", "") > hoje
-    if limpa and no_teto and not esperando and config.get("ritmo_subiu_em", "") < hoje and ritmo.teto < PPM_TETO_AUTO_MAX:
-        novo["ritmo_teto"] = f"{min(PPM_TETO_AUTO_MAX, ritmo.teto * PASSO_TETO):.1f}"
+    if limpa and no_teto and not esperando and config.get("ritmo_subiu_em", "") < hoje and ritmo.teto < maximo:
+        novo["ritmo_teto"] = f"{min(maximo, ritmo.teto * PASSO_TETO):.1f}"
         novo["ritmo_subiu_em"] = hoje
     return novo
 

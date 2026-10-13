@@ -19,7 +19,7 @@ def main() -> None:
                    help="nó da categoria (padrão: %(default)s = HQs, Mangás e Graphic Novels)")
     v.add_argument("--vendidos", action="store_true",
                    help="em vez da categoria --no, os ~2.000 livros mais vendidos (com preço) de cada "
-                        "gênero de Livros e do ranking geral, em 9 faixas de preço (estimativa: ~12 mil páginas por dia)")
+                        "um dos 29 gêneros de Livros, em 9 faixas de preço (~13 mil páginas por passada)")
     v.add_argument("--minutos", type=float, default=150, help="orçamento de tempo (padrão: %(default)s)")
     v.add_argument("--max-paginas", type=int, help="para depois de N requisições (para testes)")
     v.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto")
@@ -30,10 +30,18 @@ def main() -> None:
                    help="teto de páginas por minuto programadas (o real fica ~10-20%% abaixo): o ritmo sobe aos "
                         "poucos até ele enquanto não há falha e recua nas falhas. Sem esta opção, o teto é o que "
                         f"está guardado no banco (começa em {ritmo.PPM_TETO_PADRAO:g}) e sobe 25%% por dia "
-                        f"limpo até {ritmo.PPM_TETO_AUTO_MAX:g}; com ela, o valor é fixo e nada é aprendido")
+                        f"limpo até {ritmo.PPM_TETO_AUTO_MAX:g} (ou até --teto-auto-max); com ela, o valor é fixo e nada é aprendido")
+    v.add_argument("--teto-auto-max", type=float, default=ritmo.PPM_TETO_AUTO_MAX,
+                   help="até onde o teto guardado no banco pode subir sozinho (padrão: %(default)g). Vale também sobre um "
+                        "teto já guardado acima dele. Com várias sequências em paralelo, é o limite de cada uma; "
+                        "só vale sem --ritmo-max")
     v.add_argument("--faixas", help="com --vendidos: bordas das faixas de preço em reais, ex.: 0,20,30,40,50,60,80,120,200 "
                                     "(padrão: " + ",".join(f"{a / 100:g}" for a, _ in varredura.FAIXAS_VENDIDOS) + ")")
-    v.add_argument("--generos", help="com --vendidos: só estes nós, separados por vírgula (padrão: o ranking geral e os 29 gêneros)")
+    v.add_argument("--generos", help="com --vendidos: só estes nós, separados por vírgula (padrão: os 29 gêneros; "
+                                     "o ranking geral de Livros, 6740748011, só se for pedido aqui)")
+    v.add_argument("--particao", choices=list(varredura.PARTICOES_VENDIDOS),
+                   help="com --vendidos: só os gêneros desta sequência de coleta (uma por servidor em varredura.yml; "
+                        "ver PARTICOES_VENDIDOS)")
     v.add_argument("--subir-a-cada", type=int, default=ritmo.A_CADA,
                    help="páginas boas seguidas para cada subida de 25%% do ritmo (padrão: %(default)s)")
     v.add_argument("--parar-na-falha", action="store_true",
@@ -88,13 +96,13 @@ def main() -> None:
         print(f"gráfico em {saida}")
     elif args.cmd == "varrer":
         try:
-            vendidos = varredura.nos_vendidos(args.generos) if args.vendidos else None
+            vendidos = varredura.nos_vendidos(args.generos, args.particao) if args.vendidos else None
             faixas = varredura.faixas_de_precos(args.faixas.split(",")) if args.faixas else None
         except ValueError as e:
             raise SystemExit(f"opção inválida: {e}")
         auto = args.ritmo_max is None
         config = varredura.ler_config(conn)
-        inicio, teto = ritmo.ritmo_guardado(config, ritmo.PPM_TETO_PADRAO) if auto else (args.ritmo or ritmo.PPM_BASE, args.ritmo_max)
+        inicio, teto = ritmo.ritmo_guardado(config, ritmo.PPM_TETO_PADRAO, maximo=args.teto_auto_max) if auto else (args.ritmo or ritmo.PPM_BASE, args.ritmo_max)
         if args.ritmo is not None:
             inicio = args.ritmo
         r = ritmo.Ritmo(inicio, teto, a_cada=args.subir_a_cada)
@@ -112,7 +120,7 @@ def main() -> None:
             return
         e = conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
         if auto and not args.parar_na_falha and args.max_paginas is None:
-            mudou = varredura.aprender_ritmo(conn, r, teto, e)
+            mudou = varredura.aprender_ritmo(conn, r, teto, e, args.teto_auto_max)
             if "ritmo_teto" in mudou:
                 print(f"ritmo: teto guardado no banco passa de {teto:.0f} para {float(mudou['ritmo_teto']):.0f}")
         print(f"execução {eid}: {e['paginas']} páginas, {e['itens']} preços, {e['bloqueios']} bloqueios, "
