@@ -205,7 +205,7 @@
     if (acao) t.querySelector('button').onclick = function () { fecharToast(); fn(); };
     desfazer = acao === 'Desfazer' ? fn : null;
     // atalho visível onde há teclado (ponteiro com hover); o leitor de tela ouve a dica junto
-    if (desfazer) t.querySelector('span').insertAdjacentHTML('beforeend', matchMedia('(hover:hover)').matches ? ' <kbd class="atalho">' + ATALHO + '</kbd>' : '<span class="vh">. ' + ATALHO + ' desfaz.</span>');
+    if (desfazer) t.querySelector('span').insertAdjacentHTML('beforeend', matchMedia('(hover:hover)').matches ? ' <kbd class="atalho">' + ATALHO + '</kbd><span class="vh"> desfaz</span>' : '<span class="vh">. ' + ATALHO + ' desfaz.</span>');
     t.classList.add('on'); msToast = acao ? 10000 : 5000; contarToast();
   }
   (function () {
@@ -475,9 +475,9 @@
       S.q = q.value; aplicarBusca(true);
     }, 150);
   });
-  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = VAZIO(); S.q = q.value; focar = true; aplicarBusca();
+  q.form.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(tBusca); if (rotaAtual.v !== 'busca') S = VAZIO(); var antes = rotaAtual; S.q = q.value; focar = true; aplicarBusca();
     if (rotaAtual.v === 'busca') { if (idx) focarTela(); }       // sem o índice, a busca foca ao desenhar os resultados
-    else if (urlBusca() === './') focar = false;                  // campo vazio fora da busca: nada muda de tela
+    else if (rotaAtual === antes) focar = false;                  // campo vazio fora da busca: nada muda de tela
   });
   q.addEventListener('keydown', function (e) { if (e.key === 'Escape') { q.value = ''; q.dispatchEvent(new Event('input')); } });
   $('#limpa').addEventListener('click', function () { q.value = ''; q.focus(); q.dispatchEvent(new Event('input')); });
