@@ -87,3 +87,8 @@ As mensagens de domínio são, em geral, boas: dizem o que houve e o que fazer (
 - Keyboard Experience: PASS (CLI sem interação; sem atalhos a avaliar)
 - Discoverability: CONCERNS (`--help` do `varrer` sem grupos nem exemplos)
 - Workflow Integration: CONCERNS (sem `--dry-run`, sem `--json`, saída posicional)
+
+## Atualização: o que foi corrigido (PRs #30 e seguintes)
+
+- **C1, C2 e C3** foram corrigidos no PR #30.
+- **Sobre o C3:** a evidência contra o curl não vem do README, que só cita o `requests` ("captcha ou erro 503"), e sim do docstring de `comparador/cliente_http.py` (503 em todas as tentativas de paginação da lista). Por isso a correção feita foi mais ampla que a sugerida na tabela: o `--cliente auto` não cai nem no curl nem no `requests`; os dois só valem pedidos explicitamente.

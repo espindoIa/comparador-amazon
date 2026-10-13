@@ -40,7 +40,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .db import dia_brasil
+from .db import abrir_leitura, dia_brasil
 from .relatorio import BURACO, WEB, aviso, ler_eventos
 from .varredura import GENEROS
 
@@ -250,7 +250,7 @@ AUTORES_GENERICOS = frozenset({"", "nao informado", "varios autores", "diversos"
 def ultima_leitura(caminho: Path) -> str | None:
     """Instante (ISO) da leitura mais recente do banco. O site mostra a mais antiga entre os bancos: todos os grupos
     de gêneros foram lidos pelo menos até ali."""
-    conn = sqlite3.connect(f"file:{caminho}?mode=ro", uri=True)
+    conn = abrir_leitura(caminho, "catálogo")
     try:
         return conn.execute("SELECT MAX(ultimo_visto) FROM catalogo").fetchone()[0]
     finally:
@@ -259,7 +259,7 @@ def ultima_leitura(caminho: Path) -> str | None:
 
 def ler_banco(caminho: Path, livros: dict[str, dict]) -> str:
     """Soma os livros de um banco em `livros`. Devolve o aviso do banco (vazio se não houver)."""
-    conn = sqlite3.connect(f"file:{caminho}?mode=ro", uri=True)
+    conn = abrir_leitura(caminho, "catálogo")
     conn.row_factory = sqlite3.Row
     try:
         corte = corte_amazon(conn)

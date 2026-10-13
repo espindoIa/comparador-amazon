@@ -35,11 +35,18 @@ O site mostra números, não recomendações: não diz se um preço é bom.
 
 ```bash
 pip install -r requirements.txt          # o Playwright usa o Chrome ou o Edge que você já tem
-python -m comparador --db data/vendidos.db varrer --vendidos --minutos 20
-python -m comparador --db data/vendidos.db catalogo --vendidos
+python -m comparador varrer --dry-run    # confere as opções e mostra o plano, sem pedir nada à Amazon
+python -m comparador varrer --minutos 20 # os mais vendidos de cada gênero, em data/vendidos.db
+python -m comparador catalogo            # progresso de hoje e frescor
 python -m comparador site data/vendidos.db --saida site
 cd site && python -m http.server 8000    # http://localhost:8000
 ```
+
+O banco padrão é `data/vendidos.db`, e `--db` vale antes ou depois do comando. Sem opções, `varrer` e `catalogo` tratam os
+mais vendidos dos gêneros (`--vendidos`, que continua aceito, é o padrão); `--no NÓ` lê uma categoria só, por exemplo
+`--no 7842710011 --db data/catalogo.db` para as HQs e o banco antigo. `catalogo --json` escreve o resultado em JSON.
+`catalogo`, `grafico` e `site` só leem: com um banco que não existe, param dizendo qual. O HTML bruto das páginas com
+problema vai para a pasta `html/` ao lado do banco (`--pasta-html` muda).
 
 Sem Chrome nem Edge: `python -m playwright install chromium`, ou aponte `COMPARADOR_NAVEGADOR`
 para o executável de outro navegador.
@@ -190,7 +197,7 @@ lista em `comparador/web/lista.js`. Os três têm testes que rodam no Node.
 ## Outros comandos
 
 ```bash
-python -m comparador --db data/vendidos.db grafico "título ou ASIN"   # página avulsa com o histórico
+python -m comparador grafico "título ou ASIN"                       # página avulsa com o histórico
 python scripts/simular_precos.py data/vendidos.db data/simulado.db    # preços inventados até a Black Friday
 ```
 
