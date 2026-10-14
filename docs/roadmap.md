@@ -90,8 +90,10 @@ O app dá números, não conselhos: quem decide se o preço é bom é a pessoa.
   já estão em "Mais de …"); no início, os parecidos com os da lista e os vistos recentemente, cada
   cartão dizendo de qual veio ("como *O Hobbit*"). Ajuda a achar outros livros para acompanhar.
   - A lista de cada livro é calculada quando o site é gerado (`comparador/parecidos.py`, em
-    `dados/p/`): gêneros em comum (os raros pesam mais), mesmo idioma e, só para desempatar, o
-    número de avaliações. A página do livro não baixa o índice da busca, e o mesmo livro mostra a
+    `dados/p/`): gêneros em comum (os raros pesam mais), palavras de assunto do título em comum
+    (só as de não ficção: "python", "investimento"; nomes de personagem como "príncipe" não contam),
+    mesmo idioma e, só para desempatar, o número de avaliações. A mesma obra em outra edição, ou com
+    o autor escrito de outro jeito ("Rowling J.K"), não conta como parecida. A página do livro não baixa o índice da busca, e o mesmo livro mostra a
     mesma lista em qualquer caminho.
   - No início, o navegador junta as listas prontas dos livros de partida (`recomenda.js`); nada da
     lista sai do aparelho.

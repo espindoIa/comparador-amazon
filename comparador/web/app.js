@@ -330,7 +330,7 @@
   // conta de fragmento_p em site.py: a de fragmento, com 1024 arquivos.
   function fragmentoP(asin) { var h = 0; for (var i = 0; i < asin.length; i++) h = (h * 31 + asin.charCodeAt(i)) % 1024; return ('00' + h.toString(16)).slice(-3); }
   var cacheP = {};
-  // {asin, lista: [cartão], titulo, obra} do livro, ou null se ele não tem parecidos
+  // {asin, lista: [cartão], titulo, obra, grupo} do livro, ou null se ele não tem parecidos
   function parecidosDe(asin) {
     var k = fragmentoP(asin);
     if (!cacheP[k]) {
@@ -339,7 +339,7 @@
     }
     return cacheP[k].then(function (f) {
       var e = f && f.p[asin];
-      return e ? { asin: asin, lista: f.l[e[0]].map(function (i) { return f.c[i]; }), titulo: e[1], obra: e[2] || asin } : null;
+      return e ? { asin: asin, lista: f.l[e[0]].map(function (i) { return f.c[i]; }), titulo: e[1], obra: e[2] || asin, grupo: e[3] } : null;
     });
   }
   // itens: [{c: cartão, como: título do livro de partida}]; cartão: [asin, título, capa, formato, preço, autor]
@@ -367,7 +367,7 @@
     var partida = ordem.map(function (a, i) { return { a: a, w: peso[a], i: i }; })
       .sort(function (x, y) { return y.w - x.w || x.i - y.i; }).slice(0, MAX_PARTIDA);
     Promise.all(partida.map(function (s) {
-      return parecidosDe(s.a).then(function (e) { return e && { asin: e.asin, obra: e.obra, titulo: e.titulo, peso: s.w, lista: e.lista }; },
+      return parecidosDe(s.a).then(function (e) { return e && { asin: e.asin, obra: e.obra, grupo: e.grupo, titulo: e.titulo, peso: s.w, lista: e.lista }; },
         function () { return null; });
     })).then(function (es) { if (aindaEm(r)) estanteParecidos('Parecidos com os seus livros', Recomenda.juntar(es.filter(Boolean), { fora: salvos })); });
   }
@@ -759,7 +759,7 @@
         '<dt>Menor preço registrado</dt><dd>O menor preço desde o início da coleta, quando o livro tem ' + L.MIN_COMUM + ' dias de coleta ou mais.</dd>' +
         '<dt>Baixaram de preço</dt><dd>Queda de 5% ou mais nas duas últimas coletas.</dd>' +
         '<dt>Preço-alvo</dt><dd>O preço que você quer pagar. Fica só neste aparelho; o site não manda avisos.</dd>' +
-        '<dt>Parecidos</dt><dd>Livros de outros autores com gênero e idioma em comum. A lista de cada livro é calculada quando o site é gerado; no início, o seu navegador junta as listas dos livros da sua lista e dos que você viu ("como …" diz de qual veio). Nada sai do aparelho.</dd>' +
+        '<dt>Parecidos</dt><dd>Livros de outros autores com gênero e idioma em comum e, em livros de não ficção, palavras do título em comum ("python", "investimentos"). A lista de cada livro é calculada quando o site é gerado; no início, o seu navegador junta as listas dos livros da sua lista e dos que você viu ("como …" diz de qual veio). Nada sai do aparelho.</dd>' +
         '<dt>Datas de promoção</dt><dd>O preço no dia, comparado com o dos 90 dias anteriores.</dd></dl>' +
         '<h2>Limites</h2><ul><li>Só entram os ~2.000 mais vendidos de cada categoria, vendidos pela própria Amazon.</li>' +
         '<li>Dias sem coleta ficam em branco no gráfico.</li><li>O preço pode mudar a qualquer momento. Confira na loja.</li></ul>' +
