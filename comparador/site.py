@@ -35,8 +35,8 @@ Dados gerados em `dados/` (textos vazios "" e números 0 = não informado; dias 
                  para não repetir um livro. O grupo é um número, o mesmo em todos os arquivos, para as edições do mesmo livro
                  (mesmo autor e mesmo começo de título, ver parecidos.chave_titulo): o início junta listas de livros diferentes
                  e mostra cada grupo uma vez, fora os grupos dos livros de partida. O 5º item, só quando há snapshot de
-                 subgêneros (`--subgeneros`) e o livro está em algum, traz até MAX_SUBGENEROS nomes deles (aqueles em que ele
-                 está mais alto na lista de mais vendidos do subgênero),
+                 subgêneros (`--subgeneros`) e o livro está em algum, traz até MAX_SUBGENEROS nomes deles (os que mais itens da
+                 lista dividem com ele),
                  que a página do livro mostra ao lado do título da estante.
 - `meta.json`    data da última coleta, totais e aviso (bancos simulados); com o snapshot dos subgêneros (`--subgeneros`, ver
                  subgeneros.py), também "subgeneros": {gerado_em, folhas, k}
@@ -45,6 +45,7 @@ Dados gerados em `dados/` (textos vazios "" e números 0 = não informado; dias 
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import math
@@ -85,7 +86,7 @@ MAX_TITULO_MINI = 80   # título nas estantes da página do livro (o cartão mos
 MAX_AUTOR_MINI = 40    # autor no cartão dos parecidos (uma linha)
 MAX_TITULO_CURTO = 40  # título do livro de partida no motivo "como <título>" do início
 MAX_PARECIDOS = 10
-MAX_SUBGENEROS = 3     # subgêneros do livro de partida mostrados na página do livro (aqueles em que ele está mais alto na lista)
+MAX_SUBGENEROS = 3     # subgêneros do livro de partida mostrados na página do livro (os que a lista dele mais divide com ele)
 FRAG_P = 1024          # arquivos de parecidos (com 256, cada um passaria de 300 KB compactado)
 
 # formatos que aparecem nas listas de livros da Amazon mas não são livros: ficam fora da busca
@@ -445,8 +446,11 @@ def _parecidos(obras: list[dict], livros: dict[str, dict], obra_de: dict[str, in
     n_base = len(t["gen"].lista())
     por_obra, por_asin, pesos, nomes = _genes_de_subgenero(sub, obra_de, len(obras), n_base)
 
-    def subs(altura: dict[int, float]) -> list[str]:     # os MAX_SUBGENEROS em que o livro está mais alto na lista (o que mais diz dele)
-        return [nomes[g] for g in sorted(altura, key=lambda g: (altura[g], -pesos[g], g))[:MAX_SUBGENEROS]]
+    def subs(altura: dict[int, float], lista: list[int]) -> list[str]:
+        """Até MAX_SUBGENEROS dos subgêneros do livro de partida: os que mais itens da lista dele dividem com ele (é por eles
+        que a lista é o que é), e, no empate, aquele em que ele está mais alto na lista do subgênero e, depois, o mais raro."""
+        com = collections.Counter(g for j in lista for g in por_obra.get(j, ()) if g in altura)
+        return [nomes[g] for g in sorted(altura, key=lambda g: (-com[g], altura[g], -pesos[g], g))[:MAX_SUBGENEROS]]
     genes = lambda i, base: tuple(sorted({*base, *por_obra.get(i, ())}))        # noqa: E731
     pobras = [parecidos.Obra(i, o["titulo"], o["autor"], genes(i, o["linha"][5]), o["idioma"], o["pop"], bases[i]) for i, o in enumerate(obras)]
     sementes = [parecidos.Semente(genes(i, o["linha"][5]), o["idioma"], o["autor"], i, frozenset(outras.get(i, []) + autor.get(i, [])),
@@ -497,11 +501,11 @@ def _parecidos(obras: list[dict], livros: dict[str, dict], obra_de: dict[str, in
         if listas[i]:
             curto, g = titulo_curto(o["titulo"]), grupo(o["autor"], o["titulo"], bases[i])
             for a in o["eds"]:
-                gravar(a, listas[i], curto, o["eds"][0], g, subs(por_obra.get(i, {})))
+                gravar(a, listas[i], curto, o["eds"][0], g, subs(por_obra.get(i, {}), listas[i]))
     for a, lista in zip(fora, listas[len(obras):]):
         if lista:
             t_a = livros[a]["t"] or a
-            gravar(a, lista, titulo_curto(t_a), a, grupo(livros[a].get("autor") or "", t_a, titulo_base(t_a)), subs(por_asin.get(a, {})))
+            gravar(a, lista, titulo_curto(t_a), a, grupo(livros[a].get("autor") or "", t_a, titulo_base(t_a)), subs(por_asin.get(a, {}), lista))
     return {k: {"c": v["c"], "l": v["l"], "p": v["p"]} for k, v in arquivos.items()}
 
 

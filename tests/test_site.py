@@ -372,7 +372,8 @@ class TestSite(unittest.TestCase):
             {"no": "102", "nome": "Cozy", "total": 5, "exato": True, "asins": ["B000000001"]}]}), encoding="utf-8")
         self.assertEqual(lista_da_semente(snap, "out2")[0], "B000000004")        # o subgênero em comum vem na frente
         entrada = lambda pasta, asin: json.loads((self.d / f"{pasta}/dados/p/{site.fragmento_p(asin)}.json").read_text())["p"][asin]   # noqa: E731
-        self.assertEqual(entrada("out2", "B000000001")[4], ["Cozy", "Épica"])   # a semente diz seus subgêneros (mais alto na lista primeiro)
+        # a semente diz seus subgêneros, primeiro o que mais itens da lista dela dividem com ela (Épica: o B4; Cozy: nenhum)
+        self.assertEqual(entrada("out2", "B000000001")[4], ["Épica", "Cozy"])
         self.assertEqual(len(entrada("out2", "B000000002")), 4)                  # quem não tem subgênero fica com os 4 itens de sempre
         self.assertEqual(len(entrada("out", "B000000001")), 4)                   # e sem snapshot nada muda
         meta = json.loads((self.d / "out2/dados/meta.json").read_text())
@@ -904,7 +905,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.on("pageerror", lambda e: erros.append(str(e)))
             pg.goto(f"{base}/?livro=A000000001")
             pg.wait_for_selector("#parecidos .cartao")
-            self.assertEqual(pg.inner_text("#parecidos .sec-h .nota"), "Cozy · Épica")          # em que lista ele está mais alto, primeiro
+            self.assertEqual(pg.inner_text("#parecidos .sec-h .nota"), "Épica · Cozy")          # a que a lista dele mais deve, primeiro
             pg.goto(f"{base}/?livro=A000000003")                                                 # sem subgênero: nada ao lado do título
             pg.wait_for_selector("#parecidos .cartao")
             self.assertEqual(pg.locator("#parecidos .sec-h .nota").count(), 0)
