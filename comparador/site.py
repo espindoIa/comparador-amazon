@@ -24,6 +24,14 @@ Dados gerados em `dados/` (textos vazios "" e números 0 = não informado; dias 
                  os outros formatos da obra ("eds": [[asin, formato, preço]]), outras edições do mesmo
                  título e autor ("outras": [[asin, título, capa, formato, preço]]) e as obras mais avaliadas
                  do mesmo autor principal ("autor1" e "mesmo_autor", no formato de "outras").
+- `p/XXX.json`   livros parecidos (ver parecidos.py) de ~1/1024 dos livros (XXX = `fragmento_p` do ASIN, mesma conta em
+                 app.js), carregados sob demanda pela página do livro e pelo início. Os livros da busca e os que saíram
+                 dela têm lista; os parecidos são sempre livros da busca. Cartões e listas repetidos aparecem uma vez:
+                   {"c": [[asin, título, capa, formato, preço, autor], ...],     (edição: a primeira da obra, como em "outras")
+                    "l": [[posição em "c", ...], ...],                           (até MAX_PARECIDOS, do mais parecido ao menos)
+                    "p": {asin: [posição em "l", título curto, ASIN da obra]}}   (o título curto e a obra servem ao início:
+                 o motivo "como <título>" e para não sugerir outra edição de um livro já salvo; a obra só vem quando não é o
+                 próprio ASIN)
 - `meta.json`    data da última coleta, totais e aviso (bancos simulados)
 - `eventos.json` promoções (de eventos.csv)
 """
@@ -36,10 +44,12 @@ import re
 import shutil
 import statistics
 import sqlite3
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import parecidos
 from .db import abrir_leitura, dia_brasil
 from .relatorio import BURACO, WEB, aviso, ler_eventos
 from .varredura import GENEROS
@@ -62,6 +72,10 @@ MAX_TITULO = 140       # caracteres do título no índice (o título inteiro fic
 MAX_OUTRAS = 8
 MAX_AUTOR = 8          # "mais deste autor" na página do livro
 MAX_TITULO_MINI = 80   # título nas estantes da página do livro (o cartão mostra 2 linhas)
+MAX_AUTOR_MINI = 40    # autor no cartão dos parecidos (uma linha)
+MAX_TITULO_CURTO = 40  # título do livro de partida no motivo "como <título>" do início
+MAX_PARECIDOS = 10
+FRAG_P = 1024          # arquivos de parecidos (com 256, cada um passaria de 300 KB compactado)
 
 # formatos que aparecem nas listas de livros da Amazon mas não são livros: ficam fora da busca
 NAO_LIVRO = frozenset({
@@ -196,6 +210,14 @@ def fragmento(asin: str) -> str:
     return f"{h:02x}"
 
 
+def fragmento_p(asin: str) -> str:
+    """Arquivo de parecidos do livro. Mesma conta em app.js (`fragmentoP`): a de `fragmento`, com FRAG_P arquivos."""
+    h = 0
+    for c in asin:
+        h = (h * 31 + ord(c)) % FRAG_P
+    return f"{h:03x}"
+
+
 def juntar_trechos(trechos: list[list]) -> list[list]:
     """Junta históricos do mesmo livro vindos de bancos diferentes: trechos com o mesmo preço que se
     tocam (ou ficam a até BURACO dias um do outro) viram um só."""
@@ -250,6 +272,12 @@ def limpar_titulo(titulo: str | None) -> tuple[str, str]:
 def normalizar(texto: str) -> str:
     """Sem acentos e em minúsculas (para comparar títulos e autores)."""
     return "".join(c for c in unicodedata.normalize("NFD", texto or "") if not unicodedata.combining(c)).lower()
+
+
+def titulo_curto(titulo: str) -> str:
+    """O título sem o subtítulo, para caber numa linha ("Sapiens (Nova edição): Uma breve história…" → "Sapiens (Nova edição)")."""
+    t = re.split(r"\s*[:–—―]\s|\s+-\s", titulo or "", maxsplit=1)[0].strip()
+    return t[:MAX_TITULO_CURTO].rstrip()
 
 
 def titulo_base(titulo: str) -> str:
@@ -362,7 +390,51 @@ def _obra(asins: list[str], livros: dict[str, dict], t: dict[str, Tabela], hoje:
              int(det["publicado"][:4]) if det["publicado"] else 0,
              t["idi"](det["idioma"]) + 1 if det["idioma"] else 0, [t["gen"](g) for g in generos],
              det["nota"] or 0, max((livros[a].get("avaliacoes") or 0 for a in eds), default=0), linhas]
-    return {"linha": linha, "eds": eds, "titulo": titulo, "autor": det["autor"] or "", "pop": linha[7]}
+    return {"linha": linha, "eds": eds, "titulo": titulo, "autor": det["autor"] or "", "pop": linha[7], "idioma": det["idioma"] or ""}
+
+
+def _mini(obras: list[dict], livros: dict[str, dict], j: int) -> list:
+    """Cartão de uma obra nas estantes da página do livro: [asin, título, capa, formato, preço] da primeira edição."""
+    o = obras[j]
+    return [o["eds"][0], o["titulo"][:MAX_TITULO_MINI].rstrip(), o["linha"][2], livros[o["eds"][0]]["f"] or "Livro", o["linha"][8][0][2]]
+
+
+def _parecidos(obras: list[dict], livros: dict[str, dict], obra_de: dict[str, int], outras: dict[int, list[int]],
+               autor: dict[int, list[int]], t: dict[str, Tabela]) -> dict[str, dict]:
+    """Os arquivos `p/` (formato no começo deste arquivo): as obras da busca e os livros que saíram dela, com gênero."""
+    pobras = [parecidos.Obra(i, o["titulo"], o["autor"], tuple(o["linha"][5]), o["idioma"], o["pop"]) for i, o in enumerate(obras)]
+    sementes = [parecidos.Semente(tuple(o["linha"][5]), o["idioma"], o["autor"], i, frozenset(outras.get(i, []) + autor.get(i, [])))
+                for i, o in enumerate(obras)]
+    fora = sorted(a for a, l in livros.items() if a not in obra_de and l["g"])
+    # fora da busca, a obra (coluna `obra`) pode ter outra edição na busca: ela não é parecida, é o mesmo livro
+    sementes += [parecidos.Semente(tuple(sorted(t["gen"](g) for g in livros[a]["g"])), livros[a].get("idioma") or "", livros[a].get("autor") or "",
+                                   obra_de.get(livros[a].get("obra") or a)) for a in fora]
+    listas = parecidos.calcular(pobras, len(t["gen"].lista()), sementes, MAX_PARECIDOS)
+
+    arquivos: dict[str, dict] = {}
+
+    def gravar(asin: str, lista: list[int], titulo: str, obra: str):
+        arq = arquivos.setdefault(fragmento_p(asin), {"c": [], "l": [], "p": {}, "_c": {}, "_l": {}})
+        idx = []
+        for j in lista:
+            if j not in arq["_c"]:
+                arq["_c"][j] = len(arq["c"])
+                arq["c"].append(_mini(obras, livros, j) + [obras[j]["autor"][:MAX_AUTOR_MINI].rstrip()])
+            idx.append(arq["_c"][j])
+        chave = tuple(idx)
+        if chave not in arq["_l"]:
+            arq["_l"][chave] = len(arq["l"])
+            arq["l"].append(idx)
+        arq["p"][asin] = [arq["_l"][chave], titulo_curto(titulo)] + ([obra] if obra != asin else [])
+
+    for i, o in enumerate(obras):
+        if listas[i]:
+            for a in o["eds"]:
+                gravar(a, listas[i], o["titulo"], o["eds"][0])
+    for a, lista in zip(fora, listas[len(obras):]):
+        if lista:
+            gravar(a, lista, livros[a]["t"] or a, a)
+    return {k: {"c": v["c"], "l": v["l"], "p": v["p"]} for k, v in arquivos.items()}
 
 
 def autor_principal(autor: str) -> str:
@@ -446,16 +518,21 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None, url:
             o = obras[i]
             if len(o["eds"]) > 1:
                 h["eds"] = [[a, livros[a]["f"] or "Livro", livros[a]["h"][-1][2]] for a in o["eds"]]
-            mini = lambda j: [obras[j]["eds"][0], obras[j]["titulo"][:MAX_TITULO_MINI].rstrip(), obras[j]["linha"][2],
-                              livros[obras[j]["eds"][0]]["f"] or "Livro", obras[j]["linha"][8][0][2]]
             if i in outras:
-                h["outras"] = [mini(j) for j in outras[i]]
+                h["outras"] = [_mini(obras, livros, j) for j in outras[i]]
             if autor.get(i):
-                h["mesmo_autor"] = [mini(j) for j in autor[i]]
+                h["mesmo_autor"] = [_mini(obras, livros, j) for j in autor[i]]
                 h["autor1"] = autor_principal(o["autor"])
         fragmentos.setdefault(fragmento(asin), {})[asin] = h
     for chave, conteudo in fragmentos.items():
         (saida / "dados" / "h" / f"{chave}.json").write_text(_json(conteudo), encoding="utf-8")
+
+    # livros parecidos de cada livro
+    inicio_p = time.monotonic()
+    (saida / "dados" / "p").mkdir()
+    for chave, conteudo in _parecidos(obras, livros, obra_de, outras, autor, t).items():
+        (saida / "dados" / "p" / f"{chave}.json").write_text(_json(conteudo), encoding="utf-8")
+    tempo_p = time.monotonic() - inicio_p
 
     # índice da busca, em partes
     tabelas = {"fmt": t["fmt"].lista(), "gen": [[g, nomes_gen[g]] for g in t["gen"].lista()], "idi": t["idi"].lista()}
@@ -501,4 +578,4 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None, url:
             "aviso": " / ".join(dict.fromkeys(avisos))}
     (saida / "dados" / "meta.json").write_text(_json(meta), encoding="utf-8")
     (saida / "dados" / "eventos.json").write_text(_json(ler_eventos(eventos) if eventos else []), encoding="utf-8")
-    return meta
+    return {**meta, "tempo_parecidos": round(tempo_p, 1)}

@@ -162,6 +162,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 .cartao .cv{margin-bottom:6px}
 .cartao .t{font:600 var(--fs-4)/1.25 var(--serif);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .cartao .a{font-size:var(--fs-2);color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cartao .por{font-size:var(--fs-2);color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cartao .por cite{font-family:var(--serif)}
 .cartao .p{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 6px;font-variant-numeric:tabular-nums}
 .cartao .p b{font-size:var(--fs-4)}.cartao .p s{font-size:var(--fs-1);color:var(--mu)}
 .cartao .selo{position:absolute;bottom:6px;left:6px;z-index:var(--zacima)}

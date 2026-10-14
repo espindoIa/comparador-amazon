@@ -86,19 +86,26 @@ O app dá números, não conselhos: quem decide se o preço é bom é a pessoa.
 
 ## Fase 6: descoberta
 
-- **Parecidos:** no início, livros parecidos com os da lista e os vistos recentemente; na página do
-  livro, parecidos com ele, de outros autores (os do mesmo autor já estão em "Mais de …"). Ajuda a achar outros livros para acompanhar. A similaridade é calculada no
-  navegador (`recomenda.js`) com o que o índice já tem: gêneros em comum (os raros pesam mais), mesmo
-  autor, mesmo idioma e, só para desempatar, o número de avaliações. Não há "quem comprou também
-  comprou": não há esses dados, e nada da lista sai do aparelho. São livros parecidos, não conselhos
-  de compra.
+- **Parecidos:** na página do livro, livros de outros autores parecidos com ele (os do mesmo autor
+  já estão em "Mais de …"); no início, os parecidos com os da lista e os vistos recentemente, cada
+  cartão dizendo de qual veio ("como *O Hobbit*"). Ajuda a achar outros livros para acompanhar.
+  - A lista de cada livro é calculada quando o site é gerado (`comparador/parecidos.py`, em
+    `dados/p/`): gêneros em comum (os raros pesam mais), mesmo idioma e, só para desempatar, o
+    número de avaliações. A página do livro não baixa o índice da busca, e o mesmo livro mostra a
+    mesma lista em qualquer caminho.
+  - No início, o navegador junta as listas prontas dos livros de partida (`recomenda.js`); nada da
+    lista sai do aparelho.
+  - Não há "quem comprou também comprou": não há esses dados. São livros parecidos, não conselhos
+    de compra.
+  - Limite: com 29 gêneros amplos, na ficção a lista é "os mais avaliados do gênero". Os
+    subgêneros resolveriam, mas custam páginas de coleta; ficam como experimento.
 
 ## O que fica de fora, de propósito
 
 - Conta, login ou servidor (a lista fica no aparelho, e o link leva para outro).
 - Alerta de preço por e-mail ou push (exigiria servidor).
-- Avaliações e recursos sociais. (Recomendações entraram na Fase 6, só como "Parecidos" calculados
-  no aparelho.)
+- Avaliações e recursos sociais. (Recomendações entraram na Fase 6, só como "Parecidos": livros
+  parecidos, sem conta e sem nada sair do aparelho.)
 - Comparação com outras lojas, editora e link de afiliado.
 - Modo offline (service worker): dá trabalho e quase ninguém usaria.
 
