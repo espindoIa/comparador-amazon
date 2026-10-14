@@ -759,7 +759,7 @@
         '<dt>Menor preço registrado</dt><dd>O menor preço desde o início da coleta, quando o livro tem ' + L.MIN_COMUM + ' dias de coleta ou mais.</dd>' +
         '<dt>Baixaram de preço</dt><dd>Queda de 5% ou mais nas duas últimas coletas.</dd>' +
         '<dt>Preço-alvo</dt><dd>O preço que você quer pagar. Fica só neste aparelho; o site não manda avisos.</dd>' +
-        '<dt>Parecidos</dt><dd>Livros de outros autores com gênero e idioma em comum. A lista de cada livro é calculada quando o site é gerado; no início, o seu navegador junta as listas dos livros da sua lista e dos que você viu ("como …" diz de qual veio). Nada sai do aparelho.</dd>' +
+        '<dt>Parecidos</dt><dd>Livros de outros autores com gênero e idioma em comum e, em livros de não ficção, palavras do título em comum ("python", "investimentos"). A lista de cada livro é calculada quando o site é gerado; no início, o seu navegador junta as listas dos livros da sua lista e dos que você viu ("como …" diz de qual veio). Nada sai do aparelho.</dd>' +
         '<dt>Datas de promoção</dt><dd>O preço no dia, comparado com o dos 90 dias anteriores.</dd></dl>' +
         '<h2>Limites</h2><ul><li>Só entram os ~2.000 mais vendidos de cada categoria, vendidos pela própria Amazon.</li>' +
         '<li>Dias sem coleta ficam em branco no gráfico.</li><li>O preço pode mudar a qualquer momento. Confira na loja.</li></ul>' +

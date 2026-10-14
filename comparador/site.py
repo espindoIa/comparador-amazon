@@ -271,6 +271,8 @@ def limpar_titulo(titulo: str | None) -> tuple[str, str]:
 
 def normalizar(texto: str) -> str:
     """Sem acentos e em minúsculas (para comparar títulos e autores)."""
+    if texto and texto.isascii():
+        return texto.lower()
     return "".join(c for c in unicodedata.normalize("NFD", texto or "") if not unicodedata.combining(c)).lower()
 
 
@@ -291,8 +293,7 @@ def titulo_base(titulo: str) -> str:
 
 
 # Autores que não identificam ninguém: não servem para dizer que dois livros são o mesmo
-AUTORES_GENERICOS = frozenset({"", "nao informado", "varios autores", "diversos", "diversos autores", "autor desconhecido",
-                               "desconhecido", "various", "various authors", "anonimo"})
+AUTORES_GENERICOS = parecidos.AUTORES_GENERICOS
 
 
 def ultima_leitura(caminho: Path) -> str | None:
@@ -402,38 +403,52 @@ def _mini(obras: list[dict], livros: dict[str, dict], j: int) -> list:
 def _parecidos(obras: list[dict], livros: dict[str, dict], obra_de: dict[str, int], outras: dict[int, list[int]],
                autor: dict[int, list[int]], t: dict[str, Tabela]) -> dict[str, dict]:
     """Os arquivos `p/` (formato no começo deste arquivo): as obras da busca e os livros que saíram dela, com gênero."""
-    pobras = [parecidos.Obra(i, o["titulo"], o["autor"], tuple(o["linha"][5]), o["idioma"], o["pop"]) for i, o in enumerate(obras)]
-    sementes = [parecidos.Semente(tuple(o["linha"][5]), o["idioma"], o["autor"], i, frozenset(outras.get(i, []) + autor.get(i, [])))
-                for i, o in enumerate(obras)]
+    bases = [titulo_base(o["titulo"]) for o in obras]
+    pobras = [parecidos.Obra(i, o["titulo"], o["autor"], tuple(o["linha"][5]), o["idioma"], o["pop"], bases[i]) for i, o in enumerate(obras)]
+    sementes = [parecidos.Semente(tuple(o["linha"][5]), o["idioma"], o["autor"], i, frozenset(outras.get(i, []) + autor.get(i, [])),
+                                  o["titulo"], bases[i]) for i, o in enumerate(obras)]
     fora = sorted(a for a, l in livros.items() if a not in obra_de and l["g"])
     # fora da busca, a obra (coluna `obra`) pode ter outra edição na busca: ela não é parecida, é o mesmo livro
     sementes += [parecidos.Semente(tuple(sorted(t["gen"](g) for g in livros[a]["g"])), livros[a].get("idioma") or "", livros[a].get("autor") or "",
-                                   obra_de.get(livros[a].get("obra") or a)) for a in fora]
-    listas = parecidos.calcular(pobras, len(t["gen"].lista()), sementes, MAX_PARECIDOS)
+                                   obra_de.get(livros[a].get("obra") or a), frozenset(), livros[a]["t"] or "", titulo_base(livros[a]["t"] or ""))
+                 for a in fora]
+    pos = {no: t["gen"](no) for no in GENEROS}
+    listas = parecidos.calcular(pobras, len(t["gen"].lista()), sementes, MAX_PARECIDOS,
+                                ficcao=frozenset(pos[no] for no in parecidos.GENEROS_FICCAO),
+                                balde=frozenset({pos[parecidos.LIVROS_INTERNACIONAIS]}))
 
     arquivos: dict[str, dict] = {}
+    cartoes: dict[int, list] = {}                     # o cartão de cada obra, montado uma vez para todos os arquivos
 
-    def gravar(asin: str, lista: list[int], titulo: str, obra: str):
-        arq = arquivos.setdefault(fragmento_p(asin), {"c": [], "l": [], "p": {}, "_c": {}, "_l": {}})
+    def gravar(asin: str, lista: list[int], titulo: str, obra: str):     # titulo: já curto
+        arq = arquivos.get(fragmento_p(asin))
+        if arq is None:
+            arq = arquivos[fragmento_p(asin)] = {"c": [], "l": [], "p": {}, "_c": {}, "_l": {}}
+        pos_c, c = arq["_c"], arq["c"]
         idx = []
         for j in lista:
-            if j not in arq["_c"]:
-                arq["_c"][j] = len(arq["c"])
-                arq["c"].append(_mini(obras, livros, j) + [obras[j]["autor"][:MAX_AUTOR_MINI].rstrip()])
-            idx.append(arq["_c"][j])
+            i = pos_c.get(j)
+            if i is None:
+                if j not in cartoes:
+                    cartoes[j] = _mini(obras, livros, j) + [obras[j]["autor"][:MAX_AUTOR_MINI].rstrip()]
+                i = pos_c[j] = len(c)
+                c.append(cartoes[j])
+            idx.append(i)
         chave = tuple(idx)
-        if chave not in arq["_l"]:
-            arq["_l"][chave] = len(arq["l"])
+        li = arq["_l"].get(chave)
+        if li is None:
+            li = arq["_l"][chave] = len(arq["l"])
             arq["l"].append(idx)
-        arq["p"][asin] = [arq["_l"][chave], titulo_curto(titulo)] + ([obra] if obra != asin else [])
+        arq["p"][asin] = [li, titulo] + ([obra] if obra != asin else [])
 
     for i, o in enumerate(obras):
         if listas[i]:
+            curto = titulo_curto(o["titulo"])
             for a in o["eds"]:
-                gravar(a, listas[i], o["titulo"], o["eds"][0])
+                gravar(a, listas[i], curto, o["eds"][0])
     for a, lista in zip(fora, listas[len(obras):]):
         if lista:
-            gravar(a, lista, livros[a]["t"] or a, a)
+            gravar(a, lista, titulo_curto(livros[a]["t"] or a), a)
     return {k: {"c": v["c"], "l": v["l"], "p": v["p"]} for k, v in arquivos.items()}
 
 
