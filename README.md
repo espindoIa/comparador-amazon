@@ -242,4 +242,12 @@ por vez, pausa de pelo menos 4 s, para na primeira página bloqueada sem tentar 
 - A frescura dos preços é a do ciclo, não a de cada segundo: com ciclo de 3 horas, um preço pode ter até umas 3 horas
   (mais a duração da passada) quando o site o mostra. Livros que a Amazon deixa de listar nos mais vendidos deixam de ser
   lidos.
+- **Subgêneros (opcional, só ficção).** `subgeneros.yml` lê, a cada ciclo, a página 1 de cada subcategoria dos gêneros de
+  ficção e as 10 primeiras páginas de mais vendidos de cada folha: milhares de páginas por ciclo (de 5% a 9% do que o coletor
+  lê por semana, medido num gênero e estimado nos outros), uma de cada vez, com pausa de 4 s e num servidor só. Não roda
+  enquanto a variável `SUBGENEROS_ATIVO` não for `true`; um ciclo continua de uma execução para a seguinte (o estado fica na
+  release) e o intervalo entre ciclos é de 14 dias, provisório até a troca entre os dois primeiros ciclos mostrar quanto os
+  rótulos mudam. Depois de um bloqueio, pausa de 24 h (dobra a cada um seguido, até 7 dias) e nenhuma tentativa de novo na
+  mesma execução. O snapshot só entra no site com `SUBGENEROS_NO_SITE=true`. Para parar: apagar `SUBGENEROS_ATIVO` (ou
+  `COLETA_PAUSADA=true`, que para tudo).
 - `data/` não vai para o git.

@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 from urllib.parse import parse_qs, unquote, urlparse
@@ -247,7 +248,7 @@ class TestLeitor(Base):
         relogio = Relogio()
         amazon = AmazonFalsa(relogio=relogio, passo=0.7)
         leitor = self.leitor(amazon, pausa=4, dormir=relogio.dormir, relogio=relogio)
-        self.assertIsNotNone(leitor.pagina("111", 1))
+        self.assertTrue(leitor.pagina("111", 1))
         self.assertEqual(relogio.dormiu, [])
         relogio.t += 1.5                                         # o tempo que se gastou com a página antes de pedir a próxima
         leitor.pagina("120", 1)
@@ -265,12 +266,12 @@ class TestLeitor(Base):
         amazon = AmazonFalsa(programa={2: BLOQUEIO})
         leitor = self.leitor(amazon)
         leitor.pagina("111", 1)
-        self.assertIsNone(leitor.pagina("120", 1))
+        self.assertFalse(leitor.pagina("120", 1))
         self.assertEqual(leitor.parou, "bloqueio")
         self.assertIn("bloqueado", leitor.erro)
-        self.assertIsNone(leitor.pagina("210", 1))
+        self.assertFalse(leitor.pagina("210", 1))
         self.assertEqual(len(amazon.chamadas), 2)                # nada depois do bloqueio, nem nova tentativa
-        self.assertIsNotNone(leitor.pagina("111", 1))            # o que está no cache continua saindo
+        self.assertTrue(leitor.pagina("111", 1))            # o que está no cache continua saindo
         self.assertFalse(self.cache.existe("120", 1))
         self.assertEqual(len(list((self.pasta / "problemas").rglob("no-120-p1-*.html.gz"))), 1)
 
@@ -279,21 +280,21 @@ class TestLeitor(Base):
         self.cache.gravar("901", 1, "<p>x</p>")
         amazon = AmazonFalsa()
         leitor = self.leitor(amazon, max_paginas=3)
-        self.assertIsNotNone(leitor.pagina("111", 1))
-        self.assertIsNone(leitor.pagina("120", 1))
+        self.assertTrue(leitor.pagina("111", 1))
+        self.assertFalse(leitor.pagina("120", 1))
         self.assertEqual((leitor.parou, amazon.nos(), leitor.usadas), ("teto de 3 páginas", ["111"], 3))
 
     def test_erros_seguidos_param_mas_um_erro_so_nao(self):
         amazon = AmazonFalsa(programa={1: NAO_ACHADO, 3: NAO_ACHADO})
         leitor = self.leitor(amazon)
-        self.assertIsNone(leitor.pagina("111", 1))
+        self.assertFalse(leitor.pagina("111", 1))
         self.assertEqual((leitor.parou, leitor.erro), (None, "erro_http: HTTP 404"))
-        self.assertIsNotNone(leitor.pagina("111", 1))
-        self.assertIsNone(leitor.pagina("112", 1))               # 3º pedido: falha de novo, mas a anterior deu certo
+        self.assertTrue(leitor.pagina("111", 1))
+        self.assertFalse(leitor.pagina("112", 1))               # 3º pedido: falha de novo, mas a anterior deu certo
         self.assertIsNone(leitor.parou)
         amazon.programa = {n: NAO_ACHADO for n in range(4, 9)}
         for no in ("120", "210", "111"):
-            self.assertIsNone(leitor.pagina(no, 2))
+            self.assertFalse(leitor.pagina(no, 2))
         self.assertEqual(leitor.parou, "3 erros seguidos")
         self.assertEqual(len(amazon.chamadas), 5)                # o 6º pedido nem saiu
 
@@ -523,6 +524,159 @@ class TestSnapshot(Base):
         self.assertEqual(len(subgeneros.ler_snapshot(d / "meio.json")["folhas"]), 1)       # descarta só as folhas ruins
 
 
+class TestCompactoEEstado(Base):
+    def test_compacto_guarda_so_o_que_a_conta_usa_e_responde_como_o_cache_de_html(self):
+        html = {1: pagina_no("111", "Folha A11", [("1", "Livros"), ("100", "Gênero A")], total=40, pagina=1),
+                2: pagina_no("111", "Folha A11", [("1", "Livros"), ("100", "Gênero A")], total=40, pagina=2)}
+        compacto, cache = subgeneros.Compacto(), self.cache
+        for p, h in html.items():
+            compacto.gravar("111", p, h)
+            cache.gravar("111", p, h)
+        self.assertEqual((len(compacto), compacto.nos(), compacto.existe("111", 2), compacto.existe("111", 3)), (2, ["111"], True, False))
+        self.assertEqual(compacto.info("111"), cache.info("111"))
+        self.assertEqual((compacto.cards("111", 2), compacto.info("999"), compacto.cards("111", 3)), (cache.cards("111", 2), None, None))
+        real = subgeneros.Compacto()                                                   # numa página de verdade, ~100x menos
+        real.gravar("7841794011", 1, ler("subnos_folha.html"))
+        self.assertLess(len(json.dumps(real.paginas)), len(ler("subnos_folha.html")) // 20)
+        self.assertEqual(real.info("7841794011")["status"], "folha")
+
+    def test_pagina_de_layout_desconhecido_vira_no_com_erro_e_cards_vazios(self):
+        compacto = subgeneros.Compacto()
+        compacto.gravar("5", 1, "<html><body>vitrine</body></html>")
+        self.assertEqual((compacto.info("5")["status"], compacto.cards("5", 1)), ("erro", []))
+
+    def test_estado_vai_e_volta_pelo_disco(self):
+        arq = Path(self.tmp.name) / "estado.json.gz"
+        self.assertEqual(subgeneros.Estado.ler(arq).dados()["ciclo"], None)                  # sem arquivo: começa do zero
+        e = subgeneros.Estado()
+        e.ciclo, e.pausa_ate, e.bloqueios, e.ultimo_snapshot = {"inicio": "x", "paginas": {"1/1": {"i": None, "c": [["A"]]}}}, "2026-10-20T00:00:00+00:00", 2, "2026-10-01T00:00:00+00:00"
+        e.gravar(arq)
+        self.assertEqual(subgeneros.Estado.ler(arq).dados(), e.dados())
+        arq.write_bytes(b"lixo")
+        with self.assertRaises(ValueError):
+            subgeneros.Estado.ler(arq)                                                         # arquivo que existe e não lê: erro, não recomeço
+        arq.write_bytes(gzip.compress(json.dumps({"v": 99}).encode()))
+        with self.assertRaises(ValueError):
+            subgeneros.Estado.ler(arq)
+
+    def test_comparar_snapshots_diz_o_que_trocou(self):
+        f = lambda no, asins: {"no": no, "nome": no, "total": 1, "exato": True, "asins": asins}      # noqa: E731
+        antigo = {"folhas": [f("1", ["A", "B", "C", "D"]), f("2", ["E", "F"]), f("3", ["G"])]}
+        novo = {"folhas": [f("1", ["A", "B", "C", "X"]), f("2", ["E", "F"]), f("4", ["H"])]}
+        texto = subgeneros.comparar_snapshots(antigo, novo)
+        self.assertIn("folhas: 3 (antes 3; entraram 1, saíram 1)", texto)
+        self.assertIn("nas 2 que ficaram, 2 ASINs entraram ou saíram de 6 (33.3%)", texto)
+        self.assertIn("nenhuma em comum", subgeneros.comparar_snapshots(antigo, {"folhas": [f("9", ["Z"])]}))
+
+
+class TestAtualizar(Base):
+    """Uma execução da coleta recorrente, com a Amazon falsa e um relógio que anda 60 s por página."""
+
+    def setUp(self):
+        super().setUp()
+        self.relogio = Relogio()
+        self.hoje = datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc)
+        self.amazon = AmazonFalsa(relogio=self.relogio, passo=60)
+        self.avisos = []
+
+    def rodar(self, amazon=None, *, dias=0, **kw):
+        amazon = amazon or self.amazon
+        args = dict(generos=["100", "200"], k=2, pausa=0, dormir=lambda s: None, relogio=self.relogio, aviso=self.avisos.append,
+                    agora=lambda: self.hoje + timedelta(days=dias), minutos=600)
+        args.update(kw)
+        return subgeneros.atualizar(lambda: amazon, self.pasta, **args)
+
+    def estado(self):
+        return subgeneros.Estado.ler(self.pasta / "estado.json.gz")
+
+    def snapshot(self):
+        return json.loads((self.pasta / "snapshot-novo.json").read_text(encoding="utf-8"))
+
+    def test_um_ciclo_inteiro_numa_execucao(self):
+        self.assertEqual(self.rodar(), 0)
+        self.assertEqual(len(self.amazon.chamadas), 11)                           # 8 nós + a página 2 de 3 folhas
+        s = self.snapshot()
+        self.assertEqual({f["no"] for f in s["folhas"]}, {"111", "112", "120", "210"})
+        self.assertEqual((s["k"], s["generos"], s["gerado_em"]), (2, ["100", "200"], "2026-10-14T12:00:00+00:00"))
+        e = self.estado()
+        self.assertEqual((e.ciclo, e.ultimo_snapshot, e.bloqueios, e.pausa_ate), (None, "2026-10-14T12:00:00+00:00", 0, None))
+        self.assertTrue(any("ciclo completo: 4 folhas" in a for a in self.avisos))
+
+    def test_o_orcamento_de_tempo_para_e_a_execucao_seguinte_continua_do_ponto(self):
+        self.assertEqual(self.rodar(minutos=5), 0)                                # 60 s por página: 5 páginas
+        self.assertEqual(len(self.amazon.chamadas), 5)
+        self.assertFalse((self.pasta / "snapshot-novo.json").exists())
+        e = self.estado()
+        self.assertEqual((len(e.ciclo["paginas"]), e.ciclo["execucoes"], e.ultimo_snapshot), (5, 1, None))
+        self.assertEqual(self.rodar(minutos=600), 0)
+        self.assertEqual(len(self.amazon.chamadas), 11)                           # só o que faltava: nada foi lido duas vezes
+        self.assertEqual(len(set(self.amazon.chamadas)), 11)
+        completo = self.snapshot()
+        outra = Path(self.tmp.name) / "inteiro"                                    # o mesmo ciclo sem interrupção dá o mesmo snapshot
+        subgeneros.atualizar(lambda: AmazonFalsa(), outra, generos=["100", "200"], k=2, pausa=0, dormir=lambda s: None,
+                             relogio=self.relogio, aviso=lambda t: None, agora=lambda: self.hoje)
+        self.assertEqual(completo, json.loads((outra / "snapshot-novo.json").read_text(encoding="utf-8")))
+
+    def test_dentro_do_intervalo_nao_abre_a_sessao_e_depois_dele_compara_com_o_anterior(self):
+        self.rodar()
+        anterior = self.snapshot()
+        def sem_sessao():
+            raise AssertionError("abriu a sessão sem ter o que ler")
+        self.assertEqual(subgeneros.atualizar(sem_sessao, self.pasta, generos=["100", "200"], k=2, intervalo_dias=14,
+                                              agora=lambda: self.hoje + timedelta(days=13), aviso=self.avisos.append), 0)
+        self.assertTrue(any("nada a fazer" in a for a in self.avisos))
+        outro = AmazonFalsa(relogio=self.relogio, passo=60)
+        self.assertEqual(self.rodar(outro, dias=15, anterior=anterior), 0)
+        self.assertEqual(len(outro.chamadas), 11)                                 # ciclo novo: tudo de novo
+        self.assertTrue(any("troca em relação ao anterior: folhas: 4 (antes 4; entraram 0, saíram 0)" in a and "(0.0%)" in a for a in self.avisos))
+        self.assertEqual(self.rodar(dias=15, novo_ciclo=True, anterior=anterior), 0)       # forçar começa de novo mesmo dentro do intervalo
+
+    def test_bloqueio_grava_a_pausa_que_dobra_e_nada_e_pedido_durante_ela(self):
+        bloqueada = AmazonFalsa(relogio=self.relogio, passo=60, programa={3: BLOQUEIO})
+        self.assertEqual(self.rodar(bloqueada), 1)
+        self.assertEqual(len(bloqueada.chamadas), 3)
+        e = self.estado()
+        self.assertEqual((e.bloqueios, e.pausa_ate, len(e.ciclo["paginas"])), (1, "2026-10-15T12:00:00+00:00", 2))     # 24 h; o ciclo fica
+        def sem_sessao():
+            raise AssertionError("pediu durante a pausa")
+        self.assertEqual(subgeneros.atualizar(sem_sessao, self.pasta, generos=["100", "200"], agora=lambda: self.hoje + timedelta(hours=23),
+                                              aviso=self.avisos.append), 0)
+        self.assertTrue(any("em pausa até" in a for a in self.avisos))
+        de_novo = AmazonFalsa(relogio=self.relogio, passo=60, programa={1: BLOQUEIO})
+        self.assertEqual(self.rodar(de_novo, dias=2), 1)                          # passada a pausa, outro bloqueio: 48 h
+        e = self.estado()
+        self.assertEqual((e.bloqueios, e.pausa_ate), (2, "2026-10-18T12:00:00+00:00"))
+        self.assertEqual(self.rodar(dias=5), 0)                                   # e depois dela o ciclo continua e termina
+        self.assertEqual((self.estado().bloqueios, self.estado().pausa_ate, self.estado().ciclo), (0, None, None))
+        self.assertTrue((self.pasta / "snapshot-novo.json").exists())
+
+    def test_estado_ilegivel_nao_recomeca_do_zero(self):
+        self.pasta.mkdir(parents=True)
+        (self.pasta / "estado.json.gz").write_bytes(b"lixo")
+        def sem_sessao():
+            raise AssertionError("leu com o estado ilegível")
+        self.assertEqual(subgeneros.atualizar(sem_sessao, self.pasta, generos=["100"], aviso=self.avisos.append), 1)
+        self.assertEqual((self.pasta / "estado.json.gz").read_bytes(), b"lixo")
+
+    def test_snapshot_com_menos_da_metade_das_folhas_do_anterior_e_recusado(self):
+        grande = {"folhas": [{"no": str(n), "nome": "x", "total": 1, "exato": True, "asins": ["A"]} for n in range(10)]}
+        self.assertEqual(self.rodar(anterior=grande), 1)
+        self.assertFalse((self.pasta / "snapshot-novo.json").exists())
+        e = self.estado()
+        self.assertEqual((e.ciclo, e.ultimo_snapshot, e.pausa_ate), (None, None, "2026-10-28T12:00:00+00:00"))     # espera o intervalo
+
+    def test_pagina_que_nao_vem_e_pedida_de_novo_e_depois_o_ciclo_termina_com_o_buraco(self):
+        falha = AmazonFalsa(relogio=self.relogio, passo=60, programa={9: NAO_ACHADO})                 # a página 2 de uma folha
+        self.assertEqual(self.rodar(falha), 0)
+        self.assertFalse((self.pasta / "snapshot-novo.json").exists())
+        self.assertTrue(any("1 páginas de folha ainda por ler" in a for a in self.avisos))
+        self.assertEqual(self.rodar(AmazonFalsa(relogio=self.relogio, passo=60, programa={1: NAO_ACHADO})), 0)   # de novo falha: 2ª execução
+        self.assertFalse((self.pasta / "snapshot-novo.json").exists())
+        self.assertEqual(self.rodar(AmazonFalsa(relogio=self.relogio, passo=60, programa={1: NAO_ACHADO})), 0)   # 3ª: aceita com o buraco
+        self.assertEqual({f["no"] for f in self.snapshot()["folhas"]}, {"111", "112", "120", "210"})
+        self.assertIsNone(self.estado().ciclo)
+
+
 class TestComandoSubgeneros(Base):
     def rodar(self, *args, amazon=None):
         saida, erro, codigo = io.StringIO(), io.StringIO(), 0
@@ -587,6 +741,46 @@ class TestComandoSubgeneros(Base):
         self.assertEqual(codigo, 0)
         r = json.loads((self.pasta / "rotulos.json").read_text(encoding="utf-8"))
         self.assertEqual(list(r["folhas"]), ["111", "112"])
+
+
+class TestWorkflowsDosSubgeneros(unittest.TestCase):
+    """Os interruptores e a ordem dos passos não têm teste de execução (é o GitHub que roda): estas conferências evitam que uma
+    edição desligue sem querer a trava de quem controla a carga sobre a Amazon."""
+
+    def texto(self, nome):
+        return (Path(RAIZ) / ".github" / "workflows" / nome).read_text(encoding="utf-8")
+
+    def passo(self, w, nome):
+        inicio = w.index(f"- name: {nome}")
+        resto = w[inicio + 1:]
+        fim = resto.find("\n      - ")
+        return w[inicio:] if fim < 0 else w[inicio:inicio + 1 + fim]
+
+    def test_a_coleta_so_roda_com_o_interruptor_ligado_e_com_a_coleta_nao_pausada(self):
+        w = self.texto("subgeneros.yml")
+        self.assertIn("if: ${{ vars.SUBGENEROS_ATIVO == 'true' && vars.COLETA_PAUSADA != 'true' }}", w.split("jobs:")[1])
+        self.assertNotIn("cancel-in-progress: true", w)
+
+    def test_estado_e_snapshot_so_se_publicam_com_o_que_existe_e_o_estado_mesmo_depois_de_falha(self):
+        w = self.texto("subgeneros.yml")
+        self.assertIn("always()", self.passo(w, "Publica o estado"))
+        self.assertIn("hashFiles('data/subgeneros/estado.json.gz')", self.passo(w, "Publica o estado"))
+        self.assertIn("hashFiles('data/subgeneros/snapshot-novo.json')", self.passo(w, "Publica o snapshot"))
+        self.assertIn("steps.snapshot.outputs.publicou == '1'", self.passo(w, "Pede o site novo"))
+
+    def test_o_job_tem_mais_tempo_que_o_orcamento_das_execucoes(self):
+        w = self.texto("subgeneros.yml")
+        limite = int(re.search(r"timeout-minutes: (\d+)", w).group(1))
+        minutos = int(re.search(r'minutos:\n\s+description: .*\n\s+default: "(\d+)"', w).group(1))
+        self.assertGreaterEqual(limite, minutos + 30)             # sobra para baixar o estado e publicar
+        self.assertLessEqual(limite, 360)                         # o máximo do GitHub
+
+    def test_o_site_so_baixa_o_snapshot_com_o_segundo_interruptor_e_so_passa_o_que_existe(self):
+        w = self.texto("site.yml")
+        self.assertIn("if: ${{ vars.SUBGENEROS_NO_SITE == 'true' }}", self.passo(w, "Baixa os subgêneros (opcional)"))
+        gera = self.passo(w, "Gera o site")
+        self.assertIn('if [ -f "$RUNNER_TEMP/subgeneros.json" ]; then SUB=(--subgeneros', gera)
+        self.assertIn('"${SUB[@]}"', gera)
 
 
 class TestSiteSemPlaywright(unittest.TestCase):

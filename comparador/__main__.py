@@ -237,7 +237,7 @@ def main() -> None:
                         description="Experimento da Fase C (docs/roadmap.md): descobre as subcategorias de cada gênero e mede o que "
                                     "custaria rotular os livros com elas. Não abre o banco. Uma página por vez, com pausa, parando "
                                     "na primeira página bloqueada; o HTML lido fica em --pasta e tudo se refaz dele sem pedir nada.")
-    passos = sg.add_subparsers(dest="passo", required=True, metavar="{descobrir,rotular,custo}")
+    passos = sg.add_subparsers(dest="passo", required=True, metavar="{descobrir,rotular,custo,atualizar}")
     pasta = argparse.ArgumentParser(add_help=False)
     pasta.add_argument("--pasta", default="data/subgeneros",
                        help="onde ficam as páginas lidas (HTML gz), o arvore.json e o rotulos.json (padrão: %(default)s)")
@@ -245,26 +245,42 @@ def main() -> None:
     resumo.add_argument("--ks", type=_lista_de_inteiros, default=subgeneros.KS, metavar="K1,K2,...",
                         help="páginas por folha que o resumo compara (padrão: " + ",".join(map(str, subgeneros.KS)) + ")")
     pedidos = argparse.ArgumentParser(add_help=False)             # as opções dos passos que pedem páginas à Amazon
-    pedidos.add_argument("--max-paginas", type=_inteiro_positivo, default=subgeneros.MAX_PAGINAS,
-                         help="teto de páginas, contando as que já estão em --pasta (padrão: %(default)s)")
+    teto = argparse.ArgumentParser(add_help=False)                # o teto do experimento (a coleta recorrente tem o seu)
+    teto.add_argument("--max-paginas", type=_inteiro_positivo, default=subgeneros.MAX_PAGINAS,
+                      help="teto de páginas, contando as que já estão em --pasta (padrão: %(default)s)")
     pedidos.add_argument("--pausa", type=_pausa_minima, default=subgeneros.PAUSA,
                          help="segundos entre dois pedidos (padrão e mínimo: %(default)g)")
     pedidos.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto",
                          help="como ler as páginas (padrão: %(default)s = só o navegador, como no varrer)")
-    d = passos.add_parser("descobrir", parents=[pasta, resumo, pedidos], formatter_class=fmt,
+    d = passos.add_parser("descobrir", parents=[pasta, resumo, pedidos, teto], formatter_class=fmt,
                           help="lê a página de cada nó e guarda a árvore (retoma de onde parou)",
                           description="Busca em largura pelas subcategorias: uma página por nó, a partir dos nós de partida. O que já "
                                       "está em --pasta não é pedido de novo.")
     d.add_argument("--nos", help="nós de partida, separados por vírgula (padrão: os 29 gêneros)")
     d.add_argument("--profundidade", type=_inteiro_nao_negativo, default=None,
                    help="níveis abaixo de cada nó de partida (0: só os nós de partida; padrão: até as folhas)")
-    r = passos.add_parser("rotular", parents=[pasta, pedidos], formatter_class=fmt,
+    r = passos.add_parser("rotular", parents=[pasta, pedidos, teto], formatter_class=fmt,
                           help="lê as primeiras páginas de cada folha: quais livros são de cada subgênero",
                           description="Lê as K primeiras páginas dos mais vendidos de cada folha já descoberta, uma rodada por página "
                                       "(a 1 de todas, depois a 2...), e grava o rotulos.json.")
     r.add_argument("--de", help="só as folhas abaixo deste nó")
     r.add_argument("-k", type=_inteiro_positivo, default=None,
                    help="páginas por folha (padrão: o maior K que cabe no teto; abaixo de 3 não rotula)")
+    u = passos.add_parser("atualizar", parents=[pasta, pedidos], formatter_class=fmt,
+                          help="uma execução da coleta recorrente: continua ou começa o ciclo e escreve o snapshot (workflow subgeneros.yml)",
+                          description="Continua (ou começa) o ciclo que lê as árvores dos gêneros de ficção e as K primeiras páginas de cada "
+                                      "folha, até --minutos, e guarda o estado em --pasta/estado.json.gz para a execução seguinte. Ao "
+                                      "terminar o ciclo, escreve --pasta/snapshot-novo.json. Depois de um bloqueio, pausa de 24 h (dobra a "
+                                      "cada um seguido, até 7 dias). Sem nada a fazer, termina sem abrir o navegador.")
+    u.add_argument("--nos", help="gêneros do ciclo, separados por vírgula (padrão: os de ficção, parecidos.GENEROS_FICCAO)")
+    u.add_argument("-k", type=_inteiro_positivo, default=subgeneros.K_PADRAO, help="páginas por folha (padrão: %(default)s)")
+    u.add_argument("--max-paginas", type=_inteiro_positivo, default=3000,
+                   help="teto de páginas pedidas à Amazon nesta execução (padrão: %(default)s; o ciclo pode ter mais)")
+    u.add_argument("--minutos", type=_numero_positivo, default=300, help="orçamento de tempo desta execução (padrão: %(default)s)")
+    u.add_argument("--intervalo-dias", type=_numero_positivo, default=subgeneros.INTERVALO_DIAS,
+                   help="entre o fim de um ciclo e o começo do seguinte (padrão: %(default)s; provisório)")
+    u.add_argument("--novo-ciclo", action="store_true", help="começa um ciclo novo agora, mesmo com o último snapshot dentro do intervalo")
+    u.add_argument("--anterior", metavar="ARQUIVO", help="snapshot do ciclo anterior: o novo é comparado com ele (e recusado se tiver menos da metade das folhas)")
     passos.add_parser("custo", parents=[pasta, resumo], formatter_class=fmt,
                       help="resume a árvore já lida e o custo de rotular (só lê o disco)",
                       description="Resume o arvore.json: nós por status e nível, folhas e o custo de rotular as K primeiras páginas de "
