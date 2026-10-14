@@ -321,8 +321,8 @@ def texto_resumo(arvore: dict, ks=KS) -> str:
         n, ainda = custo(arvore, k), len(nao_lidos(arvore))
         linhas.append(f"rotular as {k} primeiras páginas de cada folha: {n} páginas ({n / PASSADA_DO_COLETOR:.1%} de uma passada do coletor)"
                       + (f"; mais até {ainda * k} se as {ainda} ainda não lidas forem folhas" if ainda else ""))
-    linhas.append(f"uma passada do coletor tem ~{PASSADA_DO_COLETOR} páginas, e ele faz de {7 * 24 // ritmo.CICLO_INICIAL} "
-                  f"(ciclo de {ritmo.CICLO_INICIAL} h) a {7 * 24 // ritmo.CICLOS[0]} (ciclo de {ritmo.CICLOS[0]} h) passadas por semana")
+    linhas.append(f"uma passada do coletor tem ~{PASSADA_DO_COLETOR} páginas; em 14/10/2026 ele fazia uma por dia (ciclo de "
+                  f"{ritmo.CICLOS[-1]} h, ~{7 * 24 // ritmo.CICLOS[-1]} por semana). O ciclo de {ritmo.CICLOS[0]} h é a meta e nunca foi sustentado")
     for c in cobertura_por_totais(arvore):
         if c["total"]:
             linhas.append(f"  {c['nome']}: {c['total']}{'' if c['exato'] else '+'} resultados; os {c['filhos']} filhos somam "

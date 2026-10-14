@@ -472,7 +472,7 @@ class TestCusto(Base):
         self.assertIn("8 nós lidos (4 folhas, 3 internos, 1 vazios)", texto)
         self.assertIn("rotular as 2 primeiras páginas de cada folha: 7 páginas", texto)
         self.assertIn("rotular as 5 primeiras páginas de cada folha: 11 páginas", texto)
-        self.assertIn("passadas por semana", texto)
+        self.assertIn("uma por dia (ciclo de 24 h, ~7 por semana)", texto)
         self.assertIn("Gênero A: 3 subcategorias diretas", texto)
 
 
