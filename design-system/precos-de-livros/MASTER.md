@@ -83,6 +83,7 @@ Os nomes são os mesmos nos dois temas. Contraste medido pela fórmula WCAG 🔒
 | Pílula de preço | `.pill` `.dn` `.up` `.wr` | só leitura |
 | Campo e select | `.busca input`, `.sel select`, `.faixa-preco input`, `.alvo-f input` | contorno `--ln3` 🔒, 16 px (o iPhone não amplia), hover escurece a borda 🔒, erro com `aria-invalid` (borda `--up`) e `.erro-campo` embaixo |
 | Livro em lista | `.row` (busca, lista) e `.cartao` (estantes) | hover; foco cerca a linha inteira 🔒 |
+| Motivo no cartão | `.cartao .por` ("como <cite>Título</cite>") | só nos Parecidos do início, e só com 2 livros de partida ou mais; aí em todos os cartões da estante, para as alturas ficarem iguais. Uma linha, `--fs-2`, `--mu`, o título em `cite` (Crimson itálico). Não reaproveita o selo verde da capa, que é "preço caiu" |
 | Carregando | `esqueleto(n)` / `.sk` | sem brilho com movimento reduzido |
 | Vazio e erro | `.vazio` (medalhão `--acs`/`--ac`), `erro(msg)` | sempre com ação |
 | Página 404 | `404.html` (GitHub Pages) | bloco `.vazio` com `h1` e "Ir para o início"; `<base>` calculada para funcionar em qualquer profundidade de endereço |

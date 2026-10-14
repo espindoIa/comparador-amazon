@@ -14,6 +14,8 @@
   - preço grande (`--fs-12`, fonte do sistema), com as comparações em pílulas;
   - o cartão do gráfico e as estatísticas;
   - datas de promoção e estantes ("Outras edições", "Mais de …", "Parecidos com este livro").
+    "Parecidos" chega por último, de `dados/p/` (pedido junto com o histórico), com o autor no cartão e sem a linha de motivo:
+    todos ali dividem o gênero com o livro. Sem lista, ou com erro, a seção some.
 - **No celular**: a capa (108 px) fica ao lado do título e o resto vem embaixo, com a mesma marcação.
 
 ## Gráfico (`livro.js`, `grafico`)

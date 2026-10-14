@@ -29,6 +29,7 @@ proximo_ciclo = carregar("proximo_ciclo")
 espera = carregar("espera")
 vigia = carregar("vigia")
 conferir_site = carregar("conferir_site")
+medir_parecidos = carregar("medir_parecidos")
 
 
 class TestPodarCopias(unittest.TestCase):
@@ -59,6 +60,27 @@ class TestPodarCopias(unittest.TestCase):
     def test_padrao_nunca_apaga_a_mais_recente(self):
         nomes = ["catalogo-vendidos-2020-01-01-0341.db.gz"]
         self.assertEqual(podar_copias.podar(nomes, "vendidos", date(2026, 10, 12)), [])
+
+
+class TestMedirParecidos(unittest.TestCase):
+    def test_mede_um_site_gerado_e_mostra_as_sondas(self):
+        from comparador import site
+        from tests.test_site import banco
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            h = [("2026-10-01", "2026-10-05", 1000, None)]
+            banco(d / "a.db", [("B000000001", "Romance Um", "Capa comum", h), ("B000000002", "Romance Dois", "Kindle", h)])
+            c = sqlite3.connect(d / "a.db")
+            c.executemany("INSERT INTO generos VALUES (?, '7882388011')", [("B000000001",), ("B000000002",)])
+            c.commit()
+            c.close()
+            site.construir([d / "a.db"], d / "s")
+            texto = medir_parecidos.medir(str(d / "s" / "dados"), ["Romance Um", "Nenhum"])
+        self.assertIn("obras: 2", texto)
+        self.assertIn("p/: 2 arquivos", texto)
+        self.assertIn("## Romance Um", texto)
+        self.assertIn("   - Romance Dois", texto)
+        self.assertIn("## Nenhum: não está no índice", texto)
 
 
 class TestConferirSite(unittest.TestCase):

@@ -187,12 +187,17 @@ Para ativar o site, uma vez só: *Settings → Pages → Source: GitHub Actions*
   pessoa já está buscando.
 - `dados/destaques.json`: o que a página inicial mostra, para ela não esperar o índice.
 - `dados/h/XX.json`: o histórico de cada livro, em 256 arquivos.
+- `dados/p/XXX.json`: os livros parecidos com cada livro, em 1024 arquivos (~50 KB compactado cada).
+  A página do livro pede o seu junto com o histórico; o início junta os dos livros salvos e vistos.
+  A conta fica em `comparador/parecidos.py`.
 - `meta.json` e `eventos.json`: o resumo da coleta e as datas de promoção, que vêm de `eventos.csv`.
 
 O formato de cada arquivo está descrito no começo de `comparador/site.py`.
 
-A busca fica em `comparador/web/busca.js`, os cálculos e o gráfico em `comparador/web/livro.js` e a
-lista em `comparador/web/lista.js`. Os três têm testes que rodam no Node.
+A busca fica em `comparador/web/busca.js`, os cálculos e o gráfico em `comparador/web/livro.js`, a
+lista em `comparador/web/lista.js` e a junção dos parecidos do início em `comparador/web/recomenda.js`.
+Os quatro têm testes que rodam no Node. `python scripts/medir_parecidos.py <pasta ou URL de dados/>`
+mede o tempo, o tamanho e as listas de livros-sonda dos parecidos.
 
 ## Outros comandos
 

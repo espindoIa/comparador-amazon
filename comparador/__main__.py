@@ -210,7 +210,7 @@ def main() -> None:
     if args.cmd == "site":
         from . import site
         meta = site.construir([Path(b) for b in args.bancos], Path(args.saida), _eventos(args), args.url)
-        print(f"site em {args.saida}: {meta['itens']} livros")
+        print(f"site em {args.saida}: {meta['itens']} livros (parecidos em {meta['tempo_parecidos']} s)")
         return
     if args.cmd in ("varrer", "catalogo"):
         args.mais_vendidos = _mais_vendidos(args, v if args.cmd == "varrer" else k)

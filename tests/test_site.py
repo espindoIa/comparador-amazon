@@ -312,6 +312,39 @@ class TestSite(unittest.TestCase):
         self.assertNotIn("mesmo_autor", historico(self.d / "out", "B000000004"))
         self.assertNotIn("mesmo_autor", historico(self.d / "out", "B000000005"))             # autor genérico não junta
 
+    def test_parecidos_vao_para_os_arquivos_p(self):
+        h = lambda p, ate="2026-10-20": [("2026-10-01", ate, p, None)]
+        banco(self.d / "a.db", [("B000000001", "Romance Um: o começo de tudo", "Capa comum", h(4000)), ("B000000002", "Romance Um", "Kindle", h(900)),
+                                ("B000000003", "Romance Dois", "Capa dura", h(5000)), ("B000000004", "Romance Três", "Capa comum", h(3000)),
+                                ("B000000005", "Romance do Mesmo Autor", "Capa comum", h(2000)), ("B000000006", "Direito", "Capa comum", h(9000)),
+                                ("B000000007", "Romance que Sumiu", "Capa comum", h(1500, "2026-10-01"))])
+        self._detalhar("a.db", "UPDATE catalogo SET obra = 'B000000001' WHERE asin IN ('B000000001', 'B000000002')")
+        for asin, autor, av in (("B000000001", "Ana", 10), ("B000000002", "Ana", 10), ("B000000003", "Bia", 500), ("B000000004", "Caio", 90),
+                                ("B000000005", "Ana", 5000), ("B000000006", "Davi", 10), ("B000000007", "Eva", 1)):
+            self._detalhar("a.db", "UPDATE catalogo SET autor = ?, avaliacoes = ? WHERE asin = ?", autor, av, asin)
+        for asin in ("B000000001", "B000000002", "B000000003", "B000000004", "B000000005", "B000000007"):
+            self._detalhar("a.db", "INSERT INTO generos VALUES (?, '7882388011')", asin)
+        self._detalhar("a.db", "INSERT INTO generos VALUES ('B000000006', '7874340011')")
+        site.construir([self.d / "a.db"], self.d / "out")
+
+        def parecidos(asin):
+            arq = self.d / f"out/dados/p/{site.fragmento_p(asin)}.json"          # arquivo sem nenhum livro com lista: não existe
+            f = json.loads(arq.read_text()) if arq.exists() else {"p": {}}
+            e = f["p"].get(asin)
+            return e and {"lista": [f["c"][i] for i in f["l"][e[0]]], "titulo": e[1], "obra": e[2:]}
+
+        um = parecidos("B000000002")                               # pela edição Kindle: os mesmos da obra
+        self.assertEqual([c[0] for c in um["lista"]], ["B000000003", "B000000004"])   # mais avaliado antes; mesmo autor não
+        self.assertEqual(um["lista"][0], ["B000000003", "Romance Dois", "", "Capa dura", 5000, "Bia"])
+        self.assertEqual(um["titulo"], "Romance Um")                # sem o subtítulo
+        self.assertEqual(um["obra"], ["B000000001"])                # outra edição: diz qual é a obra
+        self.assertEqual(parecidos("B000000001")["obra"], [])       # a própria
+        self.assertIsNone(parecidos("B000000006"))                   # nada do mesmo gênero
+        self.assertEqual([c[0] for c in parecidos("B000000007")["lista"]][:2], ["B000000005", "B000000003"])  # saiu da busca: também tem
+        self.assertNotIn("B000000007", [c[0] for c in parecidos("B000000003")["lista"]])                     # mas não é sugerido
+        self.assertEqual(site.fragmento_p("B000000001"), f"{int(site.fragmento_p('B000000001'), 16):03x}")
+        self.assertEqual(len(site.fragmento_p("ZZZZZZZZZZ")), 3)
+
     def test_baixaram_de_preco_por_familia_e_menor_preco_registrado(self):
         h = lambda a, b: [("2026-09-20", "2026-10-08", a, None), ("2026-10-09", "2026-10-09", b, None)]
         banco(self.d / "a.db", [("B000000001", "Físico 1", "Capa comum", h(5000, 2500)), ("B000000002", "Físico 2", "Capa comum", h(5000, 4000)),
@@ -696,12 +729,15 @@ class TestSiteNoNavegador(unittest.TestCase):
             self.assertEqual(pg.locator("#res .carregando").count(), 0)
             pg.fill("#q", "xyzw")
             pg.wait_for_selector("#res .vazio")                                         # agora sim: nada encontrado
-            # na página de um livro, os formatos vêm do histórico do próprio livro (o índice só é baixado depois, para "Parecidos")
+            # a página de um livro não baixa o índice: formatos vêm do histórico do próprio livro
             pg2 = b.new_page()
+            pedidos2 = []
+            pg2.on("request", lambda r: pedidos2.append(r.url))
             pg2.goto(f"{base}/?livro=R000000002")
             pg2.wait_for_selector("#graf svg")
             self.assertEqual(pg2.locator("#fmts .fmt").count(), 2)
             self.assertIn("R$ 30,00", pg2.inner_text("#fmts"))
+            self.assertFalse([u for u in pedidos2 if "indice-" in u], pedidos2)
             b.close()
         self.assertEqual(erros, [])
 
@@ -787,40 +823,59 @@ class TestSiteNoNavegador(unittest.TestCase):
     def test_parecidos_no_inicio_e_na_pagina_do_livro(self):
         from playwright.sync_api import sync_playwright
         h = lambda p: [("2026-10-01", "2026-10-20", p, None)]
-        romance = "7882388011"
-        base = self._servir([("A000000001", "Romance Um", "Capa comum", h(4000)), ("A000000002", "Romance Dois", "Capa comum", h(2500)),
-                             ("A000000003", "Romance Três", "Kindle", h(900)), ("A000000004", "Código Comentado", "Capa dura", h(9000))],
-                            generos={"A000000001": romance, "A000000002": romance, "A000000003": romance, "A000000004": "7874340011"})
+        romance, fantasia = "7882388011", "7841775011"
+        base = self._servir([("R000000001", "Romance Um", "Capa comum", h(4000)), ("R000000002", "Romance Um", "Kindle", h(900)),
+                             ("A000000002", "Romance Dois", "Capa comum", h(2500)), ("A000000003", "Romance Três", "Kindle", h(900)),
+                             ("B000000001", "Fantasia Um", "Capa comum", h(3000)), ("B000000002", "Fantasia Dois", "Capa comum", h(3500)),
+                             ("C000000001", "Código Comentado", "Capa dura", h(9000))],
+                            avaliacoes={"R000000001": 10},                  # e junta R000000001 e R000000002 numa obra só
+                            generos={"R000000001": romance, "R000000002": romance, "A000000002": romance, "A000000003": romance,
+                                     "B000000001": fantasia, "B000000002": fantasia, "C000000001": "7874340011"})
         parecidos = lambda: sorted(pg.eval_on_selector_all("#parecidos .cartao .t", "e => e.map(x => x.textContent)"))
         with sync_playwright() as p:
             b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
             pg = b.new_page()
-            erros = []
+            erros, pedidos = [], []
             pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.on("request", lambda r: pedidos.append(r.url))
             pg.goto(f"{base}/")
             pg.evaluate("localStorage.clear()")
             pg.goto(f"{base}/")
             pg.wait_for_selector(".gens a")
             self.assertEqual(pg.locator("#parecidos").count(), 0)                    # sem lista nem vistos: nada
-            pg.goto(f"{base}/?livro=A000000001")                                      # na página do livro: o mesmo gênero
+            pedidos.clear()
+            pg.goto(f"{base}/?livro=R000000002")                                      # página do livro: lista pronta de dados/p/
             pg.wait_for_selector("#parecidos .cartao")
             self.assertIn("Parecidos com este livro", pg.inner_text("#parecidos h2"))
             self.assertEqual(parecidos(), ["Romance Dois", "Romance Três"])
-            pg.click("[data-salvar]")
-            pg.goto(f"{base}/?livro=A000000004")                                      # nada parecido: a seção some
+            self.assertEqual(pg.locator("#parecidos .por").count(), 0)               # sem "como …" na página do livro
+            self.assertFalse([u for u in pedidos if "indice-" in u], pedidos)         # sem baixar o índice da busca
+            self.assertEqual(len([u for u in pedidos if "/dados/p/" in u]), 1)
+            pg.click("[data-salvar]")                                                 # salva a edição Kindle
+            for asin, esperado in (("A000000002", ["Romance Três", "Romance Um"]), ("B000000001", ["Fantasia Dois"])):
+                pg.goto(f"{base}/?livro={asin}")
+                pg.wait_for_selector("#parecidos .cartao")
+                self.assertEqual(parecidos(), esperado)
+            pg.goto(f"{base}/?livro=C000000001")                                      # nada parecido: a seção some
             pg.wait_for_selector("#graf svg")
             pg.wait_for_function("!document.querySelector('#parecidos')")
-            pg.goto(f"{base}/")                                                         # no início: a partir da lista e dos vistos
+            pg.goto(f"{base}/")                                                         # no início: junta as listas da lista e dos vistos
             pg.wait_for_selector("#parecidos .cartao")
             self.assertIn("Parecidos com os seus livros", pg.inner_text("#parecidos h2"))
+            # Romance Um saiu: foi salvo no Kindle, e "Romance Dois" (visto) o traz no cartão do livro físico; os vistos também saem
+            self.assertEqual(parecidos(), ["Fantasia Dois", "Romance Três"])
+            por = dict(zip(pg.eval_on_selector_all("#parecidos .cartao .t", "e => e.map(x => x.textContent)"),
+                           pg.eval_on_selector_all("#parecidos .cartao", "e => e.map(x => x.querySelector('.por').textContent)")))
+            self.assertEqual(por, {"Romance Três": "como Romance Um", "Fantasia Dois": "como Fantasia Um"})
+            pg.click('[data-acao="limpar-recentes"]')                                    # sem os vistos, só a lista
+            pg.wait_for_function("document.querySelectorAll('#parecidos .cartao').length === 2 && !document.querySelector('#parecidos .por')")
             self.assertEqual(parecidos(), ["Romance Dois", "Romance Três"])
-            pg.goto(f"{base}/?livro=A000000001")                                      # tira da lista; só sobram os vistos
-            pg.wait_for_selector("[data-salvar][aria-pressed=true]")
-            pg.click("[data-salvar]")
-            pg.goto(f"{base}/")
-            pg.wait_for_selector("#parecidos .cartao")
-            pg.click('[data-acao="limpar-recentes"]')                                    # limpar os vistos tira os parecidos
-            self.assertEqual(pg.locator("#parecidos").count(), 0)
+            pg2 = b.new_page()                                                          # erro ao buscar os parecidos: a seção some
+            pg2.on("pageerror", lambda e: erros.append(str(e)))
+            pg2.route("**/dados/p/**", lambda rota: rota.fulfill(status=500, body="erro"))
+            pg2.goto(f"{base}/?livro=A000000002")
+            pg2.wait_for_selector("#graf svg")
+            pg2.wait_for_function("!document.querySelector('#parecidos')")
             b.close()
         self.assertEqual(erros, [])
 
