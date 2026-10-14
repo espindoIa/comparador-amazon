@@ -3,7 +3,7 @@
  * Dados em dados/*.json, gerados por `python -m comparador site` (formato descrito em site.py). */
 (function () {
   'use strict';
-  var L = window.Livro, Lista = window.Lista, Busca = window.Busca, esc = L.esc, brl = L.brl;
+  var L = window.Livro, Lista = window.Lista, Busca = window.Busca, Recomenda = window.Recomenda, esc = L.esc, brl = L.brl;
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var app = $('#app'), q = $('#q');
   var CAPA = 'https://m.media-amazon.com/images/I/';
@@ -291,6 +291,7 @@
       var rec = Lista.recentes();
       if (rec.length) out.push('<section class="sec"><div class="sec-h"><h2>Vistos recentemente</h2><button type="button" class="lnk" data-acao="limpar-recentes">Limpar</button></div><div class="estante">' +
         rec.map(function (v) { return cartao({ asin: v.a, preco: 0, o: { t: v.t, img: v.img } }); }).join('') + '</div></section>');
+      if (Lista.ler().length || rec.length) out.push('<section class="sec" id="parecidos"></section>');
       var prox = ev.filter(function (e) { return e[1] >= x.hoje; }).sort(function (a, b) { return a[1] - b[1]; })[0];
       if (prox) {
         var d = new Date((prox[1] - 719163) * 864e5), faltam = prox[1] - x.hoje;
@@ -309,7 +310,9 @@
       secaoBaixa(x);
       arrumarEstantes();
       rolar(); focarTela();
-      if ($('#sua-lista')) indiceCompleto().then(function (ix) { if (aindaEm(r)) suaLista(ix); });
+      // "Sua lista" e "Parecidos" precisam do índice inteiro (os livros salvos podem estar em qualquer parte)
+      if ($('#sua-lista') || $('#parecidos')) indiceCompleto().then(function (ix) { if (aindaEm(r)) { suaLista(ix); parecidosInicio(ix); } },
+        function () { var el = $('#parecidos'); if (el && aindaEm(r)) el.remove(); });
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar o catálogo'); });
   }
   function suaLista(x) {
@@ -321,6 +324,48 @@
       meus.map(function (e) { return cartao(e, 0, alv[e.asin] && e.preco <= alv[e.asin] ? 'no seu preço' : ''); }).join('') + '</div>';
     arrumarEstantes();
   }
+  // ---------- livros parecidos (recomenda.js) ----------
+  // A estante usa a edição mais barata de cada obra. Livros de partida: a lista (peso 2) e os vistos recentemente
+  // (peso 1, menos para os mais antigos); um livro nas duas soma os pesos.
+  var memoParecidos = { k: null, r: null };
+  function maisBarata(o) { return o.eds.reduce(function (a, b) { return b.preco && (!a.preco || b.preco < a.preco) ? b : a; }); }
+  function raridade(x) {
+    if (x.idfDe !== x.obras.length) { x.idf = Recomenda.raridade(x.obras); x.idfDe = x.obras.length; }
+    return x.idf;
+  }
+  function estanteParecidos(tit, obras) {
+    var el = $('#parecidos'); if (!el) return;
+    if (!obras.length) { el.remove(); return; }
+    el.innerHTML = '<div class="sec-h"><h2>' + esc(tit) + '</h2></div><div class="estante">' +
+      obras.map(function (o) { return cartao(maisBarata(o)); }).join('') + '</div>';
+    arrumarEstantes();
+  }
+  function parecidosInicio(x) {
+    if (!$('#parecidos')) return;
+    var pesos = new Map(), chave = [x.obras.length];
+    function somar(asin, w) { var e = x.porAsin[asin]; if (e) { pesos.set(e.o, (pesos.get(e.o) || 0) + w); chave.push(asin + w); } }
+    Lista.ler().forEach(function (a) { somar(a, 2); });
+    Lista.recentes().forEach(function (v, i) { somar(v.a, Math.max(0.4, 1 - i * 0.05)); });
+    chave = chave.join();
+    if (memoParecidos.k !== chave) {
+      var sementes = [], obras = [];
+      pesos.forEach(function (w, o) { obras.push(o); sementes.push({ gen: o.gen, autor: o.autor, idioma: o.idioma, peso: w }); });
+      memoParecidos = { k: chave, r: Recomenda.recomendar(x.obras, sementes, { excluir: obras, idf: raridade(x) }) };
+    }
+    estanteParecidos('Parecidos com os seus livros', memoParecidos.r);
+  }
+  // Na página do livro, o ponto de partida é o próprio livro (do histórico, mesmo que ele não esteja no índice). O índice
+  // é baixado depois que a página aparece, e a estante usa a primeira parte (os mais avaliados), sem esperar as outras.
+  // O autor e as estantes ao lado ("Outras edições", "Mais de …") ficam de fora para não repetir livros.
+  function parecidosLivro(x, asin, l, o) {
+    var gen = (l.gen || []).map(function (g) { return x.genPorNo[g[0]]; }).filter(function (n) { return n != null; });
+    var fora = [];
+    [[asin]].concat(l.eds || [], l.outras || [], l.mesmo_autor || []).forEach(function (c) { var e = x.porAsin[c[0]]; if (e) fora.push(e.o); });
+    var autor = l.autor1 || o.autor;
+    estanteParecidos('Parecidos com este livro', Recomenda.recomendar(x.obras, [{ gen: gen, autor: autor, idioma: o.idioma, peso: 1 }],
+      { excluir: fora, semAutor: autor ? [autor] : [], idf: raridade(x) }));
+  }
+
   // "Baixaram de preço": uma estante; "Ver todos" vira uma grade com tudo
   function secaoBaixa(x) {
     var el = $('#baixa'); if (!el) return;
@@ -545,11 +590,13 @@
         '<div class="fat">' + (recente ? '' : '<span class="pill wr">Sem coleta recente</span>') + (menorRegistrado(tr, f) ? MENOR.replace('menor', 'Menor') : '') + L.comparacoes(f) + '</div></div>' +
         '<div class="l-resto"><section class="card pad sec"><div id="graf"></div>' + L.estatisticas(f, tr[0][0]) + '</section>' +
         L.secaoEventos(tr, ev, m.ultima_coleta || ult) + estante('Outras edições', l.outras) +
-        estante('Mais de ' + (l.autor1 || o.autor), l.mesmo_autor) + '</div></div></div>';
+        estante('Mais de ' + (l.autor1 || o.autor), l.mesmo_autor) + '<section class="sec" id="parecidos"></section></div></div></div>';
       botaoSalvar();
       arrumarEstantes();
       L.grafico($('#graf'), L.dadosGrafico(tr, ev));
       rolar(); focarTela();
+      indice().then(function (x) { if (aindaEm(r)) parecidosLivro(x, asin, l, o); },
+        function () { var el = $('#parecidos'); if (el && aindaEm(r)) el.remove(); });
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar este livro'); });
   }
   function botaoSalvar() {
@@ -705,6 +752,7 @@
         '<dt>Menor preço registrado</dt><dd>O menor preço desde o início da coleta, quando o livro tem ' + L.MIN_COMUM + ' dias de coleta ou mais.</dd>' +
         '<dt>Baixaram de preço</dt><dd>Queda de 5% ou mais nas duas últimas coletas.</dd>' +
         '<dt>Preço-alvo</dt><dd>O preço que você quer pagar. Fica só neste aparelho; o site não manda avisos.</dd>' +
+        '<dt>Parecidos</dt><dd>Livros com gêneros, autor e idioma em comum com os da sua lista e os que você viu, ou com o livro aberto. A conta é feita no seu navegador; nada sai do aparelho.</dd>' +
         '<dt>Datas de promoção</dt><dd>O preço no dia, comparado com o dos 90 dias anteriores.</dd></dl>' +
         '<h2>Limites</h2><ul><li>Só entram os ~2.000 mais vendidos de cada categoria, vendidos pela própria Amazon.</li>' +
         '<li>Dias sem coleta ficam em branco no gráfico.</li><li>O preço pode mudar a qualquer momento. Confira na loja.</li></ul>' +
