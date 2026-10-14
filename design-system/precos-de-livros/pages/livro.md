@@ -13,7 +13,7 @@
   - formatos (`.fmt`, `aria-current`);
   - preço grande (`--fs-12`, fonte do sistema), com as comparações em pílulas;
   - o cartão do gráfico e as estatísticas;
-  - datas de promoção e estantes ("Outras edições", "Mais de …").
+  - datas de promoção e estantes ("Outras edições", "Mais de …", "Parecidos com este livro").
 - **No celular**: a capa (108 px) fica ao lado do título e o resto vem embaixo, com a mesma marcação.
 
 ## Gráfico (`livro.js`, `grafico`)
