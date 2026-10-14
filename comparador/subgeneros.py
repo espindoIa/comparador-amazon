@@ -23,10 +23,10 @@ import gzip
 import json
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import busca, rede, ritmo, varredura
+from . import busca, parecidos, rede, ritmo, varredura
 
 POR_PAGINA = 16
 MAX_PAGINAS = 400             # teto do experimento, contando as páginas que já estão em disco
@@ -34,14 +34,22 @@ PAUSA = 4.0                   # segundos entre dois pedidos à Amazon (o mínimo
 ERROS_SEGUIDOS = 3            # falhas de rede ou de HTTP seguidas que encerram a execução (o bloqueio encerra na primeira)
 PASSADA_DO_COLETOR = 13_000   # páginas de uma passada completa do coletor (~13 mil, ver `varrer --help`), para comparar o custo
 KS = (5, 10, 20, 75)          # páginas por folha que o resumo compara (75 é o que a Amazon mostra)
+K_PADRAO = 10                 # páginas por folha na coleta recorrente (a cobertura do piloto: 38,5% das obras do gênero)
+INTERVALO_DIAS = 14           # entre o fim de um ciclo e o começo do seguinte (provisório: a estabilidade dos rótulos não foi medida)
+EXECUCOES_ATE_ACEITAR = 3     # um ciclo com páginas que não vêm termina assim mesmo depois de tantas execuções
+PAUSA_BLOQUEIO_H = 24         # pausa depois do primeiro bloqueio; dobra a cada um seguido
+PAUSA_MAXIMA_DIAS = 7
+MIN_FOLHAS_NOVAS = 0.5        # um snapshot com menos que isto das folhas do anterior não é publicado (layout novo, erro de leitura)
 _ARQUIVO_RE = re.compile(r"^no-(\d+)-p1\.html\.gz$")
 
 
 class Cache:
-    """O HTML de cada página lida, em <pasta>/paginas/no-<nó>-p<N>.html.gz."""
+    """O HTML de cada página lida, em <pasta>/paginas/no-<nó>-p<N>.html.gz. É o armazém do experimento: guarda tudo, e a
+    árvore e os rótulos se refazem dele. (`Compacto` guarda só o que a conta usa.)"""
 
     def __init__(self, pasta: Path | str):
         self.pasta = Path(pasta) / "paginas"
+        self.problemas = Path(pasta) / "problemas"          # onde vai o HTML das páginas que a Amazon bloqueou
 
     def _arquivo(self, no: str, pagina: int) -> Path:
         return self.pasta / f"no-{no}-p{pagina}.html.gz"
@@ -71,15 +79,65 @@ class Cache:
     def __len__(self) -> int:
         return sum(1 for _ in self.pasta.glob("no-*-p*.html.gz")) if self.pasta.is_dir() else 0
 
+    def info(self, no: str) -> dict | None:
+        """`ler_no` da página 1 do nó, ou None se ela não está em disco."""
+        html = self.ler(no, 1)
+        return None if html is None else ler_no(html, no)
+
+    def cards(self, no: str, pagina: int) -> list[list[str]] | None:
+        """`cards_da_pagina` da página, ou None se ela não está em disco."""
+        html = self.ler(no, pagina)
+        if html is None:
+            return None
+        try:
+            return cards_da_pagina(html)
+        except busca.LayoutDesconhecido:
+            return []
+
+
+class Compacto:
+    """O que a conta usa de cada página lida, e nada mais (uns 400 bytes por página, em vez de ~100 KB de HTML): da página 1,
+    o que `ler_no` diz do nó; de todas, os cards. É o armazém da coleta recorrente, cujo estado precisa caber numa release
+    e continuar entre execuções. `paginas` é um dicionário {"nó/página": {"i": info ou None, "c": cards}} (o do estado)."""
+
+    def __init__(self, paginas: dict | None = None, problemas: Path | None = None):
+        self.paginas = paginas if paginas is not None else {}
+        self.problemas = problemas
+
+    def existe(self, no: str, pagina: int) -> bool:
+        return f"{no}/{pagina}" in self.paginas
+
+    def gravar(self, no: str, pagina: int, html: str) -> None:
+        try:
+            cards = cards_da_pagina(html)
+        except busca.LayoutDesconhecido:
+            cards = []
+        self.paginas[f"{no}/{pagina}"] = {"i": ler_no(html, no) if pagina == 1 else None, "c": cards}
+
+    def info(self, no: str) -> dict | None:
+        p = self.paginas.get(f"{no}/1")
+        return p and p["i"]
+
+    def cards(self, no: str, pagina: int) -> list[list[str]] | None:
+        p = self.paginas.get(f"{no}/{pagina}")
+        return p and p["c"]
+
+    def nos(self) -> list[str]:
+        return sorted(k[:-2] for k in self.paginas if k.endswith("/1"))
+
+    def __len__(self) -> int:
+        return len(self.paginas)
+
 
 class Leitor:
-    """Entrega o HTML de uma página: do cache ou da Amazon, uma por vez e com pausa. Para de pedir ao chegar no teto, na
-    primeira página bloqueada ou depois de ERROS_SEGUIDOS falhas seguidas (`parou` diz qual); a partir daí só entrega o que
-    está no cache. Quem lê o resultado separa "parou" (acabou a execução) de "esta página falhou" (`erro`)."""
+    """Garante que uma página está no armazém: já está, ou vem da Amazon, uma por vez e com pausa. Para de pedir ao chegar no
+    teto, no fim do prazo, na primeira página bloqueada ou depois de ERROS_SEGUIDOS falhas seguidas (`parou` diz qual); a
+    partir daí só reconhece o que já está no armazém. Quem lê o resultado separa "parou" (acabou a execução) de "esta página
+    falhou" (`erro`). `prazo`: instante (no `relogio`) a partir do qual não se pede mais nada."""
 
-    def __init__(self, sessao, cache: Cache, *, max_paginas: int = MAX_PAGINAS, pausa: float = PAUSA,
-                 dormir=time.sleep, relogio=time.monotonic, aviso=lambda texto: None):
-        self.sessao, self.cache = sessao, cache
+    def __init__(self, sessao, cache: Cache | Compacto, *, max_paginas: int = MAX_PAGINAS, pausa: float = PAUSA,
+                 dormir=time.sleep, relogio=time.monotonic, aviso=lambda texto: None, prazo: float | None = None):
+        self.sessao, self.cache, self.prazo = sessao, cache, prazo
         self.max_paginas, self.pausa, self.dormir, self.relogio, self.aviso = max_paginas, pausa, dormir, relogio, aviso
         self.usadas = len(cache)         # páginas em disco mais os pedidos desta execução: o que conta para o teto
         self.pedidas = 0                 # pedidos à Amazon desta execução (as falhas também contam)
@@ -88,17 +146,19 @@ class Leitor:
         self._ultimo: float | None = None
         self._falhas = 0
 
-    def pagina(self, no: str, pagina: int) -> str | None:
-        """O HTML da página `pagina` dos mais vendidos de `no`, ou None (ver `parou` e `erro`)."""
+    def pagina(self, no: str, pagina: int) -> bool:
+        """A página `pagina` dos mais vendidos de `no` está no armazém? Não estando, tenta pedi-la (ver `parou` e `erro`)."""
         self.erro = None
-        html = self.cache.ler(no, pagina)
-        if html is not None:
-            return html
+        if self.cache.existe(no, pagina):
+            return True
         if self.parou:
-            return None
+            return False
+        if self.prazo is not None and self.relogio() >= self.prazo:
+            self.parou = "tempo"
+            return False
         if self.usadas >= self.max_paginas:
             self.parou = f"teto de {self.max_paginas} páginas"
-            return None
+            return False
         if self._ultimo is not None and (falta := self.pausa - (self.relogio() - self._ultimo)) > 0:
             self.dormir(falta)
         _, html, erro = rede.baixar(self.sessao, busca.url_busca(no, 0, busca.SEM_TETO, pagina, "vendidos"))
@@ -109,8 +169,8 @@ class Leitor:
             self._falhas = 0
             self.cache.gravar(no, pagina, html)
             self.aviso(f"página {self.usadas}/{self.max_paginas}: nó {no} p{pagina}")
-            return html
-        rede.guardar_html(self.cache.pasta.parent / "problemas", f"no-{no}-p{pagina}", html)
+            return True
+        rede.guardar_html(self.cache.problemas, f"no-{no}-p{pagina}", html)
         self.erro = f"{erro.status}: {erro.detalhe}"
         if erro.status == "bloqueado":
             self.parou = "bloqueio"
@@ -118,7 +178,7 @@ class Leitor:
             self._falhas += 1
             if self._falhas >= ERROS_SEGUIDOS:
                 self.parou = f"{ERROS_SEGUIDOS} erros seguidos"
-        return None
+        return False
 
 
 def no_com_erro(detalhe: str | None) -> dict:
@@ -156,9 +216,9 @@ def ler_no(html: str, no: str) -> dict:
     return info
 
 
-def arvore_do_cache(cache: Cache) -> dict:
-    """Os nós que têm a página 1 em disco, lidos do HTML (o `arvore.json` é só uma cópia disso)."""
-    return {no: ler_no(cache.ler(no, 1) or "", no) for no in cache.nos()}
+def arvore_do_cache(cache: Cache | Compacto) -> dict:
+    """Os nós que têm a página 1 no armazém, lidos dele (o `arvore.json` é só uma cópia disso)."""
+    return {no: cache.info(no) or no_com_erro("página ilegível") for no in cache.nos()}
 
 
 def descobrir(leitor: Leitor, raizes: list[str], profundidade: int | None = None, salvar=None, aviso=lambda texto: None) -> dict:
@@ -179,15 +239,14 @@ def descobrir(leitor: Leitor, raizes: list[str], profundidade: int | None = None
         no, nivel = fila.popleft()
         novo = no not in nos
         if novo:
-            html = leitor.pagina(no, 1)
-            if html is None:
+            if not leitor.pagina(no, 1):
                 if leitor.parou:
                     fila.appendleft((no, nivel))
                     break
                 falhas[no] = no_com_erro(leitor.erro)
                 aviso(f"{no}: não veio ({leitor.erro})")
                 continue
-            nos[no] = ler_no(html, no)
+            nos[no] = leitor.cache.info(no)
         info = nos[no]
         if info["status"] == "interno" and (profundidade is None or nivel < profundidade):
             for filho, _ in info["filhos"]:
@@ -235,7 +294,7 @@ def custo(arvore: dict, k: int, de: str | None = None) -> int:
     return sum(min(i["paginas"], k) for i in folhas_de(arvore, de).values())
 
 
-def k_pelo_orcamento(arvore: dict, cache: Cache, de: str | None = None, max_paginas: int = MAX_PAGINAS) -> int:
+def k_pelo_orcamento(arvore: dict, cache: Cache | Compacto, de: str | None = None, max_paginas: int = MAX_PAGINAS) -> int:
     """O maior K tal que ler as K primeiras páginas de cada folha cabe no que falta do teto (o que já está em disco não custa)."""
     folhas, livres, melhor = folhas_de(arvore, de), max_paginas - len(cache), 0
     for k in range(1, max((i["paginas"] for i in folhas.values()), default=0) + 1):
@@ -252,7 +311,7 @@ def rotular(leitor: Leitor, arvore: dict, k: int, de: str | None = None) -> None
     folhas = folhas_de(arvore, de)
     for p in range(1, k + 1):
         for no, info in folhas.items():
-            if p <= info["paginas"] and leitor.pagina(no, p) is None and leitor.parou:
+            if p <= info["paginas"] and not leitor.pagina(no, p) and leitor.parou:
                 return
 
 
@@ -267,17 +326,17 @@ def cards_da_pagina(html: str) -> list[list[str]]:
     return list(cards.values())
 
 
-def rotulos(cache: Cache, arvore: dict, k: int, de: str | None = None) -> dict:
+def rotulos(cache: Cache | Compacto, arvore: dict, k: int, de: str | None = None) -> dict:
     """{folha: {nome, total, exato, paginas: [página 1, página 2, ...]}} lido do cache (ver `cards_da_pagina`): só as
     páginas que estão em disco, de 1 até `k`, sem buracos."""
     saida = {}
     for no, info in folhas_de(arvore, de).items():
         paginas = []
         for p in range(1, min(k, info["paginas"]) + 1):
-            html = cache.ler(no, p)
-            if html is None:
+            cards = cache.cards(no, p)
+            if cards is None:
                 break
-            paginas.append(cards_da_pagina(html))
+            paginas.append(cards)
         saida[no] = {"nome": info["nome"], "total": info["total"], "exato": info["exato"], "paginas": paginas}
     return saida
 
@@ -365,6 +424,134 @@ def texto_resumo(arvore: dict, ks=KS) -> str:
     return "\n".join(linhas)
 
 
+class Estado:
+    """O que a coleta recorrente guarda entre uma execução e outra (asset da release, `estado.json.gz`): o ciclo em andamento
+    (as páginas já lidas, em `Compacto`), a pausa depois de bloqueio e o fim do último ciclo. Um arquivo que existe mas não
+    se lê é erro (ValueError): recomeçar do zero apagaria a pausa e leria de novo o que já foi lido."""
+
+    VERSAO = 1
+
+    def __init__(self, dados: dict | None = None):
+        d = dados or {}
+        self.ciclo: dict | None = d.get("ciclo")                  # {"inicio", "k", "nos", "execucoes", "paginas": {...}}
+        self.pausa_ate: str | None = d.get("pausa_ate")
+        self.bloqueios: int = d.get("bloqueios", 0)               # bloqueios seguidos (zera quando um ciclo termina)
+        self.ultimo_snapshot: str | None = d.get("ultimo_snapshot")
+
+    def dados(self) -> dict:
+        return {"v": self.VERSAO, "ciclo": self.ciclo, "pausa_ate": self.pausa_ate, "bloqueios": self.bloqueios,
+                "ultimo_snapshot": self.ultimo_snapshot}
+
+    @classmethod
+    def ler(cls, arquivo: Path) -> "Estado":
+        if not arquivo.exists():
+            return cls()
+        try:
+            dados = json.loads(gzip.decompress(arquivo.read_bytes()).decode("utf-8"))
+        except (OSError, EOFError, ValueError) as e:
+            raise ValueError(f"estado ilegível em {arquivo}: {e}") from e
+        if not isinstance(dados, dict) or dados.get("v") != cls.VERSAO:
+            raise ValueError(f"estado de outra versão em {arquivo}")
+        return cls(dados)
+
+    def gravar(self, arquivo: Path) -> None:
+        arquivo.parent.mkdir(parents=True, exist_ok=True)
+        provisorio = arquivo.with_name(arquivo.name + ".tmp")
+        provisorio.write_bytes(gzip.compress(json.dumps(self.dados(), ensure_ascii=False).encode("utf-8"), 6))
+        provisorio.replace(arquivo)
+
+
+def comparar_snapshots(antigo: dict, novo: dict) -> str:
+    """Quanto o snapshot mudou: folhas que entraram e saíram e, nas folhas que ficaram, a parte dos ASINs que trocou. É a
+    medida da estabilidade dos rótulos, que decide o intervalo entre ciclos."""
+    a = {f["no"]: set(f["asins"]) for f in antigo["folhas"]}
+    n = {f["no"]: set(f["asins"]) for f in novo["folhas"]}
+    comuns = a.keys() & n.keys()
+    base = sum(len(a[x]) for x in comuns)
+    trocaram = sum(len(a[x] ^ n[x]) for x in comuns)
+    return (f"folhas: {len(n)} (antes {len(a)}; entraram {len(n.keys() - a.keys())}, saíram {len(a.keys() - n.keys())}); "
+            f"nas {len(comuns)} que ficaram, {trocaram} ASINs entraram ou saíram de {base} ({trocaram / base:.1%})"
+            if base else f"folhas: {len(n)} (antes {len(a)}; nenhuma em comum)")
+
+
+def _iso(quando: datetime) -> str:
+    return quando.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def atualizar(abrir_sessao, pasta: Path, *, generos: list[str], k: int = K_PADRAO, minutos: float = 300, intervalo_dias: float = INTERVALO_DIAS,
+              max_paginas: int = 3000, pausa: float = PAUSA, novo_ciclo: bool = False, anterior: dict | None = None,
+              agora=lambda: datetime.now(timezone.utc), dormir=time.sleep, relogio=time.monotonic, aviso=print) -> int:
+    """Uma execução da coleta recorrente (`abrir_sessao()` devolve a sessão, e só é chamada se houver o que ler): continua (ou começa) o ciclo que lê as árvores dos `generos` e as `k` primeiras páginas
+    de cada folha, até `minutos` ou `max_paginas` pedidas, e guarda o estado em `pasta/estado.json.gz`. Quando o ciclo termina,
+    escreve `pasta/snapshot-novo.json` (e diz o que mudou em relação a `anterior`, se dado). Devolve o código de saída:
+    0 (terminou, continua depois ou não havia o que fazer) ou 1 (bloqueio ou falhas seguidas, que gravam a pausa; estado
+    ilegível; snapshot recusado)."""
+    arquivo_estado = pasta / "estado.json.gz"
+    try:
+        estado = Estado.ler(arquivo_estado)
+    except ValueError as e:
+        aviso(f"{e}; não vou começar do zero")
+        return 1
+    agora_ = agora()
+    if estado.pausa_ate and agora_ < datetime.fromisoformat(estado.pausa_ate):
+        aviso(f"em pausa até {estado.pausa_ate} (bloqueio ou snapshot recusado); nada a fazer")
+        return 0
+    if novo_ciclo:
+        estado.ciclo = None
+    if estado.ciclo is None:
+        if not novo_ciclo and estado.ultimo_snapshot and agora_ - datetime.fromisoformat(estado.ultimo_snapshot) < timedelta(days=intervalo_dias):
+            aviso(f"nada a fazer: o último snapshot é de {estado.ultimo_snapshot} e o intervalo é de {intervalo_dias:g} dias")
+            return 0
+        estado.ciclo = {"inicio": _iso(agora_), "k": k, "nos": list(generos), "execucoes": 0, "paginas": {}}
+    ciclo = estado.ciclo
+    ciclo["execucoes"] += 1
+    armazem = Compacto(ciclo["paginas"], pasta / "problemas")
+    lidas = [0]
+
+    def avisar(texto: str) -> None:                       # a cada 50 páginas o estado vai para o disco (um corte do job não perde tudo)
+        aviso(texto)
+        lidas[0] += 1
+        if lidas[0] % 50 == 0:
+            estado.gravar(arquivo_estado)
+
+    sessao = abrir_sessao()
+    leitor = Leitor(sessao, armazem, max_paginas=len(armazem) + max_paginas, pausa=pausa, dormir=dormir, relogio=relogio,
+                    aviso=avisar, prazo=relogio() + minutos * 60)
+    codigo = 0
+    try:
+        arvore = descobrir(leitor, ciclo["nos"], None)
+        if arvore["completa"]:
+            rotular(leitor, arvore, ciclo["k"])
+        folhas = folhas_de(arvore)
+        faltam = sum(1 for no, i in folhas.items() for p in range(1, min(i["paginas"], ciclo["k"]) + 1) if not armazem.existe(no, p))
+        aviso(f"{leitor.pedidas} páginas pedidas nesta execução; {len(armazem)} no ciclo; {len(folhas)} folhas; "
+              f"{faltam} páginas de folha ainda por ler" + (f"; parou: {leitor.parou}" if leitor.parou else ""))
+        if leitor.parou and leitor.parou not in ("tempo",) and not leitor.parou.startswith("teto"):
+            estado.bloqueios += 1
+            horas = min(PAUSA_BLOQUEIO_H * 2 ** (estado.bloqueios - 1), PAUSA_MAXIMA_DIAS * 24)
+            estado.pausa_ate = _iso(agora() + timedelta(hours=horas))
+            aviso(f"{leitor.parou}: pausa de {horas:g} h, até {estado.pausa_ate}")
+            codigo = 1
+        elif arvore["completa"] and not leitor.parou and (not faltam or ciclo["execucoes"] >= EXECUCOES_ATE_ACEITAR):
+            snap = montar_snapshot(arvore, rotulos(armazem, arvore, ciclo["k"]), ciclo["k"], ciclo["nos"], _iso(agora()))
+            if anterior and len(snap["folhas"]) < MIN_FOLHAS_NOVAS * len(anterior["folhas"]):
+                aviso(f"snapshot recusado: {len(snap['folhas'])} folhas contra {len(anterior['folhas'])} no anterior (menos de "
+                      f"{MIN_FOLHAS_NOVAS:.0%}); a Amazon mudou o layout ou a leitura falhou. Próximo ciclo só depois do intervalo")
+                estado.pausa_ate = _iso(agora() + timedelta(days=intervalo_dias))
+                codigo = 1
+            else:
+                gravar_json(pasta / "snapshot-novo.json", snap)
+                aviso(f"ciclo completo: {len(snap['folhas'])} folhas, {sum(len(x['asins']) for x in snap['folhas'])} ASINs"
+                      + (f"; troca em relação ao anterior: {comparar_snapshots(anterior, snap)}" if anterior else ""))
+                estado.ultimo_snapshot, estado.bloqueios, estado.pausa_ate = snap["gerado_em"], 0, None
+            estado.ciclo = None
+    finally:
+        estado.gravar(arquivo_estado)
+        if hasattr(sessao, "fechar"):
+            sessao.fechar()
+    return codigo
+
+
 def gravar_json(arquivo: Path, dados) -> None:
     arquivo.parent.mkdir(parents=True, exist_ok=True)
     provisorio = arquivo.with_name(arquivo.name + ".tmp")
@@ -376,6 +563,18 @@ def executar(args) -> None:
     """O comando `subgeneros` (os argumentos vêm de __main__.py). Nunca abre banco."""
     pasta = Path(args.pasta)
     arquivo_arvore = pasta / "arvore.json"
+    if args.passo == "atualizar":
+        nos = [n.strip() for n in args.nos.split(",") if n.strip()] if args.nos else sorted(parecidos.GENEROS_FICCAO)
+        desconhecidos = [n for n in nos if n not in varredura.GENEROS]
+        if desconhecidos:
+            raise SystemExit(f"gênero desconhecido: {', '.join(desconhecidos)}")
+        anterior = ler_snapshot(args.anterior) if args.anterior and Path(args.anterior).exists() else None
+        codigo = atualizar(lambda: rede.nova_sessao(args.cliente), pasta, generos=nos, k=args.k, minutos=args.minutos,
+                           intervalo_dias=args.intervalo_dias, max_paginas=args.max_paginas, pausa=args.pausa,
+                           novo_ciclo=args.novo_ciclo, anterior=anterior)
+        if codigo:
+            raise SystemExit(codigo)
+        return
     if args.passo == "custo":
         if not arquivo_arvore.exists():
             raise SystemExit(f"{arquivo_arvore} não existe: rode `subgeneros descobrir --pasta {pasta}` antes")

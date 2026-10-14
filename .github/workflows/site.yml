@@ -59,8 +59,17 @@ jobs:
       - id: pages
         uses: actions/configure-pages@v5
 
+      # Segundo interruptor dos subgêneros (o primeiro liga a coleta, em subgeneros.yml): só com SUBGENEROS_NO_SITE=true o
+      # snapshot mais recente entra na conta dos parecidos. Sem snapshot ou com um que não se lê, o site sai como sempre.
+      - name: Baixa os subgêneros (opcional)
+        if: ${{ vars.SUBGENEROS_NO_SITE == 'true' }}
+        run: python scripts/subgeneros_release.py baixar-snapshot "$RUNNER_TEMP/subgeneros.json"
+
       - name: Gera o site
-        run: python -m comparador site "$RUNNER_TEMP"/bancos/*.db --saida site --url "${{ steps.pages.outputs.base_url }}"
+        run: |
+          SUB=()
+          if [ -f "$RUNNER_TEMP/subgeneros.json" ]; then SUB=(--subgeneros "$RUNNER_TEMP/subgeneros.json"); fi
+          python -m comparador site "$RUNNER_TEMP"/bancos/*.db --saida site --url "${{ steps.pages.outputs.base_url }}" "${SUB[@]}"
 
       # Um banco incompleto ou um erro na geração não pode trocar o site bom por um quase vazio.
       - name: Confere se o site não encolheu

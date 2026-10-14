@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ espera = carregar("espera")
 vigia = carregar("vigia")
 conferir_site = carregar("conferir_site")
 medir_parecidos = carregar("medir_parecidos")
+subgeneros_release = carregar("subgeneros_release")
 
 
 class TestPodarCopias(unittest.TestCase):
@@ -60,6 +62,86 @@ class TestPodarCopias(unittest.TestCase):
     def test_padrao_nunca_apaga_a_mais_recente(self):
         nomes = ["catalogo-vendidos-2020-01-01-0341.db.gz"]
         self.assertEqual(podar_copias.podar(nomes, "vendidos", date(2026, 10, 12)), [])
+
+
+class TestSubgenerosRelease(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.d = Path(self.tmp.name)
+        self.log = []
+
+    def snapshot(self, nome="s.json", asin="A"):
+        import json
+        arq = self.d / nome
+        arq.write_text(json.dumps({"v": 1, "gerado_em": "x", "k": 2, "generos": [], "folhas": [
+            {"no": "1", "nome": "Épica", "total": 3, "exato": True, "asins": [asin]}]}), encoding="utf-8")
+        return arq
+
+    def publicar(self, gh, arquivo, instante, prefixo="subgeneros", **kw):
+        return subgeneros_release.publicar(prefixo, arquivo, gh, dormir=lambda s: None, log=self.log.append,
+                                           agora=lambda: time.struct_time((2026, 10, 14, *instante, 0, 0, 0, 0)), **kw)
+
+    def baixar(self, gh, conferir=None, prefixo="subgeneros", destino="saida"):
+        return subgeneros_release.baixar(prefixo, self.d / destino, conferir or subgeneros_release._snapshot_bom, gh,
+                                         dormir=lambda s: None, log=self.log.append)
+
+    def test_publica_confere_e_baixa_o_mais_recente(self):
+        gh = GhFalso(self.d, {})
+        self.assertEqual(self.publicar(gh, self.snapshot(asin="ANTIGO"), (9, 0)), 0)
+        self.assertEqual(self.publicar(gh, self.snapshot(asin="NOVO"), (10, 30)), 0)
+        self.assertEqual(sorted(gh.ativos), ["subgeneros-2026-10-14-0900.json.gz", "subgeneros-2026-10-14-1030.json.gz"])
+        self.assertEqual(self.baixar(gh), 0)
+        import json
+        self.assertEqual(json.loads((self.d / "saida").read_text())["folhas"][0]["asins"], ["NOVO"])
+
+    def test_so_ficam_as_quatro_mais_recentes_depois_de_confirmar_a_nova(self):
+        gh = GhFalso(self.d, {})
+        for hora in range(6):
+            self.publicar(gh, self.snapshot(), (hora, 0))
+        self.assertEqual(sorted(gh.ativos), [f"subgeneros-2026-10-14-{h:02d}00.json.gz" for h in range(2, 6)])
+
+    def test_envio_cortado_e_repetido_e_sem_sucesso_nao_apaga_as_antigas(self):
+        gh = GhFalso(self.d, {}, envios_ruins=1)
+        self.assertEqual(self.publicar(gh, self.snapshot(), (9, 0)), 0)
+        self.assertIn("subgeneros-2026-10-14-0900.json.gz", gh.ativos)
+        gh.envios_ruins = 5
+        self.assertEqual(self.publicar(gh, self.snapshot(), (10, 0), tentativas=2), 1)
+        self.assertEqual(sorted(gh.ativos), ["subgeneros-2026-10-14-0900.json.gz"])         # a boa de antes continua, a cortada saiu
+
+    def test_snapshot_e_estado_nao_se_misturam(self):
+        gh = GhFalso(self.d, {})
+        from comparador.subgeneros import Estado
+        e = Estado()
+        e.ultimo_snapshot = "2026-10-01T00:00:00+00:00"
+        e.gravar(self.d / "estado.json.gz")
+        self.publicar(gh, self.snapshot(), (9, 0))
+        self.publicar(gh, self.d / "estado.json.gz", (10, 0), prefixo="subgeneros-estado")
+        self.assertEqual(subgeneros_release.nomes_de(gh.assets(), "subgeneros"), ["subgeneros-2026-10-14-0900.json.gz"])
+        self.assertEqual(subgeneros_release.nomes_de(gh.assets(), "subgeneros-estado"), ["subgeneros-estado-2026-10-14-1000.json.gz"])
+        self.assertEqual(self.baixar(gh, subgeneros_release._estado_bom, "subgeneros-estado", "estado.baixado"), 0)
+        self.assertEqual(Estado.ler(self.d / "estado.baixado").ultimo_snapshot, "2026-10-01T00:00:00+00:00")     # um gz só, não dois
+
+    def test_cai_para_a_copia_anterior_quando_a_mais_nova_nao_serve(self):
+        gh = GhFalso(self.d, {})
+        self.publicar(gh, self.snapshot(asin="BOM"), (9, 0))
+        gh.ativos["subgeneros-2026-10-14-1000.json.gz"] = b"lixo"
+        self.assertEqual(self.baixar(gh), 0)
+        self.assertIn("baixado: subgeneros-2026-10-14-0900.json.gz", self.log)
+
+    def test_sem_copia_nenhuma_nao_e_erro_e_com_copias_que_nao_servem_e(self):
+        self.assertIsNone(self.baixar(GhFalso(self.d, None)))                                 # a release nem existe
+        self.assertIsNone(self.baixar(GhFalso(self.d, {"catalogo-vendidos-2026-10-14-0900.db.gz": b"x"})))
+        ruim = GhFalso(self.d, {"subgeneros-2026-10-14-0900.json.gz": b"lixo", "subgeneros-2026-10-13-0900.json.gz": b"lixo"})
+        self.assertEqual(self.baixar(ruim), 1)
+        self.assertEqual(self.baixar(ruim, subgeneros_release._estado_bom, "subgeneros"), 1)
+
+    def test_download_com_falha_tenta_de_novo(self):
+        gh = GhFalso(self.d, {})
+        self.publicar(gh, self.snapshot(), (9, 0))
+        gh.falhas_download = 2
+        self.assertEqual(self.baixar(gh), 0)
+        self.assertEqual(len(gh.baixados), 3)
 
 
 class TestMedirParecidos(unittest.TestCase):
