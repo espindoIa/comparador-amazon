@@ -367,11 +367,17 @@ class TestSite(unittest.TestCase):
         self.assertEqual(lista_da_semente(), ["B000000002", "B000000005", "B000000003", "B000000004"])      # só pelas avaliações
         snap = self.d / "sub.json"
         snap.write_text(json.dumps({"v": 1, "gerado_em": "2026-10-14T00:00:00+00:00", "k": 10, "generos": ["7882388011"], "folhas": [
-            {"no": "100", "nome": "Épica", "total": 2, "exato": True, "asins": ["B000000001", "B000000004", "ZZZZZZZZZZ"]},
-            {"no": "101", "nome": "Sem casamento", "total": 9, "exato": True, "asins": ["XXXXXXXXXX"]}]}), encoding="utf-8")
+            {"no": "100", "nome": "Épica", "total": 2, "exato": True, "asins": ["B000000004", "B000000001", "ZZZZZZZZZZ"]},
+            {"no": "101", "nome": "Sem casamento", "total": 9, "exato": True, "asins": ["XXXXXXXXXX"]},
+            {"no": "102", "nome": "Cozy", "total": 5, "exato": True, "asins": ["B000000001"]}]}), encoding="utf-8")
         self.assertEqual(lista_da_semente(snap, "out2")[0], "B000000004")        # o subgênero em comum vem na frente
+        entrada = lambda pasta, asin: json.loads((self.d / f"{pasta}/dados/p/{site.fragmento_p(asin)}.json").read_text())["p"][asin]   # noqa: E731
+        # a semente diz seus subgêneros, primeiro o que mais itens da lista dela dividem com ela (Épica: o B4; Cozy: nenhum)
+        self.assertEqual(entrada("out2", "B000000001")[4], ["Épica", "Cozy"])
+        self.assertEqual(len(entrada("out2", "B000000002")), 4)                  # quem não tem subgênero fica com os 4 itens de sempre
+        self.assertEqual(len(entrada("out", "B000000001")), 4)                   # e sem snapshot nada muda
         meta = json.loads((self.d / "out2/dados/meta.json").read_text())
-        self.assertEqual(meta["subgeneros"], {"gerado_em": "2026-10-14T00:00:00+00:00", "folhas": 2, "k": 10})
+        self.assertEqual(meta["subgeneros"], {"gerado_em": "2026-10-14T00:00:00+00:00", "folhas": 3, "k": 10})
         self.assertNotIn("subgeneros", json.loads((self.d / "out/dados/meta.json").read_text()))
         for conteudo in ("{", json.dumps({"v": 2, "folhas": []}), json.dumps({"v": 1, "folhas": [{"no": 1}]})):    # quebrado, outra versão, sem folha boa
             snap.write_text(conteudo, encoding="utf-8")
@@ -645,7 +651,7 @@ class TestFolhaDeEstilo(unittest.TestCase):
 
 @unittest.skipUnless(navegador(), "navegador não instalado")
 class TestSiteNoNavegador(unittest.TestCase):
-    def _servir(self, itens, aviso=None, avaliacoes=None, generos=None):
+    def _servir(self, itens, aviso=None, avaliacoes=None, generos=None, subgeneros=None):
         d = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, d, True)
         banco(d / "a.db", itens, aviso)
@@ -660,7 +666,9 @@ class TestSiteNoNavegador(unittest.TestCase):
             c.execute("UPDATE catalogo SET obra = 'R000000001' WHERE asin LIKE 'R%'")
             c.commit()
             c.close()
-        site.construir([d / "a.db"], d / "s", Path(RAIZ) / "eventos.csv")
+        if subgeneros:
+            (d / "sub.json").write_text(json.dumps(subgeneros), encoding="utf-8")
+        site.construir([d / "a.db"], d / "s", Path(RAIZ) / "eventos.csv", subgeneros=d / "sub.json" if subgeneros else None)
         srv = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(d / "s")))
         srv.RequestHandlerClass.log_message = lambda *a, **k: None
         threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -879,6 +887,35 @@ class TestSiteNoNavegador(unittest.TestCase):
             self.assertIn("chegou no seu preço", pg.inner_text(".resumo"))
             b.close()
         self.assertEqual(erros, [])
+
+    def test_subgeneros_do_livro_aparecem_ao_lado_do_titulo_da_estante_so_na_pagina_do_livro(self):
+        from playwright.sync_api import sync_playwright
+        h = lambda p: [("2026-10-01", "2026-10-20", p, None)]
+        romance = "7882388011"
+        snap = {"v": 1, "gerado_em": "2026-10-14T00:00:00+00:00", "k": 5, "generos": [romance], "folhas": [
+            {"no": "1", "nome": "Épica", "total": 2, "exato": True, "asins": ["A000000002", "A000000001"]},
+            {"no": "2", "nome": "Cozy", "total": 3, "exato": True, "asins": ["A000000001"]}]}
+        base = self._servir([("A000000001", "Romance Um", "Capa comum", h(4000)), ("A000000002", "Romance Dois", "Capa comum", h(2500)),
+                             ("A000000003", "Romance Três", "Capa comum", h(900))],
+                            generos={"A000000001": romance, "A000000002": romance, "A000000003": romance}, subgeneros=snap)
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            pg = b.new_page()
+            erros = []
+            pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.goto(f"{base}/?livro=A000000001")
+            pg.wait_for_selector("#parecidos .cartao")
+            self.assertEqual(pg.inner_text("#parecidos .sec-h .nota"), "Épica · Cozy")          # a que a lista dele mais deve, primeiro
+            pg.goto(f"{base}/?livro=A000000003")                                                 # sem subgênero: nada ao lado do título
+            pg.wait_for_selector("#parecidos .cartao")
+            self.assertEqual(pg.locator("#parecidos .sec-h .nota").count(), 0)
+            pg.goto(f"{base}/")
+            pg.evaluate("localStorage.setItem('lista_v1', JSON.stringify(['A000000001']))")
+            pg.goto(f"{base}/")
+            pg.wait_for_selector("#parecidos .cartao")
+            self.assertEqual(pg.locator("#parecidos .sec-h .nota").count(), 0)                  # no início, a nota não aparece
+            self.assertEqual(erros, [])
+            b.close()
 
     def test_parecidos_no_inicio_e_na_pagina_do_livro(self):
         from playwright.sync_api import sync_playwright

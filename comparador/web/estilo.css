@@ -92,6 +92,7 @@ input::placeholder{color:var(--mu)}
 .sec-h h2{font-size:var(--fs-8)}
 .sec-h h2{margin-right:auto}
 .sec-h a,.sec-h button.lnk{font-size:var(--fs-3);font-weight:600;white-space:nowrap}
+.sec-h .nota{min-width:0;font-size:var(--fs-3);color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card{background:var(--sf);border:1px solid var(--ln);border-radius:var(--r3)}
 .pad{padding:18px}
 @media(min-width:720px){.pad{padding:22px 26px}}
