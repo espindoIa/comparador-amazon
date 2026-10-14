@@ -100,7 +100,10 @@ O app dá números, não conselhos: quem decide se o preço é bom é a pessoa.
   - Não há "quem comprou também comprou": não há esses dados. São livros parecidos, não conselhos
     de compra.
   - Limite: com 29 gêneros amplos, na ficção a lista é "os mais avaliados do gênero". Os
-    subgêneros resolveriam, mas custam páginas de coleta; ficam como experimento.
+    subgêneros resolveriam, mas custam páginas de coleta; ficam como experimento: o comando
+    `subgeneros` (`comparador/subgeneros.py`) descobre a árvore de subcategorias e mede o custo de
+    rotular, sem coleta recorrente. Coletar toda semana é decisão do dono, depois de ver o custo e o
+    benefício medidos.
 - **Mais de …** (os outros livros do autor, na página do livro) usa o mesmo cuidado com o nome: maiúsculas,
   acentos, pontuação, "Jr" e "Junior" não separam o autor; partículas e sufixos separam ("Ricardo Ramos" e
   "Ricardo Ramos Filho" são pessoas diferentes); as mesmas palavras em outra ordem ("Kiyosaki Robert T")

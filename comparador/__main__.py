@@ -1,4 +1,5 @@
-"""Preços de livros da Amazon.com.br: coleta (varrer), acompanhamento (catalogo), gráfico de um livro (grafico) e site (site)."""
+"""Preços de livros da Amazon.com.br: coleta (varrer), acompanhamento (catalogo), gráfico de um livro (grafico), site (site) e
+o experimento dos subgêneros (subgeneros)."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import cliente_http, db, rede, ritmo, varredura
+from . import cliente_http, db, rede, ritmo, subgeneros, varredura
 
 DB_PADRAO = "data/vendidos.db"
 EVENTOS_PADRAO = Path(__file__).resolve().parent.parent / "eventos.csv"     # sem ele (instalado fora do repositório): sem datas de promoção
@@ -33,6 +34,27 @@ def _inteiro_positivo(texto: str) -> int:
     if v < 1:
         raise argparse.ArgumentTypeError(f"deve ser pelo menos 1 (veio {texto})")
     return v
+
+
+def _inteiro_nao_negativo(texto: str) -> int:
+    try:
+        v = int(texto)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{texto!r} não é um número inteiro") from None
+    if v < 0:
+        raise argparse.ArgumentTypeError(f"não pode ser negativo (veio {texto})")
+    return v
+
+
+def _pausa_minima(texto: str) -> float:
+    v = _numero_positivo(texto)
+    if v < subgeneros.PAUSA:
+        raise argparse.ArgumentTypeError(f"a pausa mínima é {subgeneros.PAUSA:g} s, por cortesia com a Amazon (veio {texto})")
+    return v
+
+
+def _lista_de_inteiros(texto: str) -> tuple[int, ...]:
+    return tuple(_inteiro_positivo(x) for x in texto.split(",") if x.strip())
 
 
 def _mais_vendidos(args, parser) -> bool:
@@ -120,13 +142,14 @@ def main() -> None:
   comparador varrer --minutos 20                    lê por 20 minutos os mais vendidos de cada gênero
   comparador catalogo                               progresso de hoje e frescor do catálogo
   comparador grafico "título ou ASIN"               página avulsa com o histórico de preço de um livro
-  comparador site data/vendidos.db --saida site     gera o site"""
+  comparador site data/vendidos.db --saida site     gera o site
+  comparador subgeneros custo                       resume a árvore de subgêneros já lida (sem pedir nada à Amazon)"""
     fmt = argparse.RawDescriptionHelpFormatter
     p = argparse.ArgumentParser(prog="comparador", description=__doc__, epilog=exemplos, formatter_class=fmt)
     p.add_argument("--db", default=DB_PADRAO, help="banco do catálogo (padrão: %(default)s); vale antes ou depois do comando")
     db_opcao = argparse.ArgumentParser(add_help=False)            # o mesmo --db, depois do comando; sem valor próprio,
     db_opcao.add_argument("--db", default=argparse.SUPPRESS, help=argparse.SUPPRESS)   # para não apagar o de antes dele
-    sub = p.add_subparsers(dest="cmd", required=True, metavar="{varrer,catalogo,grafico,site}")
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="{varrer,catalogo,grafico,site,subgeneros}")
 
     v = sub.add_parser("varrer", parents=[db_opcao], formatter_class=fmt, epilog=exemplos,
                        help="lê os preços pelas páginas de busca da Amazon (por padrão, os mais vendidos de cada gênero)",
@@ -206,7 +229,48 @@ def main() -> None:
     w.add_argument("--url", default=None, help="endereço público do site, para a imagem de prévia dos links compartilhados; "
                                                "sem ele, os links aparecem sem imagem")
 
+    sg = sub.add_parser("subgeneros", formatter_class=fmt,
+                        help="experimento: árvore de subgêneros da Amazon, descoberta e custo de rotular (sem coleta recorrente)",
+                        description="Experimento da Fase C (docs/roadmap.md): descobre as subcategorias de cada gênero e mede o que "
+                                    "custaria rotular os livros com elas. Não abre o banco. Uma página por vez, com pausa, parando "
+                                    "na primeira página bloqueada; o HTML lido fica em --pasta e tudo se refaz dele sem pedir nada.")
+    passos = sg.add_subparsers(dest="passo", required=True, metavar="{descobrir,rotular,custo}")
+    pasta = argparse.ArgumentParser(add_help=False)
+    pasta.add_argument("--pasta", default="data/subgeneros",
+                       help="onde ficam as páginas lidas (HTML gz), o arvore.json e o rotulos.json (padrão: %(default)s)")
+    resumo = argparse.ArgumentParser(add_help=False)
+    resumo.add_argument("--ks", type=_lista_de_inteiros, default=subgeneros.KS, metavar="K1,K2,...",
+                        help="páginas por folha que o resumo compara (padrão: " + ",".join(map(str, subgeneros.KS)) + ")")
+    pedidos = argparse.ArgumentParser(add_help=False)             # as opções dos passos que pedem páginas à Amazon
+    pedidos.add_argument("--max-paginas", type=_inteiro_positivo, default=subgeneros.MAX_PAGINAS,
+                         help="teto de páginas, contando as que já estão em --pasta (padrão: %(default)s)")
+    pedidos.add_argument("--pausa", type=_pausa_minima, default=subgeneros.PAUSA,
+                         help="segundos entre dois pedidos (padrão e mínimo: %(default)g)")
+    pedidos.add_argument("--cliente", choices=["auto", "navegador", "curl", "requests"], default="auto",
+                         help="como ler as páginas (padrão: %(default)s = só o navegador, como no varrer)")
+    d = passos.add_parser("descobrir", parents=[pasta, resumo, pedidos], formatter_class=fmt,
+                          help="lê a página de cada nó e guarda a árvore (retoma de onde parou)",
+                          description="Busca em largura pelas subcategorias: uma página por nó, a partir dos nós de partida. O que já "
+                                      "está em --pasta não é pedido de novo.")
+    d.add_argument("--nos", help="nós de partida, separados por vírgula (padrão: os 29 gêneros)")
+    d.add_argument("--profundidade", type=_inteiro_nao_negativo, default=None,
+                   help="níveis abaixo de cada nó de partida (0: só os nós de partida; padrão: até as folhas)")
+    r = passos.add_parser("rotular", parents=[pasta, pedidos], formatter_class=fmt,
+                          help="lê as primeiras páginas de cada folha: quais livros são de cada subgênero",
+                          description="Lê as K primeiras páginas dos mais vendidos de cada folha já descoberta, uma rodada por página "
+                                      "(a 1 de todas, depois a 2...), e grava o rotulos.json.")
+    r.add_argument("--de", help="só as folhas abaixo deste nó")
+    r.add_argument("-k", type=_inteiro_positivo, default=None,
+                   help="páginas por folha (padrão: o maior K que cabe no teto; abaixo de 3 não rotula)")
+    passos.add_parser("custo", parents=[pasta, resumo], formatter_class=fmt,
+                      help="resume a árvore já lida e o custo de rotular (só lê o disco)",
+                      description="Resume o arvore.json: nós por status e nível, folhas e o custo de rotular as K primeiras páginas de "
+                                  "cada uma, comparado com uma passada do coletor.")
+
     args = p.parse_args()
+    if args.cmd == "subgeneros":
+        subgeneros.executar(args)
+        return
     if args.cmd == "site":
         from . import site
         meta = site.construir([Path(b) for b in args.bancos], Path(args.saida), _eventos(args), args.url)
