@@ -1,14 +1,18 @@
 # Coleta recorrente dos subgêneros da ficção: as árvores de subcategorias da Amazon dos gêneros de ficção
 # (comparador.parecidos.GENEROS_FICCAO) e as K primeiras páginas de mais vendidos de cada folha, para o site saber a que
 # subgêneros cada livro pertence ("Épica", "Cozy", "Ópera Espacial"...) e dar parecidos melhores. Medido num gênero só
-# (PR #47): com 10 páginas por folha, 38,5% das obras do gênero ganham rótulo; rotular toda a árvore custaria 5% a 9%
-# das páginas que o coletor lê por semana.
+# (PR #47): com 10 páginas por folha, 38,5% das obras do gênero ganham rótulo. Medido nas árvores da ficção (14/10/2026):
+# 384 folhas e 76 nós internos; um ciclo com 10 páginas por folha pede ~2.700 páginas (21% de uma passada do coletor, ~5,6 h
+# de leitura, em duas execuções), e com 5 páginas, ~1.600. Num ciclo a cada 14 dias, são ~1,5% do que o coletor lê por semana
+# (hoje no ciclo de 24 h, ~92 mil páginas). Infantil sozinho é ~25% do ciclo; para tirá-lo, SUBGENEROS_GENEROS.
 #
 # NÃO FAZ NADA até a variável de repositório SUBGENEROS_ATIVO ser "true" (Settings → Secrets and variables → Actions →
 # Variables), e nada vai para o site até SUBGENEROS_NO_SITE ser "true" (site.yml). COLETA_PAUSADA=true também desliga.
 # Variáveis opcionais: SUBGENEROS_GENEROS (nós separados por vírgula; padrão: os gêneros de ficção), SUBGENEROS_K (páginas por
 # folha; padrão 10) e SUBGENEROS_INTERVALO_DIAS (entre o fim de um ciclo e o começo do seguinte; padrão 14, provisório: a
-# estabilidade dos rótulos só se mede com a troca entre os dois primeiros ciclos, impressa no fim de cada um).
+# estabilidade dos rótulos só se mede com a troca entre os dois primeiros ciclos, impressa no fim de cada um). Um ciclo
+# guarda os gêneros e o K com que começou: mudar as variáveis vale a partir do ciclo seguinte. Um ciclo com menos da metade
+# das folhas do snapshot anterior (por exemplo, depois de tirar gêneros) é recusado, e o próximo espera o intervalo.
 #
 # Um ciclo pode passar das horas de um job (cada página custa ~7,5 s, com pausa de 4 s): por isso o ciclo continua de uma
 # execução para a seguinte. O estado (as páginas já lidas, só o que a conta usa, ~400 bytes cada) fica na release "catalogo"
@@ -85,24 +89,29 @@ jobs:
           if [ -n "$INTERVALO" ]; then ARGS+=(--intervalo-dias "$INTERVALO"); fi
           if [ -n "$NOVO_CICLO" ]; then ARGS+=(--novo-ciclo); fi
           if [ -f "$PASTA/anterior.json" ]; then ARGS+=(--anterior "$PASTA/anterior.json"); fi
-          python -m comparador subgeneros atualizar "${ARGS[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          # O log tem uma linha por página (~2.700 por ciclo); o resumo da execução fica só com o resto.
+          python -m comparador subgeneros atualizar "${ARGS[@]}" | tee "$RUNNER_TEMP/atualiza.log" || codigo=$?
+          grep -v '^página ' "$RUNNER_TEMP/atualiza.log" >> "$GITHUB_STEP_SUMMARY" || true
+          exit "${codigo:-0}"
 
-      # Roda mesmo se a leitura falhou (bloqueio): a pausa e as páginas já lidas precisam chegar à próxima execução. Só publica
-      # se o estado mudou (a execução sem nada a fazer não o toca).
-      - name: Publica o estado
-        if: ${{ always() && hashFiles('data/subgeneros/estado.json.gz') != '' }}
-        run: |
-          if [ -f "$RUNNER_TEMP/estado-antes.json.gz" ] && cmp -s "$PASTA/estado.json.gz" "$RUNNER_TEMP/estado-antes.json.gz"; then
-            echo "estado sem mudanças; nada a publicar"; exit 0
-          fi
-          python scripts/subgeneros_release.py publicar-estado "$PASTA/estado.json.gz"
-
+      # O snapshot primeiro: se o envio falhar, o estado ainda diz "ciclo em andamento" e a próxima execução refaz o snapshot
+      # com as páginas que já tem. Com o estado primeiro, "ciclo completo" ficaria gravado e nada seria lido por 14 dias.
       - name: Publica o snapshot
         id: snapshot
         if: ${{ always() && hashFiles('data/subgeneros/snapshot-novo.json') != '' }}
         run: |
           python scripts/subgeneros_release.py publicar-snapshot "$PASTA/snapshot-novo.json"
           echo "publicou=1" >> "$GITHUB_OUTPUT"
+
+      # Roda mesmo se a leitura falhou (bloqueio): a pausa e as páginas já lidas precisam chegar à próxima execução. Só publica
+      # se o estado mudou (a execução sem nada a fazer não o toca), e não se o snapshot falhou ao subir.
+      - name: Publica o estado
+        if: ${{ always() && steps.snapshot.outcome != 'failure' && hashFiles('data/subgeneros/estado.json.gz') != '' }}
+        run: |
+          if [ -f "$RUNNER_TEMP/estado-antes.json.gz" ] && cmp -s "$PASTA/estado.json.gz" "$RUNNER_TEMP/estado-antes.json.gz"; then
+            echo "estado sem mudanças; nada a publicar"; exit 0
+          fi
+          python scripts/subgeneros_release.py publicar-estado "$PASTA/estado.json.gz"
 
       # Só o site com SUBGENEROS_NO_SITE=true usa o snapshot; sem a variável, o pedido gera o site de sempre.
       - name: Pede o site novo

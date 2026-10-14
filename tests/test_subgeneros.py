@@ -768,6 +768,11 @@ class TestWorkflowsDosSubgeneros(unittest.TestCase):
         self.assertIn("hashFiles('data/subgeneros/snapshot-novo.json')", self.passo(w, "Publica o snapshot"))
         self.assertIn("steps.snapshot.outputs.publicou == '1'", self.passo(w, "Pede o site novo"))
 
+    def test_o_snapshot_sobe_antes_do_estado_e_um_snapshot_que_falhou_segura_o_estado(self):
+        w = self.texto("subgeneros.yml")
+        self.assertLess(w.index("- name: Publica o snapshot"), w.index("- name: Publica o estado"))
+        self.assertIn("steps.snapshot.outcome != 'failure'", self.passo(w, "Publica o estado"))
+
     def test_o_job_tem_mais_tempo_que_o_orcamento_das_execucoes(self):
         w = self.texto("subgeneros.yml")
         limite = int(re.search(r"timeout-minutes: (\d+)", w).group(1))
