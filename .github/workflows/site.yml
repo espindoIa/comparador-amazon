@@ -32,7 +32,8 @@ concurrency:
 jobs:
   publicar:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Sem timeout-minutes de propósito (decisão do dono, 14/10/2026): vale o padrão do GitHub, de 6 h. A geração leva uns
+    # 2 a 4 minutos; uma geração travada seguraria o grupo de concorrência "pages" até o padrão acabar.
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}

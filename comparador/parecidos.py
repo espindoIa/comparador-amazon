@@ -119,6 +119,82 @@ def chave_titulo(base: str) -> str:
     return " ".join([p for p in re.sub(r"[^a-z0-9]+", " ", _sem_acento(base)).split() if p not in _ARTIGOS][:2])
 
 
+# "Mais de …": quais grafias de autor são a mesma pessoa (chaves_do_autor)
+DOMINANCIA = 8            # uma ordem com 8 vezes as obras da outra (e a outra com poucas) é a "certa": a outra é o nome invertido
+POUCAS = 3
+_VARIANTES_AUTOR = {"junior": "jr"}
+_FIM_DA_SERIE = frozenset({"vol", "volume", "livro", "parte", "tomo", "edicao"})
+
+
+def palavras_autor(autor: str) -> tuple[str, ...]:
+    """O autor principal em palavras, sem acento nem pontuação, na ordem em que vieram e com as partículas ("de", "von") e
+    os sufixos ("Filho", "Neto"); palavra repetida conta uma vez ("Fabio Fabio Guerrini") e "Junior" vale "Jr"."""
+    return tuple(dict.fromkeys(_VARIANTES_AUTOR.get(p, p) for p in _autor_principal(autor).split()))
+
+
+def serie(base: str) -> str:
+    """O começo do título-base que identifica a série: até duas palavras, sem artigo, antes do primeiro número ou "volume"
+    ("Gokurakugai 05" → "gokurakugai", "Quero te amar até o fim 01" → "quero te"). Vazio se for curto demais."""
+    out = []
+    for p in re.sub(r"[^a-z0-9]+", " ", _sem_acento(base)).split():
+        if p in _ARTIGOS:
+            continue
+        if p.isdigit() or p in _FIM_DA_SERIE:
+            break
+        out.append(p)
+        if len(out) == 2:
+            break
+    s = " ".join(out)
+    return s if len(s) >= 5 else ""
+
+
+def chaves_do_autor(autores: list[str], bases: list[str]) -> list[str | None]:
+    """A chave de "Mais de …" de cada obra: obras com a mesma chave são do mesmo autor. `bases` são os títulos-base
+    (site.titulo_base), um por obra. None (sem "Mais de …") para autor genérico, editora, sem nome ou curto demais.
+
+    A chave é as palavras do autor principal na ordem em que vieram. Maiúsculas, acentos, pontuação, palavra repetida e
+    "Jr"/"Junior" não separam ninguém. Partículas e sufixos separam: "Paula Di Carvalho" e "Paula Carvalho", "Ricardo Ramos"
+    e "Ricardo Ramos Filho" são pessoas diferentes.
+
+    As mesmas palavras em outra ordem ("Rowling J.K" e "J. K. Rowling") só se juntam com prova: um título-base em comum,
+    a mesma série (o começo do título), ou uma ordem com DOMINANCIA vezes as obras da outra, que tem poucas (o nome invertido
+    de quem quase sempre aparece de um jeito só). Sem prova ficam separadas: "Maya Grace" e "Grace Maya", ou "Joseph Frank" e
+    "Frank Joseph" (5 obras contra 1), são pessoas diferentes."""
+    exatas: list[str | None] = []
+    for a in autores:
+        e = "" if autor_generico(a) else " ".join(palavras_autor(a))
+        exatas.append(e if len(e) >= 4 and any(c.isalpha() for c in e) else None)
+    obras_de: dict[str, list[int]] = {}
+    for i, e in enumerate(exatas):
+        if e:
+            obras_de.setdefault(e, []).append(i)
+    ordens: dict[str, list[str]] = {}                     # as mesmas palavras, em ordens diferentes
+    for e in obras_de:
+        ordens.setdefault(" ".join(sorted(e.split())), []).append(e)
+    chave = {e: e for e in obras_de}
+    for grafias in ordens.values():
+        if len(grafias) < 2:
+            continue
+        grafias.sort(key=lambda e: (-len(obras_de[e]), e))
+        bases_de = {e: {bases[i] for i in obras_de[e] if len(bases[i]) >= 4} for e in grafias}
+        series_de = {e: {serie(bases[i]) for i in obras_de[e]} - {""} for e in grafias}
+        pai = {e: e for e in grafias}
+
+        def raiz(e):
+            while pai[e] != e:
+                e = pai[e]
+            return e
+
+        for x, a in enumerate(grafias):
+            for b in grafias[x + 1:]:                       # a tem mais obras que b, ou as mesmas e vem antes
+                na, nb = len(obras_de[a]), len(obras_de[b])
+                if bases_de[a] & bases_de[b] or series_de[a] & series_de[b] or (nb <= POUCAS and na >= DOMINANCIA * nb):
+                    pai[raiz(b)] = raiz(a)
+        for e in grafias:
+            chave[e] = raiz(e)
+    return [chave[e] if e else None for e in exatas]
+
+
 def palavras(titulo: str) -> frozenset[str]:
     """As palavras do título que podem dizer o assunto: sem o que está entre parênteses, com 4 letras ou mais, sem número
     puro nem as PARADAS, no singular simples ("investimentos" → "investimento")."""

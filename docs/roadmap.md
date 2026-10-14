@@ -104,6 +104,12 @@ O app dá números, não conselhos: quem decide se o preço é bom é a pessoa.
     `subgeneros` (`comparador/subgeneros.py`) descobre a árvore de subcategorias e mede o custo de
     rotular, sem coleta recorrente. Coletar toda semana é decisão do dono, depois de ver o custo e o
     benefício medidos.
+- **Mais de …** (os outros livros do autor, na página do livro) usa o mesmo cuidado com o nome: maiúsculas,
+  acentos, pontuação, "Jr" e "Junior" não separam o autor; partículas e sufixos separam ("Ricardo Ramos" e
+  "Ricardo Ramos Filho" são pessoas diferentes); as mesmas palavras em outra ordem ("Kiyosaki Robert T")
+  só se juntam com prova (o mesmo livro, a mesma série ou um nome que quase só aparece de um jeito).
+  Editoras e "Vários autores" não têm a estante, e outra edição do mesmo livro não conta como "mais do
+  autor".
 
 ## O que fica de fora, de propósito
 
