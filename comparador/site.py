@@ -23,7 +23,8 @@ Dados gerados em `dados/` (textos vazios "" e números 0 = não informado; dias 
                  demanda, com autor, imagem, publicado, idioma, nota, avaliações e gêneros quando conhecidos,
                  os outros formatos da obra ("eds": [[asin, formato, preço]]), outras edições do mesmo
                  título e autor ("outras": [[asin, título, capa, formato, preço]]) e as obras mais avaliadas
-                 do mesmo autor principal ("autor1" e "mesmo_autor", no formato de "outras").
+                 do mesmo autor principal ("autor1" e "mesmo_autor", no formato de "outras"; quem é o mesmo autor
+                 vem de parecidos.chaves_do_autor, e editoras e "Vários autores" não têm).
 - `p/XXX.json`   livros parecidos (ver parecidos.py) de ~1/1024 dos livros (XXX = `fragmento_p` do ASIN, mesma conta em
                  app.js), carregados sob demanda pela página do livro e pelo início. Os livros da busca e os que saíram
                  dela têm lista; os parecidos são sempre livros da busca. Cartões e listas repetidos aparecem uma vez:
@@ -393,7 +394,8 @@ def _obra(asins: list[str], livros: dict[str, dict], t: dict[str, Tabela], hoje:
              int(det["publicado"][:4]) if det["publicado"] else 0,
              t["idi"](det["idioma"]) + 1 if det["idioma"] else 0, [t["gen"](g) for g in generos],
              det["nota"] or 0, max((livros[a].get("avaliacoes") or 0 for a in eds), default=0), linhas]
-    return {"linha": linha, "eds": eds, "titulo": titulo, "autor": det["autor"] or "", "pop": linha[7], "idioma": det["idioma"] or ""}
+    return {"linha": linha, "eds": eds, "titulo": titulo, "autor": det["autor"] or "", "pop": linha[7], "idioma": det["idioma"] or "",
+            "base": titulo_base(titulo)}
 
 
 def _mini(obras: list[dict], livros: dict[str, dict], j: int) -> list:
@@ -405,7 +407,7 @@ def _mini(obras: list[dict], livros: dict[str, dict], j: int) -> list:
 def _parecidos(obras: list[dict], livros: dict[str, dict], obra_de: dict[str, int], outras: dict[int, list[int]],
                autor: dict[int, list[int]], t: dict[str, Tabela]) -> dict[str, dict]:
     """Os arquivos `p/` (formato no começo deste arquivo): as obras da busca e os livros que saíram dela, com gênero."""
-    bases = [titulo_base(o["titulo"]) for o in obras]
+    bases = [o["base"] for o in obras]
     pobras = [parecidos.Obra(i, o["titulo"], o["autor"], tuple(o["linha"][5]), o["idioma"], o["pop"], bases[i]) for i, o in enumerate(obras)]
     sementes = [parecidos.Semente(tuple(o["linha"][5]), o["idioma"], o["autor"], i, frozenset(outras.get(i, []) + autor.get(i, [])),
                                   o["titulo"], bases[i]) for i, o in enumerate(obras)]
@@ -467,19 +469,27 @@ def autor_principal(autor: str) -> str:
 
 
 def _mesmo_autor(obras: list[dict], outras: dict[int, list[int]]) -> dict[int, list[int]]:
-    """Para cada obra, as mais avaliadas do mesmo autor principal (sem ela e sem as outras edições dela)."""
+    """Para cada obra, as mais avaliadas do mesmo autor principal (sem ela, sem as outras edições dela e sem outros livros
+    com o mesmo título-base). Quem é o mesmo autor: `parecidos.chaves_do_autor` (editoras e "Vários autores" ficam sem)."""
+    chaves = parecidos.chaves_do_autor([o["autor"] for o in obras], [o["base"] for o in obras])
     grupos: dict[str, list[int]] = {}
-    for i, o in enumerate(obras):                     # obras já vêm das mais avaliadas para as menos
-        autor = normalizar(autor_principal(o["autor"]))
-        if len(autor) >= 4 and autor not in AUTORES_GENERICOS:
-            grupos.setdefault(autor, []).append(i)
+    for i, chave in enumerate(chaves):                # obras já vêm das mais avaliadas para as menos
+        if chave:
+            grupos.setdefault(chave, []).append(i)
     out: dict[int, list[int]] = {}
     for membros in grupos.values():
         if len(membros) < 2:
             continue
         for i in membros:
-            fora = {i, *outras.get(i, [])}
-            out[i] = [j for j in membros[:MAX_AUTOR + len(fora)] if j not in fora][:MAX_AUTOR]
+            fora, base = {i, *outras.get(i, [])}, obras[i]["base"]
+            lista = []
+            for j in membros:
+                if j in fora or (len(base) >= 4 and obras[j]["base"] == base):
+                    continue
+                lista.append(j)
+                if len(lista) == MAX_AUTOR:
+                    break
+            out[i] = lista
     return out
 
 
@@ -487,7 +497,7 @@ def _outras(obras: list[dict]) -> dict[int, list[int]]:
     """Para cada obra, outras com o mesmo título-base e o mesmo autor (outras edições do mesmo livro)."""
     grupos: dict[tuple, list[int]] = {}
     for i, o in enumerate(obras):
-        base, autor = titulo_base(o["titulo"]), normalizar(o["autor"]).strip(" .")
+        base, autor = o["base"], normalizar(o["autor"]).strip(" .")
         if len(base) >= 4 and autor not in AUTORES_GENERICOS:
             grupos.setdefault((base, autor), []).append(i)
     out: dict[int, list[int]] = {}

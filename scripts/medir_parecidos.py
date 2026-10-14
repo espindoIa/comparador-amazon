@@ -48,7 +48,7 @@ def montar(origem: str):
         for e in linha[8]:
             livros[e[0]] = {"f": p0["fmt"][e[1]], "g": set(), "t": linha[0]}
         obras.append({"linha": linha, "eds": eds, "titulo": linha[0], "autor": linha[1], "pop": linha[7],
-                      "idioma": p0["idi"][linha[4] - 1] if linha[4] else ""})
+                      "idioma": p0["idi"][linha[4] - 1] if linha[4] else "", "base": site.titulo_base(linha[0])})
     t = {"gen": site.Tabela()}
     for g in p0["gen"]:
         t["gen"](g[0])

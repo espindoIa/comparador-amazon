@@ -349,6 +349,29 @@ class TestSite(unittest.TestCase):
         self.assertEqual(site.fragmento_p("B000000001"), f"{int(site.fragmento_p('B000000001'), 16):03x}")
         self.assertEqual(len(site.fragmento_p("ZZZZZZZZZZ")), 3)
 
+    def test_mais_do_mesmo_autor_usa_a_chave_de_autor(self):
+        h = [("2026-10-01", "2026-10-05", 1000, None)]
+        livros = [("C000000001", "Gatsby", "Capa comum", h), ("C000000002", "Paraíso", "Capa comum", h),
+                  ("C000000003", "Poemas", "Capa comum", h), ("C000000004", "Obra Um", "Capa comum", h),
+                  ("C000000005", "Obra Dois", "Capa comum", h), ("C000000006", "Dom Casmurro", "Capa comum", h),
+                  ("C000000007", "Dom Casmurro - Edição de Luxo", "Capa comum", h), ("C000000008", "Memórias Póstumas", "Capa comum", h)]
+        banco(self.d / "a.db", livros)
+        for asin, autor, av in (("C000000001", "F. Scott Fitzgerald", 100), ("C000000002", "F Scott Fitzgerald", 50),
+                                ("C000000003", "Scott F. Fitzgerald", 40), ("C000000004", "Editora Europa", 30),
+                                ("C000000005", "Editora Europa", 20), ("C000000006", "Machado de Assis", 900),
+                                ("C000000007", "Machado de Assis, Fulano e outros.", 800), ("C000000008", "Machado de Assis", 700)):
+            self._detalhar("a.db", "UPDATE catalogo SET autor = ?, avaliacoes = ? WHERE asin = ?", autor, av, asin)
+        site.construir([self.d / "a.db"], self.d / "out")
+        mais = lambda asin: [x[0] for x in historico(self.d / "out", asin).get("mesmo_autor", [])]
+        self.assertEqual(mais("C000000001"), ["C000000002"])              # pontuação não separa o autor
+        self.assertEqual(mais("C000000002"), ["C000000001"])
+        self.assertEqual(mais("C000000003"), [])                          # ordem trocada, sem prova: outra pessoa
+        self.assertEqual(mais("C000000004"), [])                          # editora não é autor
+        self.assertEqual(mais("C000000005"), [])
+        self.assertEqual(mais("C000000006"), ["C000000008"])              # a outra edição do mesmo livro não é "mais do autor"
+        self.assertEqual(mais("C000000008"), ["C000000006", "C000000007"])
+        self.assertEqual(historico(self.d / "out", "C000000001")["autor1"], "F. Scott Fitzgerald")
+
     def test_baixaram_de_preco_por_familia_e_menor_preco_registrado(self):
         h = lambda a, b: [("2026-09-20", "2026-10-08", a, None), ("2026-10-09", "2026-10-09", b, None)]
         banco(self.d / "a.db", [("B000000001", "Físico 1", "Capa comum", h(5000, 2500)), ("B000000002", "Físico 2", "Capa comum", h(5000, 4000)),
