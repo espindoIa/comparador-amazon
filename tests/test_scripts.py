@@ -83,6 +83,30 @@ class TestMedirParecidos(unittest.TestCase):
         self.assertIn("## Nenhum: não está no índice", texto)
 
 
+    def test_com_subgeneros_mostra_cada_sonda_antes_e_depois(self):
+        import json
+        from comparador import site
+        from tests.test_site import banco
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            h = [("2026-10-01", "2026-10-05", 1000, None)]
+            banco(d / "a.db", [("B000000001", "Romance Um", "Capa comum", h), ("B000000002", "Romance Dois", "Capa comum", h),
+                               ("B000000003", "Romance Três", "Capa comum", h)])
+            c = sqlite3.connect(d / "a.db")
+            c.executemany("INSERT INTO generos VALUES (?, '7882388011')", [("B000000001",), ("B000000002",), ("B000000003",)])
+            c.executemany("UPDATE catalogo SET autor = ?, avaliacoes = ? WHERE asin = ?", [("Ana", 10, "B000000001"), ("Bia", 900, "B000000002"), ("Caio", 5, "B000000003")])
+            c.commit()
+            c.close()
+            site.construir([d / "a.db"], d / "s")
+            (d / "sub.json").write_text(json.dumps({"v": 1, "k": 5, "gerado_em": "2026-10-14", "folhas": [
+                {"no": "1", "nome": "Épica", "total": 1, "exato": True, "asins": ["B000000001", "B000000003"]}]}), encoding="utf-8")
+            texto = medir_parecidos.medir(str(d / "s" / "dados"), ["Romance Um"], str(d / "sub.json"))
+        self.assertIn("subgêneros: 1 folhas, K = 5", texto)
+        antes, depois = texto.split("antes dos subgêneros:")[1].split("   depois:")
+        self.assertLess(antes.index("Romance Dois"), antes.index("Romance Três"))        # só pelas avaliações
+        self.assertLess(depois.index("Romance Três"), depois.index("Romance Dois"))      # o subgênero em comum passa na frente
+
+
 class TestConferirSite(unittest.TestCase):
     def test_recusa_site_que_encolheu_demais(self):
         self.assertIsNone(conferir_site.conferir({"itens": 80}, {"itens": 100}))

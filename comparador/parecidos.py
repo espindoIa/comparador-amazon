@@ -6,6 +6,9 @@ Para cada livro de partida (a "semente"), escolhe entre as obras da busca as mai
   do número de gêneros da obra (quem está em muitos gêneros não casa com tudo). Só entra quem tem G > 0;
 - T, tema: as palavras do título que dizem o assunto ("python", "investimento", "constitucional"), ver `Palavras`. Só as
   3 mais raras da semente contam, e T nunca passa de G (o tema no máximo dobra o gênero, e sozinho não traz ninguém);
+- S, subgêneros (opcional, só ficção): cada folha da árvore de subcategorias da Amazon vira um gene a mais (`n_base` em
+  diante, ver `calcular`), com o peso da raridade do nó (`idf_extra`). Eles somam em G sem entrar na divisão pela raiz
+  do número de gêneros, para uma obra rotulada não valer menos que uma sem rótulo;
 - L, idioma: quando os dois são conhecidos e diferentes, a obra vale OUTRO_IDIOMA;
 - P, popularidade (número de avaliações, em escala de log): multiplica pouco, para desempatar.
 Ficam de fora a própria obra, o mesmo livro com outro título-base ou outro autor grafado (`base`, `ct`), o mesmo autor
@@ -22,6 +25,7 @@ referência nos testes.
 
 from __future__ import annotations
 
+import bisect
 import functools
 import heapq
 import math
@@ -300,13 +304,17 @@ class Palavras:
         return PESO_TEMA * s / math.sqrt(max(1, len(o.tk))) if s else 0.0
 
 
-def _nota_genero(idf: list[float], mascara: int, gen: tuple[int, ...]) -> float:
-    """Gêneros em comum somados na ordem dos gêneros da obra (a mesma nas duas contas, para os empates baterem)."""
+def _nota_genero(idf: list[float], mascara: int, gen: tuple[int, ...], n_base: int | None = None) -> float:
+    """Gêneros em comum somados na ordem dos gêneros da obra (a mesma nas duas contas, para os empates baterem). A soma
+    se divide pela raiz de quantos gêneros a obra tem; com `n_base`, só os genes abaixo dele contam nessa divisão (os de
+    subgênero, que vêm depois, somam peso sem diminuir o das outras obras: `gen` está em ordem crescente)."""
     s = 0.0
     for g in gen:
         if mascara >> g & 1:
             s += idf[g]
-    return s / math.sqrt(len(gen)) if s else 0.0
+    if not s:
+        return 0.0
+    return s / math.sqrt(len(gen) if n_base is None else max(1, bisect.bisect_left(gen, n_base)))
 
 
 def _fator_idioma(a: str, b: str) -> float:
@@ -326,7 +334,7 @@ class Fluxo:
         self.ind, self.feitos, self.heap = ind, [], []
         tetos = []
         for gen, membros_por_idioma in ind.relevantes(mascara):
-            g0 = _nota_genero(ind.idf, mascara, gen)
+            g0 = _nota_genero(ind.idf, mascara, gen, ind.n_base)
             for k in membros_por_idioma:
                 f = g0 * _fator_idioma(idioma, k[1])
                 tetos.append((f * ind.classes[k][0].p, f, k))
@@ -356,9 +364,12 @@ class Fluxo:
 
 
 class _Indice:
-    def __init__(self, obras: list[Obra], n_generos: int, ficcao: frozenset[int], balde: frozenset[int]):
-        self.obras, self.n_generos = obras, n_generos
+    def __init__(self, obras: list[Obra], n_generos: int, ficcao: frozenset[int], balde: frozenset[int],
+                 n_base: int | None = None, idf_extra: dict[int, float] | None = None):
+        self.obras, self.n_generos, self.n_base = obras, n_generos, n_base
         self.idf = raridade(obras, n_generos)
+        for g, peso in (idf_extra or {}).items():
+            self.idf[g] = peso
         self.palavras = Palavras(obras, self.idf, ficcao, balde)
         self.classes: dict[tuple, list[Obra]] = {}
         self.com_palavra: dict[str, list[Obra]] = {}
@@ -381,13 +392,14 @@ class _Indice:
 
     def relevantes(self, mascara: int):
         """Os conjuntos de gêneros com algum gênero da máscara, cada um com as suas classes (uma por idioma)."""
-        vistos = set()
-        for g in range(self.n_generos):
-            if mascara >> g & 1:
-                for gen in self.gens_do_genero[g]:
-                    if gen not in vistos:
-                        vistos.add(gen)
-                        yield gen, self.classes_por_genero[gen]
+        vistos, resto = set(), mascara
+        while resto:                                     # os bits em ordem crescente (são muitos genes, poucos na máscara)
+            g = (resto & -resto).bit_length() - 1
+            resto &= resto - 1
+            for gen in self.gens_do_genero[g]:
+                if gen not in vistos:
+                    vistos.add(gen)
+                    yield gen, self.classes_por_genero[gen]
 
     def fluxo(self, mascara: int, idioma: str) -> Fluxo:
         k = (mascara, idioma)
@@ -430,7 +442,7 @@ def _candidatos(ind: _Indice, s: Semente):
         for o in ind.com_palavra.get(p, ()):
             if o.pos in com_tema:
                 continue
-            g0 = _nota_genero(ind.idf, mascara, o.gen)
+            g0 = _nota_genero(ind.idf, mascara, o.gen, ind.n_base)
             if g0 > 0:
                 com_tema[o.pos] = (_nota(g0, ind.palavras.tema(sem, o), _fator_idioma(s.idioma, o.idioma), o.p), o)
     lista_tema = sorted(com_tema.values(), key=lambda x: x[1].ordem(x[0]))
@@ -455,9 +467,12 @@ def _lista(ind: _Indice, s: Semente, n: int) -> list[int]:
 
 
 def bruto(obras: list[Obra], n_generos: int, s: Semente, n: int = N_PARECIDOS,
-          ficcao: frozenset[int] = frozenset(), balde: frozenset[int] = frozenset()) -> list[int]:
+          ficcao: frozenset[int] = frozenset(), balde: frozenset[int] = frozenset(),
+          n_base: int | None = None, idf_extra: dict[int, float] | None = None) -> list[int]:
     """Referência: a mesma conta, obra por obra."""
     idf = raridade(obras, n_generos)
+    for g, peso in (idf_extra or {}).items():
+        idf[g] = peso
     pal = Palavras(obras, idf, ficcao, balde)
     sem = pal.da_semente(s.titulo)
     mascara = sum(1 << g for g in s.gen)
@@ -465,7 +480,7 @@ def bruto(obras: list[Obra], n_generos: int, s: Semente, n: int = N_PARECIDOS,
     for o in obras:
         if not o.gen:
             continue
-        g0 = _nota_genero(idf, mascara, o.gen)
+        g0 = _nota_genero(idf, mascara, o.gen, n_base)
         if g0 > 0:
             notas.append((_nota(g0, pal.tema(sem, o), _fator_idioma(s.idioma, o.idioma), o.p), o))
     notas.sort(key=lambda x: x[1].ordem(x[0]))
@@ -481,11 +496,14 @@ def _trabalho(faixa: list[int]) -> list[list[int]]:
 
 
 def calcular(obras: list[Obra], n_generos: int, sementes: list[Semente], n: int = N_PARECIDOS, processos: int | None = None,
-             ficcao: frozenset[int] = frozenset(), balde: frozenset[int] = frozenset()) -> list[list[int]]:
+             ficcao: frozenset[int] = frozenset(), balde: frozenset[int] = frozenset(),
+             n_base: int | None = None, idf_extra: dict[int, float] | None = None) -> list[list[int]]:
     """Os parecidos de cada semente (posições em `obras`, na ordem). `ficcao` e `balde`: posições dos gêneros de ficção e
-    de Livros Internacionais (ver `Palavras`). O mesmo resultado com qualquer número de processos."""
+    de Livros Internacionais (ver `Palavras`). Subgêneros: genes de `n_base` em diante, cada um com o seu peso em
+    `idf_extra` (não o da frequência entre as obras, que só conhece as rotuladas); eles somam peso e não entram na
+    divisão por raiz. O mesmo resultado com qualquer número de processos."""
     global _ESTADO
-    ind = _Indice(obras, n_generos, ficcao, balde)
+    ind = _Indice(obras, n_generos, ficcao, balde, n_base, idf_extra)
     if processos is None:
         processos = os.cpu_count() or 1
         if (len(sementes) < MIN_PARALELO or threading.active_count() > 1

@@ -76,6 +76,46 @@ class TestParecidos(unittest.TestCase):
             saidas.append(um)
         self.assertEqual(saidas[0], saidas[1])
 
+    def test_subgeneros_a_conta_rapida_continua_igual_a_obra_por_obra(self):
+        # genes de 29 em diante são subgêneros (ficção): só algumas obras os têm, e o peso vem do total do nó
+        for semente_aleatoria in range(4):
+            r = random.Random(500 + semente_aleatoria)
+            obras = sinteticas(semente_aleatoria)
+            for o in obras:
+                if o.gen and o.gen[0] < 10 and r.random() < .5:
+                    o.gen = tuple(sorted(set(o.gen) | set(r.sample(range(29, 36), r.choice([1, 1, 2, 3])))))
+            idf_extra = {g: 1.0 + 0.7 * (g - 29) for g in range(29, 36)}
+            ficcao = FICCAO | frozenset(range(29, 36))
+            sementes = sementes_de(obras, r, 80)
+            for n in (3, 10):
+                rapido = parecidos.calcular(obras, 36, sementes, n, processos=1, ficcao=ficcao, balde=BALDE, n_base=29, idf_extra=idf_extra)
+                for s, lista in zip(sementes, rapido):
+                    self.assertEqual(lista, parecidos.bruto(obras, 36, s, n, ficcao, BALDE, 29, idf_extra), (semente_aleatoria, n, s))
+                if semente_aleatoria == 0:
+                    outro = parecidos.calcular(obras, 36, sementes, n, processos=2, ficcao=ficcao, balde=BALDE, n_base=29, idf_extra=idf_extra)
+                    self.assertEqual(rapido, outro)
+
+    def test_subgenero_somado_sem_diminuir_as_outras_obras(self):
+        # gênero 0 em todas; o subgênero 3 só na obra 1. Sem n_base, a obra 1 (2 genes) valeria menos que a 2 (1 gene)
+        obras = [Obra(0, "Semente", "A", (0, 3), "", 0), Obra(1, "Com subgênero", "B", (0, 3), "", 0),
+                 Obra(2, "Com outro subgênero", "C", (0, 4), "", 100), Obra(3, "Sem subgênero", "D", (0,), "", 100)]
+        s = Semente((0, 3), "", "Z", obra=0, titulo="Semente")
+        idf_extra = {3: 5.0, 4: 5.0}
+        com = parecidos.calcular(obras, 5, [s], 3, processos=1, n_base=3, idf_extra=idf_extra)[0]
+        self.assertEqual(com[0], 1)                                          # o subgênero em comum vem primeiro
+        # a obra com outro subgênero (2) e a sem subgênero (3) empatam no gênero: a divisão não olha os subgêneros
+        nota = lambda o: parecidos._nota_genero([1.0, 1.0, 1.0, 5.0, 5.0], 0b1001, o.gen, 3)
+        self.assertEqual(nota(obras[2]), nota(obras[3]))
+        self.assertAlmostEqual(nota(obras[1]), 6.0)
+        # sem n_base, o comportamento é o de sempre (raiz do número de genes)
+        self.assertAlmostEqual(parecidos._nota_genero([1.0, 1.0, 1.0, 5.0, 5.0], 0b1001, obras[1].gen), 6.0 / 2 ** .5)
+
+    def test_peso_do_subgenero_vem_do_idf_extra_e_nao_da_frequencia_entre_as_rotuladas(self):
+        obras = [Obra(i, f"Livro {i}", f"A{i}", (0, 2) if i < 2 else (0,), "", 10 * i) for i in range(6)]
+        ind = parecidos._Indice(obras, 3, frozenset(), frozenset(), 2, {2: 0.25})
+        self.assertEqual(ind.idf[2], 0.25)                                   # sem o override seria log(7/2)
+        self.assertNotEqual(parecidos._Indice(obras, 3, frozenset(), frozenset()).idf[2], 0.25)
+
     def test_regras_de_genero_idioma_e_autor(self):
         o = lambda i, t, a, gen, idi="", av=0: Obra(i, t, a, gen, idi, av)
         obras = [o(0, "Hobbit", "J.R.R. Tolkien", (0, 1), "Português", 900), o(1, "Silmarillion", "Tolkien, J.R.R.", (0,), "Português", 800),

@@ -228,6 +228,9 @@ def main() -> None:
     w.add_argument("--eventos", default=None, help="datas de promoção, em CSV nome,inicio,fim (padrão: o eventos.csv do repositório)")
     w.add_argument("--url", default=None, help="endereço público do site, para a imagem de prévia dos links compartilhados; "
                                                "sem ele, os links aparecem sem imagem")
+    w.add_argument("--subgeneros", default=None, metavar="ARQUIVO",
+                   help="snapshot dos subgêneros (subgeneros.json, do comando `subgeneros`): entra na conta dos parecidos. "
+                        "Ausente ou inválido, o site sai sem subgêneros")
 
     sg = sub.add_parser("subgeneros", formatter_class=fmt,
                         help="experimento: árvore de subgêneros da Amazon, descoberta e custo de rotular (sem coleta recorrente)",
@@ -273,7 +276,8 @@ def main() -> None:
         return
     if args.cmd == "site":
         from . import site
-        meta = site.construir([Path(b) for b in args.bancos], Path(args.saida), _eventos(args), args.url)
+        meta = site.construir([Path(b) for b in args.bancos], Path(args.saida), _eventos(args), args.url,
+                               Path(args.subgeneros) if args.subgeneros else None)
         print(f"site em {args.saida}: {meta['itens']} livros (parecidos em {meta['tempo_parecidos']} s)")
         return
     if args.cmd in ("varrer", "catalogo"):

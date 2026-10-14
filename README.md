@@ -192,6 +192,9 @@ Para ativar o site, uma vez só: *Settings → Pages → Source: GitHub Actions*
   A conta fica em `comparador/parecidos.py`.
 - `meta.json` e `eventos.json`: o resumo da coleta e as datas de promoção, que vêm de `eventos.csv`.
 
+`python -m comparador site … --subgeneros subgeneros.json` põe os subgêneros (o snapshot do comando
+`subgeneros`, só da ficção) na conta dos parecidos. Sem o arquivo, ou com um arquivo ilegível, o site sai como sem eles.
+
 O formato de cada arquivo está descrito no começo de `comparador/site.py`.
 
 A busca fica em `comparador/web/busca.js`, os cálculos e o gráfico em `comparador/web/livro.js`, a
