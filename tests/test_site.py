@@ -814,6 +814,13 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.wait_for_selector("#parecidos .cartao")
             self.assertIn("Parecidos com os seus livros", pg.inner_text("#parecidos h2"))
             self.assertEqual(parecidos(), ["Romance Dois", "Romance Três"])
+            pg.goto(f"{base}/?livro=A000000001")                                      # tira da lista; só sobram os vistos
+            pg.wait_for_selector("[data-salvar][aria-pressed=true]")
+            pg.click("[data-salvar]")
+            pg.goto(f"{base}/")
+            pg.wait_for_selector("#parecidos .cartao")
+            pg.click('[data-acao="limpar-recentes"]')                                    # limpar os vistos tira os parecidos
+            self.assertEqual(pg.locator("#parecidos").count(), 0)
             b.close()
         self.assertEqual(erros, [])
 

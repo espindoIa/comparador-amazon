@@ -87,7 +87,7 @@ O app dá números, não conselhos: quem decide se o preço é bom é a pessoa.
 ## Fase 6: descoberta
 
 - **Parecidos:** no início, livros parecidos com os da lista e os vistos recentemente; na página do
-  livro, parecidos com ele. Ajuda a achar outros livros para acompanhar. A similaridade é calculada no
+  livro, parecidos com ele, de outros autores (os do mesmo autor já estão em "Mais de …"). Ajuda a achar outros livros para acompanhar. A similaridade é calculada no
   navegador (`recomenda.js`) com o que o índice já tem: gêneros em comum (os raros pesam mais), mesmo
   autor, mesmo idioma e, só para desempatar, o número de avaliações. Não há "quem comprou também
   comprou": não há esses dados, e nada da lista sai do aparelho. São livros parecidos, não conselhos

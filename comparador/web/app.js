@@ -752,7 +752,7 @@
         '<dt>Menor preço registrado</dt><dd>O menor preço desde o início da coleta, quando o livro tem ' + L.MIN_COMUM + ' dias de coleta ou mais.</dd>' +
         '<dt>Baixaram de preço</dt><dd>Queda de 5% ou mais nas duas últimas coletas.</dd>' +
         '<dt>Preço-alvo</dt><dd>O preço que você quer pagar. Fica só neste aparelho; o site não manda avisos.</dd>' +
-        '<dt>Parecidos</dt><dd>Livros com gêneros, autor e idioma em comum com os da sua lista e os que você viu, ou com o livro aberto. A conta é feita no seu navegador; nada sai do aparelho.</dd>' +
+        '<dt>Parecidos</dt><dd>Livros com gêneros, autor e idioma em comum com os da sua lista e os que você viu; na página de um livro, livros de outros autores parecidos com ele. A conta é feita no seu navegador; nada sai do aparelho.</dd>' +
         '<dt>Datas de promoção</dt><dd>O preço no dia, comparado com o dos 90 dias anteriores.</dd></dl>' +
         '<h2>Limites</h2><ul><li>Só entram os ~2.000 mais vendidos de cada categoria, vendidos pela própria Amazon.</li>' +
         '<li>Dias sem coleta ficam em branco no gráfico.</li><li>O preço pode mudar a qualquer momento. Confira na loja.</li></ul>' +
@@ -799,7 +799,12 @@
       b.remove(); focarEl(novo || (sec && sec.querySelector('h2')));
     }
     else if (acao === 'limpar-recentes') {
-      Lista.limparRecentes(); var sr = b.closest('section'), prox = sr && sr.nextElementSibling;
+      Lista.limparRecentes(); var sr = b.closest('section'), par = $('#parecidos'), r = rotaAtual;
+      // "Parecidos" deixa de usar os vistos: some sem lista; com lista, é refeito (e o foco pula a seção, que será redesenhada)
+      if (par && !Lista.ler().length) { par.remove(); par = null; }
+      else if (par) indiceCompleto().then(function (ix) { if (aindaEm(r)) parecidosInicio(ix); });
+      var prox = sr && sr.nextElementSibling;
+      if (prox && prox === par) prox = par.nextElementSibling;
       if (sr) sr.remove();
       focarEl((prox && prox.querySelector('h2, a, button')) || app.querySelector('h1'));
     }
