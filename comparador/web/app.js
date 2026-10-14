@@ -330,7 +330,7 @@
   // conta de fragmento_p em site.py: a de fragmento, com 1024 arquivos.
   function fragmentoP(asin) { var h = 0; for (var i = 0; i < asin.length; i++) h = (h * 31 + asin.charCodeAt(i)) % 1024; return ('00' + h.toString(16)).slice(-3); }
   var cacheP = {};
-  // {asin, lista: [cartão], titulo, obra, grupo} do livro, ou null se ele não tem parecidos
+  // {asin, lista: [cartão], titulo, obra, grupo, sub: [nomes de subgêneros]} do livro, ou null se ele não tem parecidos
   function parecidosDe(asin) {
     var k = fragmentoP(asin);
     if (!cacheP[k]) {
@@ -339,17 +339,18 @@
     }
     return cacheP[k].then(function (f) {
       var e = f && f.p[asin];
-      return e ? { asin: asin, lista: f.l[e[0]].map(function (i) { return f.c[i]; }), titulo: e[1], obra: e[2] || asin, grupo: e[3] } : null;
+      return e ? { asin: asin, lista: f.l[e[0]].map(function (i) { return f.c[i]; }), titulo: e[1], obra: e[2] || asin, grupo: e[3], sub: e[4] || [] } : null;
     });
   }
-  // itens: [{c: cartão, como: título do livro de partida}]; cartão: [asin, título, capa, formato, preço, autor]
-  function estanteParecidos(tit, itens) {
+  // itens: [{c: cartão, como: título do livro de partida}]; cartão: [asin, título, capa, formato, preço, autor]; sub: nomes dos
+  // subgêneros do livro, na página dele (ao lado do título da estante, na régua do cabeçalho)
+  function estanteParecidos(tit, itens, sub) {
     var el = $('#parecidos'); if (!el) return;
     if (!itens.length) { el.remove(); return; }
     // com um livro de partida só, "como …" seria igual em todos os cartões; com mais, vai em todos (alturas iguais)
     var motivos = {}; itens.forEach(function (x) { if (x.como) motivos[x.como] = 1; });
     var comPor = Object.keys(motivos).length > 1;
-    el.innerHTML = '<div class="sec-h"><h2>' + esc(tit) + '</h2></div><div class="estante">' + itens.map(function (x) {
+    el.innerHTML = '<div class="sec-h"><h2>' + esc(tit) + '</h2>' + (sub && sub.length ? '<span class="nota">' + esc(sub.join(' · ')) + '</span>' : '') + '</div><div class="estante">' + itens.map(function (x) {
       var c = x.c;
       return cartao({ asin: c[0], preco: c[4], fmt: c[3], o: { t: c[1], img: c[2], autor: c[5] } }, 0, '', comPor ? x.como : '');
     }).join('') + '</div>';
@@ -603,7 +604,7 @@
       L.grafico($('#graf'), L.dadosGrafico(tr, ev));
       rolar(); focarTela();
       // "Parecidos" chega por último, sem segurar o resto da página; erro ou livro sem lista: a seção some
-      parecidos.then(function (p) { if (aindaEm(r)) estanteParecidos('Parecidos com este livro', p ? p.lista.map(function (c) { return { c: c }; }) : []); });
+      parecidos.then(function (p) { if (aindaEm(r)) estanteParecidos('Parecidos com este livro', p ? p.lista.map(function (c) { return { c: c }; }) : [], p && p.sub); });
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar este livro'); });
   }
   function botaoSalvar() {

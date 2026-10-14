@@ -15,7 +15,9 @@
   - o cartão do gráfico e as estatísticas;
   - datas de promoção e estantes ("Outras edições", "Mais de …", "Parecidos com este livro").
     "Parecidos" chega por último, de `dados/p/` (pedido junto com o histórico), com o autor no cartão e sem a linha de motivo:
-    todos ali dividem o gênero com o livro. Sem lista, ou com erro, a seção some.
+    todos ali dividem o gênero com o livro. Sem lista, ou com erro, a seção some. Quando o livro tem subgêneros (só ficção,
+    com o snapshot de `subgeneros.yml` no site), até 3 nomes aparecem à direita da régua do cabeçalho (`.sec-h .nota`: "Épica ·
+    Dragões e Criaturas Míticas"), numa linha só, `--fs-3`, `--mu`, cortados com reticências se não couberem.
 - **No celular**: a capa (108 px) fica ao lado do título e o resto vem embaixo, com a mesma marcação.
 
 ## Gráfico (`livro.js`, `grafico`)
