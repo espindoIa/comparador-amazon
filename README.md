@@ -187,7 +187,7 @@ Para ativar o site, uma vez só: *Settings → Pages → Source: GitHub Actions*
   pessoa já está buscando.
 - `dados/destaques.json`: o que a página inicial mostra, para ela não esperar o índice.
 - `dados/h/XX.json`: o histórico de cada livro, em 256 arquivos.
-- `dados/p/XXX.json`: os livros parecidos com cada livro, em 1024 arquivos (~50 KB compactado cada).
+- `dados/p/XXX.json`: os livros parecidos com cada livro, em 1024 arquivos (~90 KB compactado cada).
   A página do livro pede o seu junto com o histórico; o início junta os dos livros salvos e vistos.
   A conta fica em `comparador/parecidos.py`.
 - `meta.json` e `eventos.json`: o resumo da coleta e as datas de promoção, que vêm de `eventos.csv`.

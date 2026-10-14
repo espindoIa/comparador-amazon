@@ -330,7 +330,7 @@
   // conta de fragmento_p em site.py: a de fragmento, com 1024 arquivos.
   function fragmentoP(asin) { var h = 0; for (var i = 0; i < asin.length; i++) h = (h * 31 + asin.charCodeAt(i)) % 1024; return ('00' + h.toString(16)).slice(-3); }
   var cacheP = {};
-  // {asin, lista: [cartão], titulo, obra} do livro, ou null se ele não tem parecidos
+  // {asin, lista: [cartão], titulo, obra, grupo} do livro, ou null se ele não tem parecidos
   function parecidosDe(asin) {
     var k = fragmentoP(asin);
     if (!cacheP[k]) {
@@ -339,7 +339,7 @@
     }
     return cacheP[k].then(function (f) {
       var e = f && f.p[asin];
-      return e ? { asin: asin, lista: f.l[e[0]].map(function (i) { return f.c[i]; }), titulo: e[1], obra: e[2] || asin } : null;
+      return e ? { asin: asin, lista: f.l[e[0]].map(function (i) { return f.c[i]; }), titulo: e[1], obra: e[2] || asin, grupo: e[3] } : null;
     });
   }
   // itens: [{c: cartão, como: título do livro de partida}]; cartão: [asin, título, capa, formato, preço, autor]
@@ -367,7 +367,7 @@
     var partida = ordem.map(function (a, i) { return { a: a, w: peso[a], i: i }; })
       .sort(function (x, y) { return y.w - x.w || x.i - y.i; }).slice(0, MAX_PARTIDA);
     Promise.all(partida.map(function (s) {
-      return parecidosDe(s.a).then(function (e) { return e && { asin: e.asin, obra: e.obra, titulo: e.titulo, peso: s.w, lista: e.lista }; },
+      return parecidosDe(s.a).then(function (e) { return e && { asin: e.asin, obra: e.obra, grupo: e.grupo, titulo: e.titulo, peso: s.w, lista: e.lista }; },
         function () { return null; });
     })).then(function (es) { if (aindaEm(r)) estanteParecidos('Parecidos com os seus livros', Recomenda.juntar(es.filter(Boolean), { fora: salvos })); });
   }

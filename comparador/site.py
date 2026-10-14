@@ -27,11 +27,13 @@ Dados gerados em `dados/` (textos vazios "" e números 0 = não informado; dias 
 - `p/XXX.json`   livros parecidos (ver parecidos.py) de ~1/1024 dos livros (XXX = `fragmento_p` do ASIN, mesma conta em
                  app.js), carregados sob demanda pela página do livro e pelo início. Os livros da busca e os que saíram
                  dela têm lista; os parecidos são sempre livros da busca. Cartões e listas repetidos aparecem uma vez:
-                   {"c": [[asin, título, capa, formato, preço, autor], ...],     (edição: a primeira da obra, como em "outras")
+                   {"c": [[asin, título, capa, formato, preço, autor, grupo], ...],  (edição: a primeira da obra, como em "outras")
                     "l": [[posição em "c", ...], ...],                           (até MAX_PARECIDOS, do mais parecido ao menos)
-                    "p": {asin: [posição em "l", título curto, ASIN da obra]}}   (o título curto e a obra servem ao início:
-                 o motivo "como <título>" e para não sugerir outra edição de um livro já salvo; a obra só vem quando não é o
-                 próprio ASIN)
+                    "p": {asin: [posição em "l", título curto, ASIN da obra, grupo]}}
+                 O título curto, a obra ("" quando é o próprio ASIN) e o grupo servem ao início: o motivo "como <título>" e
+                 para não repetir um livro. O grupo é um número, o mesmo em todos os arquivos, para as edições do mesmo livro
+                 (mesmo autor e mesmo começo de título, ver parecidos.chave_titulo): o início junta listas de livros diferentes
+                 e mostra cada grupo uma vez, fora os grupos dos livros de partida.
 - `meta.json`    data da última coleta, totais e aviso (bancos simulados)
 - `eventos.json` promoções (de eventos.csv)
 """
@@ -419,8 +421,13 @@ def _parecidos(obras: list[dict], livros: dict[str, dict], obra_de: dict[str, in
 
     arquivos: dict[str, dict] = {}
     cartoes: dict[int, list] = {}                     # o cartão de cada obra, montado uma vez para todos os arquivos
+    grupos: dict[tuple, int] = {}
 
-    def gravar(asin: str, lista: list[int], titulo: str, obra: str):     # titulo: já curto
+    def grupo(autor: str, titulo: str, base: str) -> int:
+        k = (parecidos.chave_autor(autor), parecidos.chave_titulo(base or titulo))
+        return grupos.setdefault(k, len(grupos))
+
+    def gravar(asin: str, lista: list[int], titulo: str, obra: str, g: int):     # titulo: já curto; g: o grupo da semente
         arq = arquivos.get(fragmento_p(asin))
         if arq is None:
             arq = arquivos[fragmento_p(asin)] = {"c": [], "l": [], "p": {}, "_c": {}, "_l": {}}
@@ -430,7 +437,8 @@ def _parecidos(obras: list[dict], livros: dict[str, dict], obra_de: dict[str, in
             i = pos_c.get(j)
             if i is None:
                 if j not in cartoes:
-                    cartoes[j] = _mini(obras, livros, j) + [obras[j]["autor"][:MAX_AUTOR_MINI].rstrip()]
+                    cartoes[j] = _mini(obras, livros, j) + [obras[j]["autor"][:MAX_AUTOR_MINI].rstrip(),
+                                                            grupo(obras[j]["autor"], obras[j]["titulo"], bases[j])]
                 i = pos_c[j] = len(c)
                 c.append(cartoes[j])
             idx.append(i)
@@ -439,16 +447,17 @@ def _parecidos(obras: list[dict], livros: dict[str, dict], obra_de: dict[str, in
         if li is None:
             li = arq["_l"][chave] = len(arq["l"])
             arq["l"].append(idx)
-        arq["p"][asin] = [li, titulo] + ([obra] if obra != asin else [])
+        arq["p"][asin] = [li, titulo, obra if obra != asin else "", g]
 
     for i, o in enumerate(obras):
         if listas[i]:
-            curto = titulo_curto(o["titulo"])
+            curto, g = titulo_curto(o["titulo"]), grupo(o["autor"], o["titulo"], bases[i])
             for a in o["eds"]:
-                gravar(a, listas[i], curto, o["eds"][0])
+                gravar(a, listas[i], curto, o["eds"][0], g)
     for a, lista in zip(fora, listas[len(obras):]):
         if lista:
-            gravar(a, lista, titulo_curto(livros[a]["t"] or a), a)
+            t_a = livros[a]["t"] or a
+            gravar(a, lista, titulo_curto(t_a), a, grupo(livros[a].get("autor") or "", t_a, titulo_base(t_a)))
     return {k: {"c": v["c"], "l": v["l"], "p": v["p"]} for k, v in arquivos.items()}
 
 

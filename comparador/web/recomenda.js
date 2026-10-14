@@ -4,23 +4,25 @@
  * Cada livro de partida traz o peso (salvo pesa mais que visto) e a sua lista, do mais parecido ao menos. Um cartão
  * soma peso / (DESLOCA + posição) de cada lista em que aparece: quem é parecido com vários livros sobe, e a escala das
  * notas de cada lista não importa. O motivo ("como <título>") é o livro de partida que mais contribuiu. Ficam de fora
- * os livros de partida, os já salvos (pela obra: um Kindle salvo não volta como o cartão do livro físico) e o terceiro
- * cartão em diante do mesmo autor. */
+ * os livros de partida, os já salvos (pela obra: um Kindle salvo não volta como o cartão do livro físico), as outras
+ * edições deles e de cada cartão (o grupo, calculado em site.py: cada livro aparece uma vez) e o terceiro cartão em
+ * diante do mesmo autor. */
 (function (root) {
   'use strict';
   var DESLOCA = 3, POR_AUTOR = 2;
 
-  // entradas: [{asin, obra, titulo, peso, lista: [cartão]}] (cartão: [asin, título, capa, formato, preço, autor]), na
-  // ordem de preferência para desempate; opc: {fora: [asins], n}. Devolve [{c: cartão, como: título}], do mais parecido.
+  // entradas: [{asin, obra, grupo, titulo, peso, lista: [cartão]}] (cartão: [asin, título, capa, formato, preço, autor,
+  // grupo]), na ordem de preferência para desempate; opc: {fora: [asins], n}. Devolve [{c: cartão, como: título}], do
+  // mais parecido ao menos.
   function juntar(entradas, opc) {
     opc = opc || {};
-    var fora = {}, soma = {}, melhor = {}, cartoes = {}, primeiro = {}, ordem = [];
+    var fora = {}, foraG = {}, soma = {}, melhor = {}, cartoes = {}, primeiro = {}, ordem = [];
     (opc.fora || []).forEach(function (a) { fora[a] = 1; });
-    entradas.forEach(function (e) { fora[e.asin] = 1; if (e.obra) fora[e.obra] = 1; });
+    entradas.forEach(function (e) { fora[e.asin] = 1; if (e.obra) fora[e.obra] = 1; if (e.grupo != null) foraG[e.grupo] = 1; });
     entradas.forEach(function (e, i) {
       (e.lista || []).forEach(function (c, pos) {
         var a = c[0];
-        if (fora[a]) return;
+        if (fora[a] || (c[6] != null && foraG[c[6]])) return;
         var v = e.peso / (DESLOCA + pos);
         if (!(a in soma)) { soma[a] = 0; cartoes[a] = c; primeiro[a] = ordem.length; ordem.push(a); }
         soma[a] += v;
@@ -29,10 +31,12 @@
       });
     });
     ordem.sort(function (x, y) { return soma[y] - soma[x] || primeiro[x] - primeiro[y]; });
-    var out = [], porAutor = {}, n = opc.n || 12;
+    var out = [], porAutor = {}, grupos = {}, n = opc.n || 12;
     for (var k = 0; k < ordem.length && out.length < n; k++) {
-      var a = ordem[k], au = String(cartoes[a][5] || '').toLowerCase();
+      var a = ordem[k], g = cartoes[a][6], au = String(cartoes[a][5] || '').toLowerCase();
+      if (g != null && grupos[g]) continue;                 // outra edição de um livro que já entrou
       if (au && (porAutor[au] = (porAutor[au] || 0) + 1) > POR_AUTOR) continue;
+      if (g != null) grupos[g] = 1;
       out.push({ c: cartoes[a], como: entradas[melhor[a].i].titulo });
     }
     return out;

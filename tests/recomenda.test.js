@@ -34,6 +34,12 @@ var kindle = { asin: 'K000000001', obra: 'F000000001', titulo: 'Salvo no Kindle'
 var outro = { asin: 'O000000001', titulo: 'Outro', peso: 1, lista: [c('F000000001'), c('K000000001'), c('O000000001'), c('S000000001'), c('A000000002')] };
 assert.deepStrictEqual(asins(R.juntar([kindle, outro], { fora: ['S000000001'] })), ['A000000001', 'A000000002']);
 
+// cada livro uma vez (grupo: as edições do mesmo livro, calculado em site.py), e fora os grupos dos livros de partida
+function cg(asin, grupo, autor) { var x = c(asin, autor); x.push(grupo); return x; }
+var e1 = { asin: 'E000000001', grupo: 7, titulo: 'Um', peso: 2, lista: [cg('A000000001', 1), cg('A000000002', 2), cg('A000000003', 7)] };
+var e2 = { asin: 'E000000002', grupo: 8, titulo: 'Dois', peso: 1, lista: [cg('B000000001', 1), cg('B000000002', 3)] };
+assert.deepStrictEqual(asins(R.juntar([e1, e2])), ['A000000001', 'A000000002', 'B000000002']);
+
 // no máximo 2 do mesmo autor (sem diferença de maiúsculas); sem autor não conta
 var mesmo = { asin: 'M000000001', titulo: 'M', peso: 1,
   lista: [c('A000000001', 'Fulano'), c('A000000002', 'FULANO'), c('A000000003', 'fulano'), c('A000000004', ''), c('A000000005', ''), c('A000000006', '')] };

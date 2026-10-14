@@ -331,14 +331,18 @@ class TestSite(unittest.TestCase):
             arq = self.d / f"out/dados/p/{site.fragmento_p(asin)}.json"          # arquivo sem nenhum livro com lista: não existe
             f = json.loads(arq.read_text()) if arq.exists() else {"p": {}}
             e = f["p"].get(asin)
-            return e and {"lista": [f["c"][i] for i in f["l"][e[0]]], "titulo": e[1], "obra": e[2:]}
+            return e and {"lista": [f["c"][i] for i in f["l"][e[0]]], "titulo": e[1], "obra": e[2], "grupo": e[3]}
 
         um = parecidos("B000000002")                               # pela edição Kindle: os mesmos da obra
         self.assertEqual([c[0] for c in um["lista"]], ["B000000003", "B000000004"])   # mais avaliado antes; mesmo autor não
-        self.assertEqual(um["lista"][0], ["B000000003", "Romance Dois", "", "Capa dura", 5000, "Bia"])
+        self.assertEqual(um["lista"][0][:6], ["B000000003", "Romance Dois", "", "Capa dura", 5000, "Bia"])
         self.assertEqual(um["titulo"], "Romance Um")                # sem o subtítulo
-        self.assertEqual(um["obra"], ["B000000001"])                # outra edição: diz qual é a obra
-        self.assertEqual(parecidos("B000000001")["obra"], [])       # a própria
+        self.assertEqual(um["obra"], "B000000001")                  # outra edição: diz qual é a obra
+        self.assertEqual(parecidos("B000000001")["obra"], "")       # a própria
+        self.assertEqual(um["grupo"], parecidos("B000000001")["grupo"])                     # as duas edições: um grupo
+        grupos = {c[0]: c[6] for c in parecidos("B000000007")["lista"]}                   # o mesmo número em todos os arquivos
+        self.assertEqual(grupos["B000000003"], um["lista"][0][6])
+        self.assertNotEqual(grupos["B000000003"], grupos["B000000005"])
         self.assertIsNone(parecidos("B000000006"))                   # nada do mesmo gênero
         self.assertEqual([c[0] for c in parecidos("B000000007")["lista"]][:2], ["B000000005", "B000000003"])  # saiu da busca: também tem
         self.assertNotIn("B000000007", [c[0] for c in parecidos("B000000003")["lista"]])                     # mas não é sugerido
