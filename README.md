@@ -204,11 +204,22 @@ mede o tempo, o tamanho e as listas de livros-sonda dos parecidos.
 ```bash
 python -m comparador grafico "título ou ASIN"                       # página avulsa com o histórico
 python scripts/simular_precos.py data/vendidos.db data/simulado.db    # preços inventados até a Black Friday
+python -m comparador subgeneros custo                                 # experimento dos subgêneros (abaixo)
 ```
 
 O banco simulado parte de livros reais e inventa preços diários com três cenários de Black Friday:
 desconto real, desconto falso (o preço sobe antes) e nenhum desconto. Ele serve para testar o site
 antes da data e leva um aviso em todas as páginas.
+
+**Subgêneros (experimento, sem coleta recorrente).** Os 29 gêneros são amplos: na ficção, os parecidos
+de um livro são "os mais avaliados do gênero". A Amazon divide cada gênero em subcategorias ("Fantasia" →
+"Épica"), e `python -m comparador subgeneros` mede o que custaria usá-las, sem mexer no site nem na coleta:
+`descobrir` lê uma página por subcategoria e guarda a árvore, `rotular` lê as primeiras páginas de cada
+folha para saber quais livros são de cada uma, e `custo` resume o que foi lido e quanto custaria repetir
+isso toda semana, comparado com uma passada do coletor. O HTML lido fica em `data/subgeneros/paginas/` e
+tudo se refaz dele, sem pedir nada de novo (`--pasta` muda o lugar). Cortesia com a Amazon: uma página
+por vez, pausa de pelo menos 4 s, para na primeira página bloqueada sem tentar de novo e tem um teto de
+400 páginas (`--max-paginas`), que conta as que já estão em disco. O comando não abre banco.
 
 ## Limites
 

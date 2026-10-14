@@ -212,3 +212,45 @@ def parse_busca(html: str) -> PaginaBusca:
                 vistos.add(item.asin)
                 pagina.itens.append(item)
     return pagina
+
+
+@dataclass
+class Subno:
+    no: str
+    nome: str
+
+
+@dataclass
+class Departamento:
+    """A navegação "Departamento" da lateral de uma página de busca: onde a página está e o que há acima e abaixo."""
+    atual: Subno | None = None
+    pais: list[Subno] = field(default_factory=list)       # do mais alto ao mais próximo
+    filhos: list[Subno] = field(default_factory=list)     # vazio numa folha
+
+
+def parse_subnos(html: str) -> Departamento:
+    """Lê a navegação por departamentos (lida de páginas reais em out/2026): cada nó é um `li` com `id="n/<nó>"`; os pais
+    são links com a seta de voltar, o nó atual é texto sem link e os filhos são links um nível abaixo (`s-navigation-indent`).
+    Página com cards mas sem a navegação é layout desconhecido; sem cards (fatia vazia, "Nenhum resultado"), a navegação
+    pode faltar e o resultado é um `Departamento` vazio."""
+    soup = BeautifulSoup(html, "html.parser")
+    bloco = soup.select_one("#departments")
+    if bloco is None:
+        if soup.select('div[data-component-type="s-search-result"][data-asin]'):
+            raise LayoutDesconhecido("página de resultados sem a navegação de departamentos")
+        return Departamento()
+    dep = Departamento()
+    for li in bloco.select('li[id^="n/"]'):
+        no = li["id"][2:]
+        if not no.isdigit():
+            continue
+        nome = " ".join(li.get_text(" ", strip=True).split())
+        link = li.find("a", href=True)
+        if link is not None and link.select_one(".s-back-arrow"):
+            dep.pais.append(Subno(no, nome))
+        elif any(c.startswith("s-navigation-indent") for c in li.get("class", [])):
+            if link is not None:
+                dep.filhos.append(Subno(no, nome))
+            else:
+                dep.atual = Subno(no, nome)
+    return dep
