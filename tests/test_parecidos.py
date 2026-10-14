@@ -155,6 +155,66 @@ class TestParecidos(unittest.TestCase):
             # subtítulo que descreve a edição não conta
             self.assertEqual(sem("O Pequeno Príncipe: tradução original com aquarelas"), ())
 
+    def _chaves(self, *pares):
+        """as chaves de "Mais de …" para (autor, título-base) em ordem"""
+        return parecidos.chaves_do_autor([a for a, _ in pares], [b for _, b in pares])
+
+    def test_chaves_do_autor_mesma_ordem_e_pessoas_diferentes(self):
+        k = self._chaves(("F. Scott Fitzgerald", "gatsby"), ("F Scott FITZGERALD", "paraiso"), ("Mozart Fialho Jr", "word"),
+                         ("Mozart Fialho Junior", "excel"), ("Fabio Fabio Guerrini", "obras"), ("Fabio Guerrini", "diario"),
+                         ("Fitzgerald, F. Scott e Fulano", "alma"))
+        self.assertEqual(k[0], k[1])                                  # maiúsculas, pontos
+        self.assertEqual(k[2], k[3])                                  # Jr = Junior
+        self.assertEqual(k[4], k[5])                                  # palavra repetida
+        self.assertNotEqual(k[0], k[6])                               # "Fitzgerald, F. Scott": 1º autor é só "Fitzgerald"
+        # partículas e sufixos separam pessoas diferentes
+        k = self._chaves(("Paula Di Carvalho", "romance"), ("Paula Carvalho", "direito"), ("Ricardo Ramos", "presenca"),
+                         ("Ricardo Ramos Filho", "maria"), ("Alvaro de Campos", "poemas"), ("Álvaro Campos", "bola"))
+        self.assertEqual(len(set(k)), 6)
+        # acento e maiúsculas não separam
+        k = self._chaves(("José Saramago", "ensaio"), ("JOSE SARAMAGO", "cegueira"))
+        self.assertEqual(k[0], k[1])
+
+    def test_chaves_do_autor_ordem_trocada_so_com_prova(self):
+        # sem prova: duas pessoas, ou ninguém sabe
+        k = self._chaves(("Maya Grace", "magia"), ("Grace Maya", "coquetel"), ("Maria José Santos", "a"),
+                         ("José Maria Santos", "b"), ("Benjamin Cesar", "matematica"), ("Cesar Benjamin", "darwin"))
+        self.assertEqual(len(set(k)), 6)
+        # prova 1: o mesmo título-base
+        k = self._chaves(("Joel Osteen", "eu declaro"), ("Osteen Joel", "eu declaro"))
+        self.assertEqual(k[0], k[1])
+        # prova 2: a mesma série (começo do título, antes do número)
+        k = self._chaves(("Yuto Sano", "gokurakugai 05"), ("Sano Yuto", "gokurakugai 06"),
+                         ("Kurtis J Wiebe", "rat queens volume 1"), ("J Wiebe Kurtis", "rat queens os tentaculos"))
+        self.assertEqual(k[0], k[1])
+        self.assertEqual(k[2], k[3])
+        # prova 3: uma ordem com 8 vezes as obras da outra, que tem poucas (nome invertido)
+        k = self._chaves(*[("Nora Roberts", f"livro {i}") for i in range(8)], ("Roberts Nora", "ilha"))
+        self.assertEqual(len(set(k)), 1)
+        k = self._chaves(*[("Joseph Frank", f"estudo {i}") for i in range(5)], ("Frank Joseph", "atlantida"))   # 5 contra 1
+        self.assertEqual(len(set(k)), 2)
+        k = self._chaves(*[("Nora Roberts", f"livro {i}") for i in range(40)], *[("Roberts Nora", f"outro {i}") for i in range(5)])
+        self.assertEqual(len(set(k)), 2)                                                                          # a minoria tem mais de 3
+        # séries curtas demais não provam nada
+        self.assertEqual(parecidos.serie("o guia"), "")
+        self.assertEqual(parecidos.serie("quero te amar ate o fim 01"), "quero te")
+        self.assertEqual(parecidos.serie("gokurakugai 05"), "gokurakugai")
+
+    def test_chaves_do_autor_sem_chave_e_ordem_das_obras(self):
+        k = self._chaves(("Vários autores", "x"), ("Editora Europa", "y"), ("", "z"), ("Ana", "w"), ("&#1606;&#1608;&#1601;", "v"),
+                         ("Edições SM", "u"), ("Machado de Assis", "t"))
+        self.assertEqual(k[:6], [None] * 6)                           # genérico, editora, sem nome, curto, só números
+        self.assertIsNotNone(k[6])
+        # o mesmo agrupamento em qualquer ordem de entrada
+        pares = [("Joel Osteen", "eu declaro"), ("Osteen Joel", "eu declaro"), ("Maya Grace", "a"), ("Grace Maya", "b"),
+                 ("Nora Roberts", "c"), ("Nora Roberts", "d"), ("Fulano de Tal", "e")]
+        def classes(ordem):
+            k = self._chaves(*[pares[i] for i in ordem])
+            return {frozenset(ordem[j] for j in range(len(k)) if k[j] == x) for x in set(k)}
+        base = classes(range(len(pares)))
+        for ordem in ([6, 5, 4, 3, 2, 1, 0], [3, 1, 5, 0, 6, 2, 4]):
+            self.assertEqual(classes(ordem), base)
+
 
 if __name__ == "__main__":
     unittest.main()
