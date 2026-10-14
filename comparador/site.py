@@ -35,7 +35,8 @@ Dados gerados em `dados/` (textos vazios "" e números 0 = não informado; dias 
                  para não repetir um livro. O grupo é um número, o mesmo em todos os arquivos, para as edições do mesmo livro
                  (mesmo autor e mesmo começo de título, ver parecidos.chave_titulo): o início junta listas de livros diferentes
                  e mostra cada grupo uma vez, fora os grupos dos livros de partida.
-- `meta.json`    data da última coleta, totais e aviso (bancos simulados)
+- `meta.json`    data da última coleta, totais e aviso (bancos simulados); com o snapshot dos subgêneros (`--subgeneros`, ver
+                 subgeneros.py), também "subgeneros": {gerado_em, folhas, k}
 - `eventos.json` promoções (de eventos.csv)
 """
 
@@ -43,10 +44,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import shutil
 import statistics
 import sqlite3
+import sys
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -55,6 +58,7 @@ from pathlib import Path
 from . import parecidos
 from .db import abrir_leitura, dia_brasil
 from .relatorio import BURACO, WEB, aviso, ler_eventos
+from .subgeneros import ler_snapshot
 from .varredura import GENEROS
 
 DETALHES = ("autor", "imagem", "publicado", "idioma", "obra", "nota", "avaliacoes")
@@ -404,22 +408,49 @@ def _mini(obras: list[dict], livros: dict[str, dict], j: int) -> list:
     return [o["eds"][0], o["titulo"][:MAX_TITULO_MINI].rstrip(), o["linha"][2], livros[o["eds"][0]]["f"] or "Livro", o["linha"][8][0][2]]
 
 
+def _genes_de_subgenero(sub: dict | None, obra_de: dict[str, int], n_obras: int, n_base: int):
+    """Os subgêneros do snapshot como genes extras, a partir de `n_base`: ({posição da obra: [genes]}, {asin: [genes]},
+    {gene: peso}). O peso é o da raridade do nó entre as obras, log((N+1)/total): o total de resultados da Amazon
+    ("mais de N" é um piso) e não a contagem das rotuladas, que só vê as primeiras páginas. Folhas que não casam com
+    nenhuma obra da busca não viram gene."""
+    por_obra: dict[int, list[int]] = {}
+    por_asin: dict[str, list[int]] = {}
+    pesos: dict[int, float] = {}
+    for f in (sub or {}).get("folhas", []):
+        membros = {obra_de[a] for a in f["asins"] if a in obra_de}
+        if not membros:
+            continue
+        gene = n_base + len(pesos)
+        pesos[gene] = math.log((n_obras + 1) / max(f["total"] or 0, len(membros)))
+        for i in membros:
+            por_obra.setdefault(i, []).append(gene)
+        for a in f["asins"]:
+            por_asin.setdefault(a, []).append(gene)
+    return por_obra, por_asin, pesos
+
+
 def _parecidos(obras: list[dict], livros: dict[str, dict], obra_de: dict[str, int], outras: dict[int, list[int]],
-               autor: dict[int, list[int]], t: dict[str, Tabela]) -> dict[str, dict]:
-    """Os arquivos `p/` (formato no começo deste arquivo): as obras da busca e os livros que saíram dela, com gênero."""
+               autor: dict[int, list[int]], t: dict[str, Tabela], sub: dict | None = None) -> dict[str, dict]:
+    """Os arquivos `p/` (formato no começo deste arquivo): as obras da busca e os livros que saíram dela, com gênero.
+    `sub`: o snapshot dos subgêneros (subgeneros.ler_snapshot), que entram na conta como genes extras."""
     bases = [o["base"] for o in obras]
-    pobras = [parecidos.Obra(i, o["titulo"], o["autor"], tuple(o["linha"][5]), o["idioma"], o["pop"], bases[i]) for i, o in enumerate(obras)]
-    sementes = [parecidos.Semente(tuple(o["linha"][5]), o["idioma"], o["autor"], i, frozenset(outras.get(i, []) + autor.get(i, [])),
+    n_base = len(t["gen"].lista())
+    por_obra, por_asin, pesos = _genes_de_subgenero(sub, obra_de, len(obras), n_base)
+    genes = lambda i, base: tuple(sorted({*base, *por_obra.get(i, ())}))        # noqa: E731
+    pobras = [parecidos.Obra(i, o["titulo"], o["autor"], genes(i, o["linha"][5]), o["idioma"], o["pop"], bases[i]) for i, o in enumerate(obras)]
+    sementes = [parecidos.Semente(genes(i, o["linha"][5]), o["idioma"], o["autor"], i, frozenset(outras.get(i, []) + autor.get(i, [])),
                                   o["titulo"], bases[i]) for i, o in enumerate(obras)]
     fora = sorted(a for a, l in livros.items() if a not in obra_de and l["g"])
     # fora da busca, a obra (coluna `obra`) pode ter outra edição na busca: ela não é parecida, é o mesmo livro
-    sementes += [parecidos.Semente(tuple(sorted(t["gen"](g) for g in livros[a]["g"])), livros[a].get("idioma") or "", livros[a].get("autor") or "",
-                                   obra_de.get(livros[a].get("obra") or a), frozenset(), livros[a]["t"] or "", titulo_base(livros[a]["t"] or ""))
+    sementes += [parecidos.Semente(tuple(sorted({*(t["gen"](g) for g in livros[a]["g"]), *por_asin.get(a, ())})), livros[a].get("idioma") or "",
+                                   livros[a].get("autor") or "", obra_de.get(livros[a].get("obra") or a), frozenset(), livros[a]["t"] or "",
+                                   titulo_base(livros[a]["t"] or ""))
                  for a in fora]
     pos = {no: t["gen"](no) for no in GENEROS}
-    listas = parecidos.calcular(pobras, len(t["gen"].lista()), sementes, MAX_PARECIDOS,
-                                ficcao=frozenset(pos[no] for no in parecidos.GENEROS_FICCAO),
-                                balde=frozenset({pos[parecidos.LIVROS_INTERNACIONAIS]}))
+    listas = parecidos.calcular(pobras, n_base + len(pesos), sementes, MAX_PARECIDOS,
+                                ficcao=frozenset(pos[no] for no in parecidos.GENEROS_FICCAO) | frozenset(pesos),
+                                balde=frozenset({pos[parecidos.LIVROS_INTERNACIONAIS]}),
+                                n_base=n_base if pesos else None, idf_extra=pesos or None)
 
     arquivos: dict[str, dict] = {}
     cartoes: dict[int, list] = {}                     # o cartão de cada obra, montado uma vez para todos os arquivos
@@ -509,7 +540,8 @@ def _outras(obras: list[dict]) -> dict[int, list[int]]:
     return out
 
 
-def construir(bancos: list[Path], saida: Path, eventos: Path | None = None, url: str | None = None) -> dict:
+def construir(bancos: list[Path], saida: Path, eventos: Path | None = None, url: str | None = None,
+              subgeneros: Path | None = None) -> dict:
     livros: dict[str, dict] = {}
     avisos = [a for a in (ler_banco(Path(b), livros) for b in bancos) if a]
     livros = {a: l for a, l in livros.items() if l["h"]}          # sem preço registrado não há o que mostrar
@@ -561,10 +593,16 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None, url:
     for chave, conteudo in fragmentos.items():
         (saida / "dados" / "h" / f"{chave}.json").write_text(_json(conteudo), encoding="utf-8")
 
-    # livros parecidos de cada livro
+    # livros parecidos de cada livro (com os subgêneros, se houver um snapshot bom: sem ele o site sai como sempre)
+    sub = None
+    if subgeneros:
+        try:
+            sub = ler_snapshot(subgeneros)
+        except ValueError as e:
+            print(f"aviso: site sem subgêneros ({e})", file=sys.stderr)
     inicio_p = time.monotonic()
     (saida / "dados" / "p").mkdir()
-    for chave, conteudo in _parecidos(obras, livros, obra_de, outras, autor, t).items():
+    for chave, conteudo in _parecidos(obras, livros, obra_de, outras, autor, t, sub).items():
         (saida / "dados" / "p" / f"{chave}.json").write_text(_json(conteudo), encoding="utf-8")
     tempo_p = time.monotonic() - inicio_p
 
@@ -610,6 +648,8 @@ def construir(bancos: list[Path], saida: Path, eventos: Path | None = None, url:
             "itens": sum(len(o["eds"]) for o in obras), "obras": len(obras), "ultima_coleta": hoje,
             "lido_ate": min((u for u in (ultima_leitura(Path(b)) for b in bancos) if u), default=None),
             "aviso": " / ".join(dict.fromkeys(avisos))}
+    if sub:
+        meta["subgeneros"] = {"gerado_em": sub.get("gerado_em"), "folhas": len(sub["folhas"]), "k": sub.get("k")}
     (saida / "dados" / "meta.json").write_text(_json(meta), encoding="utf-8")
     (saida / "dados" / "eventos.json").write_text(_json(ler_eventos(eventos) if eventos else []), encoding="utf-8")
     return {**meta, "tempo_parecidos": round(tempo_p, 1)}

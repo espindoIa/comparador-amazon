@@ -4,6 +4,7 @@ ou do site publicado.
 
     python scripts/medir_parecidos.py https://espindoia.github.io/comparador-amazon/dados
     python scripts/medir_parecidos.py site/dados --sonda "O Hobbit" --sonda "Python"
+    python scripts/medir_parecidos.py site/dados --subgeneros subgeneros.json     # cada sonda antes e depois dos subgêneros
 
 As listas saem iguais às do site, exceto pelas exclusões de "Outras edições" e "Mais de …", que o índice não traz.
 """
@@ -22,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from comparador import site  # noqa: E402
+from comparador.subgeneros import ler_snapshot  # noqa: E402
 
 SONDAS = ["O Hobbit", "Pai rico, pai pobre", "Python Fluente", "É assim que acaba", "Sapiens", "Direito Constitucional Esquematizado",
           "A biblioteca da meia-noite", "Hábitos Atômicos", "O Pequeno Príncipe", "1984", "Torto arado", "Box Harry Potter",
@@ -55,24 +57,33 @@ def montar(origem: str):
     return p0, obras, livros, t
 
 
-def medir(origem: str, sondas: list[str]) -> str:
+def listas_de(arquivos: dict) -> dict[str, list]:
+    listas = {}
+    for arq in arquivos.values():
+        for asin, e in arq["p"].items():
+            listas[asin] = [arq["c"][i] for i in arq["l"][e[0]]]
+    return listas
+
+
+def medir(origem: str, sondas: list[str], subgeneros: str | None = None) -> str:
     out = []
     t0 = time.monotonic()
     p0, obras, livros, t = montar(origem)
     out.append(f"obras: {len(obras)} (lidas em {time.monotonic() - t0:.1f} s)")
-    t0 = time.monotonic()
     obra_de = {a: i for i, o in enumerate(obras) for a in o["eds"]}
-    arquivos = site._parecidos(obras, livros, obra_de, {}, {}, t)
+    antes, sub = None, ler_snapshot(subgeneros) if subgeneros else None
+    if sub:
+        out.append(f"subgêneros: {len(sub['folhas'])} folhas, K = {sub.get('k')}, de {sub.get('gerado_em')}")
+        antes = listas_de(site._parecidos(obras, livros, obra_de, {}, {}, t))
+    t0 = time.monotonic()
+    arquivos = site._parecidos(obras, livros, obra_de, {}, {}, t, sub)
     out.append(f"parecidos e arquivos p/: {time.monotonic() - t0:.1f} s")
     crus = [site._json(c).encode() for c in arquivos.values()]
     gz = sorted(len(gzip.compress(c, 6)) for c in crus)
     out.append(f"p/: {len(crus)} arquivos; total {sum(len(c) for c in crus) / 2**20:.0f} MB cru, {sum(gz) / 2**20:.1f} MB gzip; "
                f"gzip por arquivo: mediana {statistics.median(gz) / 1024:.0f} KB, p90 {gz[int(len(gz) * .9)] / 1024:.0f} KB, "
                f"máx {gz[-1] / 1024:.0f} KB")
-    listas = {}
-    for arq in arquivos.values():
-        for asin, e in arq["p"].items():
-            listas[asin] = [arq["c"][i] for i in arq["l"][e[0]]]
+    listas = listas_de(arquivos)
     por_obra = {o["eds"][0]: tuple(c[0] for c in listas.get(o["eds"][0], [])) for o in obras}
     cont = collections.Counter(a for lista in por_obra.values() for a in lista)
     titulo = {o["eds"][0]: o["titulo"] for o in obras}
@@ -87,6 +98,11 @@ def medir(origem: str, sondas: list[str]) -> str:
             continue
         gens = ", ".join(p0["gen"][g][1] for g in o["linha"][5])
         out.append(f"\n## {o['titulo'][:70]} — {o['autor'] or '?'} [{gens}] {o['idioma']}")
+        if antes is not None:
+            out.append("   antes dos subgêneros:")
+            for c in antes.get(o["eds"][0], []):
+                out.append(f"   - {c[1][:60]} — {c[5] or '?'}")
+            out.append("   depois:")
         for c in listas.get(o["eds"][0], []):
             out.append(f"   - {c[1][:60]} — {c[5] or '?'}")
     return "\n".join(out)
@@ -95,9 +111,10 @@ def medir(origem: str, sondas: list[str]) -> str:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("origem", help="pasta dados/ do site gerado, ou o endereço da pasta dados/ do site publicado")
+    p.add_argument("--subgeneros", help="snapshot dos subgêneros (subgeneros.json): mostra cada sonda antes e depois")
     p.add_argument("--sonda", action="append", help="título (começo) de um livro para mostrar a lista; repetível (padrão: as sondas fixas)")
     a = p.parse_args(argv)
-    print(medir(a.origem, a.sonda or SONDAS))
+    print(medir(a.origem, a.sonda or SONDAS, a.subgeneros))
     return 0
 
 

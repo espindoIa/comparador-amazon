@@ -476,6 +476,53 @@ class TestCusto(Base):
         self.assertIn("Gênero A: 3 subcategorias diretas", texto)
 
 
+class TestSnapshot(Base):
+    """O que o site lê: por folha, o nome, o total e os ASINs das primeiras páginas."""
+
+    def setUp(self):
+        super().setUp()
+        _, leitor, self.arvore = self.descobrir()
+        subgeneros.rotular(leitor, self.arvore, 2)
+        self.snap = subgeneros.montar_snapshot(self.arvore, subgeneros.rotulos(self.cache, self.arvore, 2), 2, ["100", "200"],
+                                               "2026-10-14T00:00:00+00:00")
+
+    def test_monta_do_que_foi_rotulado(self):
+        self.assertEqual((self.snap["v"], self.snap["k"], self.snap["generos"], self.snap["gerado_em"]),
+                         (1, 2, ["100", "200"], "2026-10-14T00:00:00+00:00"))
+        folhas = {f["no"]: f for f in self.snap["folhas"]}
+        self.assertEqual(set(folhas), {"111", "112", "120", "210"})
+        f = folhas["111"]
+        self.assertEqual((f["nome"], f["total"], f["exato"]), ("Folha A11", 40, True))
+        self.assertEqual(len(f["asins"]), len(set(f["asins"])))                       # sem repetir
+        self.assertEqual(f["asins"][:2], [asin("111", 1, 0), asin("111", 1, 9000)])     # o do card e o do formato dele
+        self.assertEqual(len(f["asins"]), 34)                                           # duas páginas de 16 cards, 1 deles com 2 ASINs
+
+    def test_folha_sem_nenhum_livro_nao_entra(self):
+        sem = subgeneros.montar_snapshot(self.arvore, {"999": {"nome": "Vazia", "total": 0, "exato": True, "paginas": [[]]}}, 1, [])
+        self.assertEqual(sem["folhas"], [])
+
+    def test_le_de_volta_em_json_e_em_gz(self):
+        for nome, escrever in (("s.json", lambda p, b: p.write_bytes(b)), ("s.json.gz", lambda p, b: p.write_bytes(gzip.compress(b)))):
+            arq = Path(self.tmp.name) / nome
+            escrever(arq, json.dumps(self.snap).encode())
+            self.assertEqual(subgeneros.ler_snapshot(arq)["folhas"], self.snap["folhas"])
+
+    def test_snapshot_ruim_diz_o_que_esta_errado(self):
+        d = Path(self.tmp.name)
+        casos = {"nao-existe.json": None, "quebrado.json": b"{", "lista.json": b"[1]",
+                 "versao.json": json.dumps({"v": 2, "folhas": self.snap["folhas"]}).encode(),
+                 "vazio.json": json.dumps({"v": 1, "folhas": []}).encode(),
+                 "mal-formado.json": json.dumps({"v": 1, "folhas": [{"no": 1, "nome": "x", "asins": ["A"]}, {"no": "2", "nome": "x", "asins": []},
+                                                                  {"no": "3", "nome": "x", "total": "9", "asins": ["A"]}]}).encode()}
+        for nome, conteudo in casos.items():
+            if conteudo is not None:
+                (d / nome).write_bytes(conteudo)
+            with self.assertRaises(ValueError, msg=nome):
+                subgeneros.ler_snapshot(d / nome)
+        (d / "meio.json").write_text(json.dumps({"v": 1, "folhas": [{"no": 1}] + self.snap["folhas"][:1]}), encoding="utf-8")
+        self.assertEqual(len(subgeneros.ler_snapshot(d / "meio.json")["folhas"]), 1)       # descarta só as folhas ruins
+
+
 class TestComandoSubgeneros(Base):
     def rodar(self, *args, amazon=None):
         saida, erro, codigo = io.StringIO(), io.StringIO(), 0

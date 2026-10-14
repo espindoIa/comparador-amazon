@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import re
@@ -348,6 +350,37 @@ class TestSite(unittest.TestCase):
         self.assertNotIn("B000000007", [c[0] for c in parecidos("B000000003")["lista"]])                     # mas não é sugerido
         self.assertEqual(site.fragmento_p("B000000001"), f"{int(site.fragmento_p('B000000001'), 16):03x}")
         self.assertEqual(len(site.fragmento_p("ZZZZZZZZZZ")), 3)
+
+    def test_subgeneros_entram_na_conta_dos_parecidos_e_o_snapshot_ruim_e_ignorado(self):
+        h = [("2026-10-01", "2026-10-20", 3000, None)]
+        banco(self.d / "a.db", [(f"B00000000{i}", f"Romance {nome}", "Capa comum", h) for i, nome in
+                                enumerate(("Um", "Dois", "Três", "Quatro", "Cinco"), 1)])
+        for i, (autor, av) in enumerate((("Ana", 10), ("Bia", 5000), ("Caio", 900), ("Davi", 20), ("Eva", 3000)), 1):
+            self._detalhar("a.db", "UPDATE catalogo SET autor = ?, avaliacoes = ? WHERE asin = ?", autor, av, f"B00000000{i}")
+            self._detalhar("a.db", "INSERT INTO generos VALUES (?, '7882388011')", f"B00000000{i}")
+
+        def lista_da_semente(snapshot=None, nome="out"):
+            site.construir([self.d / "a.db"], self.d / nome, subgeneros=snapshot)
+            arq = json.loads((self.d / f"{nome}/dados/p/{site.fragmento_p('B000000001')}.json").read_text())
+            return [arq["c"][i][0] for i in arq["l"][arq["p"]["B000000001"][0]]]
+
+        self.assertEqual(lista_da_semente(), ["B000000002", "B000000005", "B000000003", "B000000004"])      # só pelas avaliações
+        snap = self.d / "sub.json"
+        snap.write_text(json.dumps({"v": 1, "gerado_em": "2026-10-14T00:00:00+00:00", "k": 10, "generos": ["7882388011"], "folhas": [
+            {"no": "100", "nome": "Épica", "total": 2, "exato": True, "asins": ["B000000001", "B000000004", "ZZZZZZZZZZ"]},
+            {"no": "101", "nome": "Sem casamento", "total": 9, "exato": True, "asins": ["XXXXXXXXXX"]}]}), encoding="utf-8")
+        self.assertEqual(lista_da_semente(snap, "out2")[0], "B000000004")        # o subgênero em comum vem na frente
+        meta = json.loads((self.d / "out2/dados/meta.json").read_text())
+        self.assertEqual(meta["subgeneros"], {"gerado_em": "2026-10-14T00:00:00+00:00", "folhas": 2, "k": 10})
+        self.assertNotIn("subgeneros", json.loads((self.d / "out/dados/meta.json").read_text()))
+        for conteudo in ("{", json.dumps({"v": 2, "folhas": []}), json.dumps({"v": 1, "folhas": [{"no": 1}]})):    # quebrado, outra versão, sem folha boa
+            snap.write_text(conteudo, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()) as erro:
+                self.assertEqual(lista_da_semente(snap, "out3"), ["B000000002", "B000000005", "B000000003", "B000000004"])
+            self.assertIn("site sem subgêneros", erro.getvalue())
+        self.assertNotIn("subgeneros", json.loads((self.d / "out3/dados/meta.json").read_text()))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(lista_da_semente(self.d / "nao-existe.json", "out4"), ["B000000002", "B000000005", "B000000003", "B000000004"])
 
     def test_mais_do_mesmo_autor_usa_a_chave_de_autor(self):
         h = [("2026-10-01", "2026-10-05", 1000, None)]

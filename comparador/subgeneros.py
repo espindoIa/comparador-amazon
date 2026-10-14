@@ -282,6 +282,41 @@ def rotulos(cache: Cache, arvore: dict, k: int, de: str | None = None) -> dict:
     return saida
 
 
+SNAPSHOT_VERSAO = 1
+
+
+def montar_snapshot(arvore: dict, rotulos_lidos: dict, k: int, generos: list[str], gerado_em: str | None = None) -> dict:
+    """O que o site usa dos rótulos (`rotulos()`): por folha, o nó, o nome, o total de resultados (que dá o peso do
+    subgênero) e os ASINs dos livros que a Amazon pôs nas primeiras páginas dela, sem repetir."""
+    folhas = []
+    for no, r in rotulos_lidos.items():
+        asins = list(dict.fromkeys(a for pagina in r["paginas"] for card in pagina for a in card))
+        if asins:
+            folhas.append({"no": no, "nome": r["nome"], "total": r["total"], "exato": r["exato"], "asins": asins})
+    return {"v": SNAPSHOT_VERSAO, "gerado_em": gerado_em or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "k": k, "generos": list(generos), "folhas": folhas}
+
+
+def ler_snapshot(caminho: Path | str) -> dict:
+    """O snapshot em `caminho` (JSON, ou .gz), conferido. ValueError diz o que está errado: quem usa (o site) segue sem
+    subgêneros em vez de falhar. Folhas mal formadas ou sem ASIN são descartadas; sem nenhuma folha, é erro."""
+    caminho = Path(caminho)
+    try:
+        bruto = caminho.read_bytes()
+        dados = json.loads((gzip.decompress(bruto) if caminho.suffix == ".gz" else bruto).decode("utf-8"))
+    except (OSError, EOFError, ValueError) as e:
+        raise ValueError(f"não consegui ler {caminho}: {e}") from e
+    if not isinstance(dados, dict) or dados.get("v") != SNAPSHOT_VERSAO:
+        raise ValueError(f"versão desconhecida do snapshot ({dados.get('v') if isinstance(dados, dict) else type(dados).__name__})")
+    folhas = [f for f in dados.get("folhas") or []
+              if isinstance(f, dict) and isinstance(f.get("no"), str) and isinstance(f.get("nome"), str)
+              and (f.get("total") is None or isinstance(f["total"], int))
+              and isinstance(f.get("asins"), list) and f["asins"] and all(isinstance(a, str) for a in f["asins"])]
+    if not folhas:
+        raise ValueError("snapshot sem nenhuma folha com livros")
+    return {**dados, "folhas": folhas}
+
+
 def cobertura_por_totais(arvore: dict) -> list[dict]:
     """Para cada nó interno com todos os filhos lidos: o total dele, a soma dos totais dos filhos e quantos são. Um livro
     pode estar em mais de um filho (a soma passa do total) e em nenhum (falta): é uma ordem de grandeza, e totais "mais de N"
