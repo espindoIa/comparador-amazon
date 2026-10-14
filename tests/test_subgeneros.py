@@ -329,6 +329,11 @@ class TestDescobrir(Base):
         self.assertEqual(sorted(amazon.nos()), sorted(set(amazon.nos())))
         self.assertEqual(len(amazon.nos()), 8)
         self.assertEqual(resultado["nos"]["210"]["status"], "folha")
+        # a página de 210 mostra um caminho só (pelo gênero A), mas ele também está abaixo do gênero B
+        self.assertEqual(resultado["nos"]["210"]["pais"][-1][0], "100")
+        self.assertIn("210", subgeneros.folhas_de(resultado, "200"))
+        self.assertIn("210", subgeneros.folhas_de(resultado, "100"))
+        self.assertEqual(subgeneros.abaixo_de(resultado, "200"), {"200", "210"})
 
     def test_so_as_raizes_pedidas_mas_a_arvore_traz_tudo_o_que_esta_em_disco(self):
         self.descobrir(raizes=("100",))

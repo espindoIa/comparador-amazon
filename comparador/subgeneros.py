@@ -204,11 +204,25 @@ def descobrir(leitor: Leitor, raizes: list[str], profundidade: int | None = None
     return resultado
 
 
+def abaixo_de(arvore: dict, de: str) -> set[str]:
+    """`de` e tudo que as listas de filhos alcançam a partir dele. Não dá para usar o caminho (`pais`) que a página mostra:
+    a árvore da Amazon é um grafo (Horror está em "Fantasia, Horror e Ficção Científica" e em "Literatura e Ficção", e a
+    página só mostra um dos caminhos)."""
+    achados, fila = {de}, [de]
+    while fila:
+        for filho, _ in arvore["nos"].get(fila.pop(), {}).get("filhos", []):
+            if filho not in achados:
+                achados.add(filho)
+                fila.append(filho)
+    return achados
+
+
 def folhas_de(arvore: dict, de: str | None = None) -> dict[str, dict]:
     """Os nós `folha`, em ordem de código (a mesma em qualquer execução; se uma rodada parar no meio, as folhas que já têm a
     página são um pedaço sem relação com o assunto); com `de`, só os que estão abaixo desse nó (ou ele mesmo)."""
+    dentro = abaixo_de(arvore, de) if de else None
     return {no: i for no, i in sorted(arvore["nos"].items(), key=lambda par: int(par[0]))
-            if i["status"] == "folha" and (de is None or no == de or any(p[0] == de for p in i["pais"]))}
+            if i["status"] == "folha" and (dentro is None or no in dentro)}
 
 
 def nao_lidos(arvore: dict) -> set[str]:
@@ -296,7 +310,8 @@ def texto_resumo(arvore: dict, ks=KS) -> str:
     linhas.append("nós por nível (0 = gênero): " + ", ".join(f"{n}: {c}" for n, c in sorted(niveis.items())))
     generos = [(no, i) for no, i in nos.items() if len(i["pais"]) == 1]
     for no, i in generos:
-        abaixo = [j for j in nos.values() if any(p[0] == no for p in j["pais"])]
+        dentro = abaixo_de(arvore, no)
+        abaixo = [j for n, j in nos.items() if n in dentro and n != no]
         linhas.append(f"  {i['nome'] or no}: {len(i['filhos'])} subcategorias diretas"
                       + (f"; abaixo dele {sum(j['status'] == 'folha' for j in abaixo)} folhas e "
                          f"{sum(j['status'] == 'interno' for j in abaixo)} internos lidos" if abaixo else ""))
