@@ -66,6 +66,7 @@ class PaginaBusca:
     total: int | None = None        # "710 resultados" ou "mais de 2.000"
     total_exato: bool = False
     ultima_pagina: int | None = None
+    capas_suspeitas: int = 0        # preços riscados descartados: ilegíveis ou não maiores que o preço de venda
 
 
 def url_busca(no: str, preco_min: int, preco_max: int, pagina: int, ordem: str = "preco",
@@ -87,6 +88,8 @@ def url_busca(no: str, preco_min: int, preco_max: int, pagina: int, ordem: str =
     return URL_BUSCA.format(rh=quote(rh, safe=""), ordem=ORDENS[ordem], pagina=pagina)
 
 
+# Rótulos do preço riscado que o fazem preço de capa do próprio formato (ver `_capa`).
+_ROTULOS_CAPA = ("De:", "Preço digital sugerido:")
 _NAO_E_FORMATO = re.compile(r"\d|^(ver|mais|outr|menor preço|oferta|promo)", re.I)
 
 
@@ -147,11 +150,37 @@ def _patrocinado(card) -> bool:
     return bool(rotulo) or card.find(string=re.compile(r"^\s*Patrocinado\s*$")) is not None
 
 
-def _itens_do_card(card) -> list[ItemBusca]:
+def _capa(link, preco: int) -> tuple[int | None, bool]:
+    """(preço de capa do formato deste link, se a leitura é suspeita).
+
+    O valor é o do preço riscado (`data-a-strike`), cujo `.a-offscreen` é sempre um "R$ X" puro; o rótulo, quando há,
+    é outro `.a-offscreen` do mesmo link (visto em out/2026):
+    - sem rótulo, ou "De:": o preço de capa deste formato;
+    - "Preço digital sugerido:": o preço de capa do Kindle;
+    - "Preço de capa sugerido:" num link do Kindle: é o preço do livro impresso, não do Kindle. Fica de fora, como
+      qualquer rótulo desconhecido.
+    Sem riscado não há preço de capa: a Amazon só o mostra quando há desconto (ausente de verdade, não é falha).
+    Suspeita: há riscado, mas ele não se lê como preço ou não é maior que o preço de venda; não é gravado.
+    """
+    riscado = link.select_one('.a-price[data-a-strike="true"] > .a-offscreen')
+    if riscado is None:
+        return None, False
+    rotulos = [t for t in (s.get_text(" ", strip=True) for s in link.select(".a-offscreen")) if not t.startswith("R$")]
+    if rotulos and not any(t.startswith(r) for t in rotulos for r in _ROTULOS_CAPA):
+        return None, False
+    capa = parse_preco(riscado.get_text())
+    if capa is None or capa <= preco:
+        return None, True
+    return capa, False
+
+
+def _itens_do_card(card) -> tuple[list[ItemBusca], int]:
+    """Os formatos com preço do card e quantos preços de capa foram descartados como suspeitos."""
     h2 = card.select_one("h2")
     titulo = h2.get_text(" ", strip=True) if h2 else None
     formatos: dict[str, str] = {}
     precos: dict[str, tuple[int, int | None]] = {}
+    suspeitas = 0
     for a in card.select('a[href*="/dp/"]'):
         m = _ASIN_LINK_RE.search(a.get("href", ""))
         if not m:
@@ -166,18 +195,14 @@ def _itens_do_card(card) -> list[ItemBusca]:
         preco = parse_preco(preco_el.get_text())
         if not preco:  # R$ 0,00 = Kindle Unlimited / grátis: não é preço de venda
             continue
-        capa = None
-        for s in a.select(".a-offscreen"):
-            t = s.get_text(" ", strip=True)
-            if t.startswith("De:"):
-                capa = parse_preco(t)
-                break
+        capa, suspeita = _capa(a, preco)
+        suspeitas += suspeita and asin not in precos
         precos.setdefault(asin, (preco, capa))
     det = _detalhes(card)
     return [
         ItemBusca(asin, formatos.get(asin), titulo, preco, capa, obra=card.get("data-asin") or None, **det)
         for asin, (preco, capa) in precos.items()
-    ]
+    ], suspeitas
 
 
 def parse_busca(html: str) -> PaginaBusca:
@@ -205,8 +230,9 @@ def parse_busca(html: str) -> PaginaBusca:
         if not card.get("data-asin") or _patrocinado(card):
             continue
         pagina.cards += 1
-        itens = _itens_do_card(card)
+        itens, suspeitas = _itens_do_card(card)
         pagina.livros += bool(itens)
+        pagina.capas_suspeitas += suspeitas
         for item in itens:
             if item.asin not in vistos:
                 vistos.add(item.asin)

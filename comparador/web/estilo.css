@@ -165,7 +165,7 @@ footer.rod a{color:var(--mu);text-decoration:underline;text-underline-offset:2px
 .cartao .a{font-size:var(--fs-2);color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cartao .por{font-size:var(--fs-2);color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cartao .por cite{font-family:var(--serif)}
 .cartao .p{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 6px;font-variant-numeric:tabular-nums}
-.cartao .p b{font-size:var(--fs-4)}.cartao .p s{font-size:var(--fs-1);color:var(--mu)}
+.cartao .p b{font-size:var(--fs-4)}.cartao .p s{font-size:var(--fs-1);color:var(--mu)}.cartao .p .f{font-size:var(--fs-1);color:var(--mu)}
 .cartao .selo{position:absolute;bottom:6px;left:6px;z-index:var(--zacima)}
 .cartao .selo.pill{box-shadow:0 1px 3px rgba(0,0,0,.18)}
 

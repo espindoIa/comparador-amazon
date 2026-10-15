@@ -80,11 +80,17 @@ Algumas decisões que vieram de medir as páginas reais:
   Com `requests`, a Amazon respondia com captcha ou erro 503.
 - Cada card pode ter vários formatos. O preço é lido de dentro do link de cada formato, e assim
   parcelas e "outras ofertas" não se misturam com ele. Kindle Unlimited (R$ 0,00) é descartado.
+- O preço de capa é o preço riscado do link de cada formato, com ou sem o rótulo "De:" (os dois aparecem). No
+  Kindle, vale o "Preço digital sugerido"; o "Preço de capa sugerido" que o link do Kindle às vezes mostra é o do
+  livro impresso e fica de fora, para não virar preço do Kindle. Um riscado que não é maior que o preço de venda não
+  é gravado: a execução conta esses casos na observação e guarda o HTML da primeira página com um deles.
 - Só entram ofertas vendidas pela própria Amazon (filtro "Vendido por" da busca). O filtro vale
   para o card, então um formato secundário pode vir de outro vendedor. Medimos isso em cerca de
   1,5% dos itens.
 - O ritmo começa em 21 páginas por minuto e sobe aos poucos até o teto. O teto fica guardado no banco: começa em
-  60 e sobe 25% por dia de coleta limpa (sem bloqueio e quase sem página curta). No GitHub cada sequência fica
+  60 e sobe 25% por dia de coleta limpa (sem bloqueio e quase sem página curta). O dia limpo soma as execuções dele:
+  a 8 páginas por minuto (o recuo depois de bloqueio) uma execução lê ~1.300 páginas, menos que as 2.000 de evidência,
+  e com a conta por execução o teto não voltava a subir (as três sequências ficaram presas em 8 de 13 a 15/10). No GitHub cada sequência fica
   limitada a 45 programadas (uns 40 reais por minuto), abaixo dos 60 medidos sem bloqueio, porque o volume por dia é
   bem maior. Depois de um bloqueio o teto cai e fica parado por 3 dias. Quando a Amazon bloqueia ou devolve uma página
   com poucos resultados, o ritmo cai na hora. Para fixar o teto, `--ritmo-max`; para mudar o limite da subida,
@@ -99,8 +105,10 @@ Algumas decisões que vieram de medir as páginas reais:
   dia. Sobe um degrau a cada bloqueio, ou quando passa de 2 por mil o número de páginas curtas e erros (a limitação
   costuma aparecer assim antes do bloqueio), ou quando uma janela acaba com fatias sem ler (a sequência não dá conta de
   uma passada no tempo do ciclo), e vai direto ao ciclo diário depois de 3 bloqueios seguidos. Só desce quando o dia no
-  degrau passou sem nenhum sinal de alerta (mais de 0,5 falha leve por mil páginas) e depois de 3 dias de espera, se
-  o degrau subiu. Dentro da janela, as fatias são lidas das mais velhas para as mais novas, para uma sequência lenta
+  degrau passou sem nenhum sinal de alerta (mais de 0,5 falha leve por mil páginas, somando as execuções do dia),
+  depois de 3 dias de espera, se o degrau subiu, e se a passada, no teto atual, ocupa até 85% do degrau de baixo (sem
+  isso o ciclo desceria mais rápido que o teto sobe e a passada estouraria a janela). Bloqueio, aperto e janela
+  estourada olham só a execução. Dentro da janela, as fatias são lidas das mais velhas para as mais novas, para uma sequência lenta
   não repetir só as faixas baratas. Para fixar o ciclo, `--ciclo-horas`.
   A janela de 3 horas é apertada: no ritmo de 45 programadas (uns 40 reais por minuto) cada sequência leva uns 110
   minutos para ler as ~4,4 mil páginas dela, e sobram uns 70 de folga. Se a Amazon desacelerar a resposta ou o ritmo recuar,
@@ -229,7 +237,7 @@ por vez, pausa de pelo menos 4 s, para na primeira página bloqueada sem tentar 
 - Só livros que aparecem nas listas de mais vendidos dos gêneros. Um livro que sai da lista para de receber
   preço novo, e some da busca depois de 14 dias. Os que só aparecem no ranking geral de Livros, sem estar em
   nenhum gênero, deixaram de ser atualizados e saem do site nesse prazo.
-- O preço de capa só aparece quando há desconto.
+- O preço de capa só aparece quando há desconto (sem riscado no card, não há o que ler).
 - Ler as páginas da Amazon por programa vai contra os termos de uso dela. A coleta espaça as
   requisições, desacelera ou para quando é bloqueada, e não tenta contornar bloqueios. Ler em três servidores
   ao mesmo tempo triplica a carga em cada instante, e uma passada a cada 3 horas multiplica por oito o volume

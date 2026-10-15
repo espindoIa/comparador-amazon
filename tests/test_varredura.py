@@ -79,6 +79,30 @@ class TestParseBusca(unittest.TestCase):
         self.assertEqual(itens["B0GGDSD6DH"].preco_centavos, 1490)
         self.assertEqual(itens["6554482016"].preco_capa_centavos, 11490)
 
+    def test_preco_de_capa_de_cada_formato(self):
+        itens = {i.asin: i.preco_capa_centavos for i in parse_busca(ler("busca_fatia.html")).itens}
+        self.assertEqual(itens["658991284X"], 6990)    # riscado sem rótulo "De:" (capa dura)
+        self.assertEqual(itens["652591583X"], 3990)    # idem (capa comum)
+        self.assertEqual(itens["B0GRJPWPF2"], 5000)    # Kindle: "Preço digital sugerido"
+        self.assertEqual(itens["6554482016"], 11490)   # "De:"
+        self.assertIsNone(itens["8542611837"])         # sem desconto não há riscado: ausente de verdade
+        self.assertIsNone(itens["B07MVNQ5T3"])         # só Kindle, sem riscado
+        formatos = {i.asin: i.preco_capa_centavos for i in parse_busca(ler("busca_formatos.html")).itens}
+        # Kindle com "Preço de capa sugerido": é o preço do impresso do mesmo card (R$ 43,90), não do Kindle.
+        self.assertIsNone(formatos["B07TZNQB5S"])
+        self.assertEqual(formatos["8577870405"], 4390)
+
+    def test_preco_de_capa_suspeito_ou_de_rotulo_desconhecido_nao_e_gravado(self):
+        html = ler("busca_fatia.html")
+        p = parse_busca(html)
+        self.assertEqual(p.capas_suspeitas, 0)
+        menor = parse_busca(html.replace("R$\xa069,90", "R$\xa050,00", 1))    # riscado abaixo do preço de venda (R$ 55,08)
+        self.assertEqual(menor.capas_suspeitas, 1)
+        self.assertIsNone({i.asin: i for i in menor.itens}["658991284X"].preco_capa_centavos)
+        outro = parse_busca(html.replace("Preço digital sugerido:", "Preço sugerido pelo vendedor:"))
+        self.assertIsNone({i.asin: i for i in outro.itens}["B0GRJPWPF2"].preco_capa_centavos)
+        self.assertEqual(outro.capas_suspeitas, 0)
+
     def test_rotulos_de_formato(self):
         from comparador.busca import _formato
         self.assertEqual(_formato("Capa Comum"), "Capa comum")
@@ -703,7 +727,7 @@ class TestMaisVendidos(unittest.TestCase):
         varredura.criar_schema(self.conn)
         r = Ritmo(60, 60)
         r.ppm = 60
-        eid = self.conn.execute("INSERT INTO execucoes (iniciada_em, paginas, bloqueios, erros, curtas) VALUES ('x', 8000, 0, 0, 1)").lastrowid
+        eid = self.conn.execute("INSERT INTO execucoes (iniciada_em, paginas, bloqueios, erros, curtas) VALUES (?, 8000, 0, 0, 1)", (db.agora(),)).lastrowid
         e = self.conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
         mudou = varredura.aprender_ritmo(self.conn, r, 60.0, e)
         self.assertEqual(mudou["ritmo_teto"], "75.0")
@@ -713,11 +737,29 @@ class TestMaisVendidos(unittest.TestCase):
         r2.ppm = 75
         self.assertEqual(varredura.aprender_ritmo(self.conn, r2, 75.0, e), {"ritmo_ultimo_limpo": "75.0"})   # hoje já subiu
 
+    def test_execucoes_curtas_do_mesmo_dia_somam_evidencia_e_bloqueio_tira_a_do_dia(self):
+        varredura.criar_schema(self.conn)
+        ins = ("INSERT INTO execucoes (iniciada_em, finalizada_em, paginas, bloqueios, erros, curtas) "
+               "VALUES (?, ?, 1300, ?, 0, ?)")
+        agora = db.agora()
+        ontem = (datetime.fromisoformat(agora) - timedelta(days=1)).isoformat(timespec="seconds")
+        self.conn.execute(ins, (ontem, ontem, 0, 0))                       # outro dia: não conta
+        self.conn.execute(ins, (agora, agora, 0, 1))
+        self.conn.execute(ins, (agora, agora, 0, 0))
+        eid = self.conn.execute(ins.replace("?, ?, 1300", "?, NULL, 1300"), (agora, 0, 0)).lastrowid   # a atual
+        e = self.conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
+        self.assertEqual(varredura.evidencia_do_dia(self.conn, e), (3900, 1))
+        r = Ritmo(8, 8)
+        r.ppm = 8
+        self.assertEqual(varredura.aprender_ritmo(self.conn, r, 8.0, e)["ritmo_teto"], "10.0")
+        self.conn.execute(ins, (agora, agora, 1, 0))
+        self.assertEqual(varredura.evidencia_do_dia(self.conn, e), (0, 0))
+
     def test_limite_do_teto_vale_na_gravacao_do_banco(self):
         varredura.criar_schema(self.conn)
         r = Ritmo(60, 60)
         r.ppm = 60
-        eid = self.conn.execute("INSERT INTO execucoes (iniciada_em, paginas, bloqueios, erros, curtas) VALUES ('x', 8000, 0, 0, 1)").lastrowid
+        eid = self.conn.execute("INSERT INTO execucoes (iniciada_em, paginas, bloqueios, erros, curtas) VALUES (?, 8000, 0, 0, 1)", (db.agora(),)).lastrowid
         e = self.conn.execute("SELECT * FROM execucoes WHERE id = ?", (eid,)).fetchone()
         self.assertEqual(varredura.aprender_ritmo(self.conn, r, 60.0, e, 60.0), {"ritmo_ultimo_limpo": "60.0"})   # limpo, mas no limite
         self.assertNotIn("ritmo_teto", varredura.ler_config(self.conn))

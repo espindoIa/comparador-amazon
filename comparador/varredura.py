@@ -358,6 +358,7 @@ class Placar:
     bloqueios: int = 0
     erros: int = 0
     curtas: int = 0
+    capas_suspeitas: int = 0     # preços riscados descartados (ver busca._capa)
     falhas_seguidas: int = 0     # lotes seguidos com alguma falha
     avisos: list = field(default_factory=list)
     com: dict = field(default_factory=dict)   # itens lidos com cada detalhe esperado (ver CAMPOS_ESPERADOS)
@@ -476,6 +477,10 @@ def varrer(
                          (n_pag, pagina.total, db.agora(), f.id))
         pl.paginas += 1
 
+        if pagina.capas_suspeitas:
+            if pl.capas_suspeitas == 0:      # o HTML da primeira página com suspeita basta para entender o caso
+                guardar_html(pasta_html, f"capa-{f.id}-{pag}", html)
+            pl.capas_suspeitas += pagina.capas_suspeitas
         quando = db.agora()
         for item in pagina.itens:
             registrar(conn, item, f.no, quando)
@@ -559,6 +564,8 @@ def varrer(
     _fechar_dia_se_completo(conn, grupo, dia)
     if falta := detalhes_em_falta(pl.itens, pl.com):
         pl.avisos.append(f"poucos itens com {', '.join(falta)}: {AVISO_LAYOUT}")
+    if pl.capas_suspeitas:
+        pl.avisos.append(f"{pl.capas_suspeitas} preços de capa descartados (riscado ilegível ou não maior que o preço)")
     corridos = max((relogio() - inicio) / 60, 1e-9)
     conn.execute(
         "UPDATE execucoes SET finalizada_em = ?, paginas = ?, itens = ?, bloqueios = ?, erros = ?, curtas = ?, "
@@ -617,14 +624,38 @@ def pausa_vigente(conn: sqlite3.Connection, agora: datetime | None = None) -> da
     return pausa if pausa and pausa > (agora or datetime.fromisoformat(db.agora())) else None
 
 
+def evidencia_do_dia(conn: sqlite3.Connection, execucao) -> tuple[int, int]:
+    """(páginas, falhas leves) das execuções terminadas no dia (Brasília) de `execucao`, ela inclusive: a evidência de
+    dia limpo (ver ritmo.aprender). Um bloqueio em qualquer delas tira a evidência do dia: (0, 0)."""
+    dia = db.dia_brasil(execucao["iniciada_em"])
+    paginas = leves = 0
+    for e in conn.execute("SELECT iniciada_em, paginas, bloqueios, erros, curtas FROM execucoes "
+                          "WHERE (id = ? OR finalizada_em IS NOT NULL) AND iniciada_em >= ?",
+                          (execucao["id"], inicio_do_dia(dia))):
+        if db.dia_brasil(e["iniciada_em"]) != dia:
+            continue
+        if e["bloqueios"]:
+            return 0, 0
+        paginas += e["paginas"]
+        leves += e["erros"] + e["curtas"]
+    return paginas, leves
+
+
+def paginas_da_passada(conn: sqlite3.Connection, grupo: str) -> int:
+    """Páginas de uma passada completa do grupo (a última contagem de cada fatia ativa)."""
+    return conn.execute("SELECT COALESCE(SUM(paginas), 0) FROM fatias WHERE grupo = ? AND ativa = 1", (grupo,)).fetchone()[0]
+
+
 def aprender_ciclo_no_banco(conn: sqlite3.Connection, execucao, completou: bool, agora: datetime | None = None,
-                            estourou_no_fim: bool = False) -> dict:
-    """Guarda no banco o ciclo e a pausa para a próxima execução (ver ritmo.aprender_ciclo)."""
+                            estourou_no_fim: bool = False, passada_h: float | None = None) -> dict:
+    """Guarda no banco o ciclo e a pausa para a próxima execução (ver ritmo.aprender_ciclo). `passada_h`: horas de
+    uma passada no teto atual (o ciclo só desce para um degrau em que ela cabe)."""
     agora = agora or datetime.fromisoformat(db.agora())
     novo = modulo_ritmo.aprender_ciclo(
         ler_config(conn), agora, execucao["paginas"], execucao["bloqueios"], execucao["erros"] + execucao["curtas"],
         "interrompida" in (execucao["observacao"] or ""), completou,
-        estourou_no_fim or JANELA_ESTOUROU in (execucao["observacao"] or ""))
+        estourou_no_fim or JANELA_ESTOUROU in (execucao["observacao"] or ""),
+        evidencia=evidencia_do_dia(conn, execucao), passada_h=passada_h)
     for chave, valor in novo.items():
         conn.execute("INSERT INTO config (chave, valor) VALUES (?, ?) "
                      "ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor", (chave, valor))
@@ -701,7 +732,11 @@ def executar(conn: sqlite3.Connection, sessao, *, no: str = NO_HQ_MANGA, vendido
         fim = datetime.fromisoformat(desde) + timedelta(hours=ciclo)
         limpa = not e["bloqueios"] and "interrompida" not in (e["observacao"] or "")
         no_fim = limpa and fim - agora < timedelta(minutes=FOLGA_JANELA_MIN) and janela_estourou(conn, grupo, desde, ciclo)
-        res.config_ciclo = aprender_ciclo_no_banco(conn, e, res.completou, agora, estourou_no_fim=no_fim)
+        teto = (modulo_ritmo.ritmo_guardado(ler_config(conn), modulo_ritmo.PPM_TETO_PADRAO, maximo=teto_auto_max)[1]
+                if auto else r.teto)        # o teto da próxima execução
+        passada_h = modulo_ritmo.horas_da_passada(paginas_da_passada(conn, grupo), teto)
+        res.config_ciclo = aprender_ciclo_no_banco(conn, e, res.completou, agora, estourou_no_fim=no_fim,
+                                                   passada_h=passada_h)
     return res
 
 
@@ -710,6 +745,7 @@ def aprender_ritmo(conn: sqlite3.Connection, r: Ritmo, teto_inicial: float, exec
     """Guarda no banco o teto e o último ritmo limpo para a próxima execução (ver ritmo.aprender)."""
     novo = modulo_ritmo.aprender(ler_config(conn), db.hoje_brasil().isoformat(), r, teto_inicial,
                                  execucao["paginas"], execucao["bloqueios"], execucao["erros"] + execucao["curtas"],
+                                 evidencia=evidencia_do_dia(conn, execucao),
                                  **({"maximo": maximo} if maximo is not None else {}))
     for chave, valor in novo.items():
         conn.execute("INSERT INTO config (chave, valor) VALUES (?, ?) "
