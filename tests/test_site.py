@@ -675,6 +675,33 @@ class TestSiteNoNavegador(unittest.TestCase):
         self.addCleanup(srv.shutdown)
         return f"http://127.0.0.1:{srv.server_port}"
 
+    def test_preco_diz_de_qual_formato_e(self):
+        # mesma obra em capa comum e Kindle: o "a partir de" da busca é do Kindle, e a página do livro diz o formato
+        from playwright.sync_api import sync_playwright
+        base = self._servir([("R000000001", "Duna", "Capa comum", [("2026-10-01", "2026-10-20", 3990, 5990)]),
+                             ("R00000000K", "Duna", "Kindle", [("2026-10-01", "2026-10-20", 1990, None)])],
+                            avaliacoes={"R000000001": 100, "R00000000K": 100})
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            pg = b.new_page()
+            erros = []
+            pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.goto(f"{base}/index.html")
+            pg.wait_for_selector(".boas h1")
+            pg.fill("#q", "duna")
+            pg.wait_for_selector("#res .row")
+            self.assertIn("a partir de · Kindle", pg.inner_text("#res .row .pr"))
+            self.assertIn("R$ 19,90", pg.inner_text("#res .row .pr"))
+            pg.click("#res .row")
+            pg.wait_for_selector("#graf svg")
+            self.assertIn("Kindle ·", pg.inner_text(".preco-g"))
+            pg.click("#fmts a:not([aria-current])")
+            pg.wait_for_selector("#graf svg")
+            pg.wait_for_function("document.querySelector('.preco-g').innerText.includes('Capa comum')")
+            self.assertIn("R$ 39,90", pg.inner_text(".preco-g"))
+            b.close()
+        self.assertEqual(erros, [])
+
     def test_filtros_e_ordenacao_da_busca(self):
         from playwright.sync_api import sync_playwright
         h = lambda p, c=None: [("2026-10-01", "2026-10-20", p, c)]

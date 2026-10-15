@@ -154,7 +154,7 @@
     var formatos = o.eds.length > 1 ? o.eds.map(function (e) { return '<span' + (e === m ? ' class="on"' : '') + '>' + esc(e.fmt) + ' ' + brl(e.preco) + '</span>'; }).join('') : '<span>' + esc(m.fmt) + '</span>';
     var velho = m.idade > 1 && idx ? ' <span class="pill wr">preço de ' + L.dmes(idx.hoje - m.idade) + '</span>' : '';
     return '<li><a class="row" href="./?livro=' + m.asin + '" data-r>' + capa(o) + '<div class="bd"><div class="tt">' + esc(o.t) + '</div>' +
-      '<div class="sub">' + subtitulo(o) + '</div><div class="pr">' + (preco || ((eds.length > 1 ? '<span class="de">a partir de</span>' : '') + '<b>' + brl(m.preco) + '</b>' + (noMenor(m) ? MENOR : pillComum(m.preco, m.mc)) + velho)) +
+      '<div class="sub">' + subtitulo(o) + '</div><div class="pr">' + (preco || ((o.eds.length > 1 ? '<span class="de">' + (eds.length > 1 ? 'a partir de · ' : '') + esc(m.fmt) + '</span>' : '') + '<b>' + brl(m.preco) + '</b>' + (noMenor(m) ? MENOR : pillComum(m.preco, m.mc)) + velho)) +
       '</div><div class="eds">' + formatos + '</div></div>' + (o.eds.some(function (e) { return sv[e.asin]; }) ? SALVO : '') + '</a></li>';
   }
   function esqueleto(n) {
@@ -172,8 +172,8 @@
   function cartao(e, ant, selo, por) {
     selo = ant ? '<span class="selo pill dn">−' + Math.round((ant - e.preco) / ant * 100) + '%</span>' : selo ? '<span class="selo pill dn">' + esc(selo) + '</span>' : '';
     return '<a class="cartao" href="./?livro=' + e.asin + '" data-r>' + capa(e.o, 'm').replace(/<\/div>$/, selo + '</div>') +
-      '<span class="t">' + esc(e.o.t) + '</span>' + (e.o.autor || e.fmt ? '<span class="a">' + esc(e.o.autor || e.fmt) + '</span>' : '') +
-      (por ? '<span class="por">como <cite>' + esc(por) + '</cite></span>' : '') + (e.preco ? '<span class="p"><b>' + brl(e.preco) + '</b>' + (ant ? '<s>' + brl(ant) + '</s>' : '') + '</span>' : '') + '</a>';
+      '<span class="t">' + esc(e.o.t) + '</span>' + (e.o.autor || (!e.preco && e.fmt) ? '<span class="a">' + esc(e.o.autor || e.fmt) + '</span>' : '') +
+      (por ? '<span class="por">como <cite>' + esc(por) + '</cite></span>' : '') + (e.preco ? '<span class="p"><b>' + brl(e.preco) + '</b>' + (ant ? '<s>' + brl(ant) + '</s>' : '') + (e.fmt ? '<span class="f">' + esc(e.fmt) + '</span>' : '') + '</span>' : '') + '</a>';
   }
   // No computador, a estante mostra uma fileira só (CSS). Se sobrou livro escondido, a seção ganha "Ver todos (N)",
   // que vira a estante numa grade; os cartões escondidos saem da ordem do teclado (inert). No celular ela rola.
@@ -593,7 +593,7 @@
         (eds.length > 1 ? '<div class="fmts" id="fmts" role="group" aria-label="Formato">' + eds.map(function (d) {
           return '<a class="fmt" href="./?livro=' + d[0] + '" data-r data-sub' + (d[0] === asin ? ' aria-current="true"' : '') + '><span>' + esc(d[1]) + '</span><b>' + brl(d[0] === asin ? f.preco : d[2]) + '</b></a>';
         }).join('') + '</div>' : '') +
-        '<div class="compra"><div class="preco-g"><b>' + brl(f.preco) + '</b><span class="mu sm">' + (eds.length > 1 ? '' : esc(l.f || 'Livro') + ' · ') +
+        '<div class="compra"><div class="preco-g"><b>' + brl(f.preco) + '</b><span class="mu sm">' + esc(l.f || 'Livro') + ' · ' +
         (recente ? 'em ' + L.dl(ult) : 'último preço visto, em ' + L.dl(ult)) + '</span></div>' +
         '<div class="fat">' + (recente ? '' : '<span class="pill wr">Sem coleta recente</span>') + (menorRegistrado(tr, f) ? MENOR.replace('menor', 'Menor') : '') + L.comparacoes(f) + '</div></div>' +
         '<div class="l-resto"><section class="card pad sec"><div id="graf"></div>' + L.estatisticas(f, tr[0][0]) + '</section>' +
@@ -616,7 +616,7 @@
   function estante(tit, livros) {
     if (!livros || !livros.length) return '';
     return '<section class="sec"><div class="sec-h"><h2>' + esc(tit) + '</h2></div><div class="estante">' + livros.map(function (c) {
-      return cartao({ asin: c[0], preco: c[4], fmt: c[3], o: { t: L.limpar(c[1]).t, img: c[2], autor: c[3] } });
+      return cartao({ asin: c[0], preco: c[4], fmt: c[3], o: { t: L.limpar(c[1]).t, img: c[2], autor: '' } });   // o formato vai junto do preço
     }).join('') + '</div></section>';
   }
   // o preço de agora é o menor já registrado? (14+ dias de coleta e o preço já foi maior)
@@ -756,7 +756,8 @@
         '<dt>Preço de cada dia</dt><dd>O último preço lido no dia. Se o preço muda mais de uma vez no mesmo dia, o gráfico mostra o do fim do dia.</dd>' +
         '<dt>Preço mais comum</dt><dd>A mediana dos preços dos últimos 90 dias. Aparece com ' + L.MIN_COMUM + ' dias de coleta.</dd>' +
         '<dt>Menor e maior</dt><dd>O menor e o maior preço dos últimos 90 dias.</dd>' +
-        '<dt>Preço de capa</dt><dd>O preço "De:" que a Amazon mostra riscado.</dd>' +
+        '<dt>Preço de capa</dt><dd>O preço que a Amazon mostra riscado na lista de mais vendidos, de cada formato: no Kindle, o preço digital sugerido. Só aparece quando há desconto.</dd>' +
+        '<dt>Formatos</dt><dd>Kindle e livro físico (capa comum, capa dura…) têm preço e histórico separados. Na busca, o preço é o do formato mais barato, e o nome dele vem ao lado.</dd>' +
         '<dt>Menor preço registrado</dt><dd>O menor preço desde o início da coleta, quando o livro tem ' + L.MIN_COMUM + ' dias de coleta ou mais.</dd>' +
         '<dt>Baixaram de preço</dt><dd>Queda de 5% ou mais nas duas últimas coletas.</dd>' +
         '<dt>Preço-alvo</dt><dd>O preço que você quer pagar. Fica só neste aparelho; o site não manda avisos.</dd>' +

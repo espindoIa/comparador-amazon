@@ -152,6 +152,19 @@ class TestTetoQueSeAjusta(unittest.TestCase):
         self.assertNotIn("ritmo_teto", self.execucao({}, ppm=40))                          # não chegou a rodar no teto
         self.assertIn("ritmo_ultimo_limpo", self.execucao({}, ppm=40))                     # mas guardou o ritmo limpo
 
+    def test_evidencia_do_dia_soma_execucoes_curtas(self):
+        # depois de um bloqueio (8 páginas/min) cada execução lê ~1.300 páginas: sozinha, nunca seria evidência
+        x = Ritmo(8, 8)
+        x.ppm = 8
+        n = r.aprender({}, "2026-10-16", x, 8.0, 1300, 0, 0)
+        self.assertEqual(n, {})
+        n = r.aprender({}, "2026-10-16", x, 8.0, 1300, 0, 0, evidencia=(3900, 1))           # 3 execuções no dia
+        self.assertEqual((n["ritmo_teto"], n["ritmo_ultimo_limpo"]), ("10.0", "8.0"))
+        self.assertNotIn("ritmo_teto", r.aprender({}, "2026-10-16", x, 8.0, 1300, 0, 0, evidencia=(3900, 5)))   # falhas demais
+        # o bloqueio da execução baixa o teto, com qualquer evidência do dia
+        x.falha(grave=True)
+        self.assertIn("ritmo_espera_ate", r.aprender({}, "2026-10-16", x, 8.0, 1300, 1, 0, evidencia=(9000, 0)))
+
     def test_bloqueio_baixa_o_teto_e_segura_a_subida(self):
         x = Ritmo(60, 75)
         x.falha(grave=True)                                                                 # o freio da execução: teto 70% de 60
@@ -272,6 +285,29 @@ class TestCiclo(unittest.TestCase):
         cfg3, novo = self.aprende(cfg, 15, paginas=900, interrompida=True, completou=False)
         self.assertNotIn("ciclo_horas", novo)
         self.assertEqual(r.pausa_ate(cfg3), self.t(15, 15))
+
+    def test_dia_limpo_soma_as_execucoes_mas_punicao_e_so_da_execucao(self):
+        cfg = {"ciclo_horas": "24", "ciclo_desde": "2026-10-13", "ciclo_espera_ate": "2026-10-16"}
+        curta = (cfg, self.t(16), 1300, 0, 0, False, True)
+        self.assertEqual(r.aprender_ciclo(*curta), {})                                     # 1.300 páginas: neutra
+        self.assertEqual(r.aprender_ciclo(*curta, evidencia=(3900, 1))["ciclo_horas"], "12")
+        # uma execução ruim de manhã sobe o ciclo; a da tarde, normal, não sobe de novo nem desce no mesmo dia
+        cfg = {"ciclo_horas": "6", "ciclo_desde": "2026-10-10"}
+        cfg = {**cfg, **r.aprender_ciclo(cfg, self.t(15), 1500, 0, 5, False, False)}
+        self.assertEqual(cfg["ciclo_horas"], "12")
+        self.assertEqual(r.aprender_ciclo(cfg, self.t(15, 18), 1300, 0, 0, False, True, evidencia=(2800, 5)), {})
+
+    def test_so_desce_para_um_ciclo_em_que_a_passada_cabe(self):
+        cfg = {"ciclo_horas": "24", "ciclo_desde": "2026-10-15"}
+        passada = r.horas_da_passada(4340, 8.0)                                            # ~10 h a 8 páginas/min
+        self.assertAlmostEqual(passada, 10.05, places=2)
+        self.assertEqual(r.aprender_ciclo(cfg, self.t(16), 3000, 0, 0, False, True, passada_h=passada)["ciclo_horas"], "12")
+        cfg = {"ciclo_horas": "12", "ciclo_desde": "2026-10-15"}
+        self.assertNotIn("ciclo_horas", r.aprender_ciclo(cfg, self.t(16), 3000, 0, 0, False, True, passada_h=passada))
+        passada = r.horas_da_passada(4340, 15.6)
+        self.assertNotIn("ciclo_horas", r.aprender_ciclo(cfg, self.t(16), 3000, 0, 0, False, True, passada_h=passada))
+        passada = r.horas_da_passada(4340, 16.0)                                           # ~5 h: cabe em 6 h
+        self.assertEqual(r.aprender_ciclo(cfg, self.t(16), 3000, 0, 0, False, True, passada_h=passada)["ciclo_horas"], "6")
 
     def test_ritmo_pausa_ate_invalido_ou_ausente(self):
         self.assertIsNone(r.pausa_ate({}))

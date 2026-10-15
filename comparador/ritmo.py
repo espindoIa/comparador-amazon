@@ -108,6 +108,9 @@ DIAS_DE_ESPERA = 3
 PAGINAS_MIN_EVIDENCIA = 2000     # páginas lidas na execução para ela valer como evidência de subida
 FALHAS_LEVES_POR_MIL = 0.5       # erros + páginas curtas por mil páginas aceitos numa execução "limpa" (medido: 0,2)
 AO_RETOMAR = 0.8                 # a execução seguinte começa a 80% do último ritmo limpo (e sobe de novo)
+# A evidência de dia limpo é a soma das execuções do dia (Brasília), não uma execução só: a 8 páginas/min (o recuo depois
+# de um bloqueio) uma execução de 165 minutos lê ~1.300 páginas, e com a evidência por execução o teto nunca voltava a
+# subir nem o ciclo a descer (medido nas três sequências de 13 a 15/10: 6 execuções limpas cada, nenhuma contada).
 
 
 def ritmo_guardado(config: dict, padrao_teto: float, base: float = PPM_BASE,
@@ -125,16 +128,18 @@ def ritmo_guardado(config: dict, padrao_teto: float, base: float = PPM_BASE,
 
 
 def aprender(config: dict, hoje: str, ritmo: "Ritmo", teto_inicial: float, paginas: int, bloqueios: int,
-             leves: int, maximo: float = PPM_TETO_AUTO_MAX) -> dict:
+             leves: int, maximo: float = PPM_TETO_AUTO_MAX, evidencia: tuple[int, int] | None = None) -> dict:
     """Novos valores de config depois de uma execução. `hoje` = AAAA-MM-DD (Brasília). Só devolve o que mudou.
-    O teto sobe sozinho até `maximo`, no máximo."""
+    O teto sobe sozinho até `maximo`, no máximo. `evidencia`: (páginas, falhas leves) do dia inteiro, que decide se
+    houve coleta limpa (sem ela, só a execução); o bloqueio que baixa o teto é sempre o da execução."""
     novo: dict = {}
     if ritmo.teto < teto_inicial - 1e-9 or bloqueios:
         novo["ritmo_teto"] = f"{max(PPM_RECUO, min(ritmo.teto, teto_inicial)):.1f}"
         novo["ritmo_espera_ate"] = _somar_dias(hoje, DIAS_DE_ESPERA)
         novo["ritmo_ultimo_limpo"] = ""
         return novo
-    limpa = paginas >= PAGINAS_MIN_EVIDENCIA and leves * 1000 <= FALHAS_LEVES_POR_MIL * paginas
+    paginas_ev, leves_ev = evidencia or (paginas, leves)
+    limpa = paginas_ev >= PAGINAS_MIN_EVIDENCIA and leves_ev * 1000 <= FALHAS_LEVES_POR_MIL * paginas_ev
     if limpa:
         novo["ritmo_ultimo_limpo"] = f"{ritmo.ppm:.1f}"
     no_teto = ritmo.ppm >= 0.95 * ritmo.teto
@@ -165,6 +170,15 @@ PAUSA_BASE_H = 3
 PAUSA_MAX_H = 24
 BLOQUEIOS_PARA_DIARIO = 3        # bloqueios seguidos que levam direto ao ciclo de 24 h
 LEVES_POR_MIL_RUIM = 2.0         # acima disto (páginas curtas e erros por mil) o ciclo sobe: a limitação costuma aparecer assim antes do bloqueio
+# O ciclo só desce se a passada couber no degrau de baixo: sem isso ele desceria mais rápido que o teto sobe (um degrau
+# por dia contra 25%), a passada estouraria a janela e o ciclo voltaria a subir, com mais 3 dias de espera.
+REAL_SOBRE_PROGRAMADO = 0.9      # páginas reais por minuto / programadas (ver o começo deste arquivo)
+OCUPACAO_MAX = 0.85              # fração do ciclo que a passada pode ocupar (as execuções se emendam com alguns minutos entre elas)
+
+
+def horas_da_passada(paginas: int, teto: float) -> float:
+    """Horas para ler `paginas` no `teto` (páginas programadas por minuto)."""
+    return paginas / (max(teto, 1e-9) * REAL_SOBRE_PROGRAMADO) / 60
 
 
 def _numero(config: dict, chave: str, padrao: int) -> int:
@@ -200,7 +214,8 @@ def saude(paginas: int, bloqueios: int, leves: int) -> str:
 
 
 def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int, interrompida: bool,
-                   completou: bool, estourou: bool = False) -> dict:
+                   completou: bool, estourou: bool = False, evidencia: tuple[int, int] | None = None,
+                   passada_h: float | None = None) -> dict:
     """Novos valores de config para o ciclo e a pausa depois de uma execução. `agora`: datetime com fuso. Só devolve o
     que mudou.
 
@@ -210,7 +225,10 @@ def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int
     - aperto (muitas páginas curtas) ou janela que acabou com fatias sem ler (`estourou`: a sequência não dá conta de
       uma passada no tempo do ciclo): o ciclo sobe um degrau e fica parado, sem pausa;
     - alerta (mais falhas leves que o limpo, menos que o aperto): o ciclo fica onde está e o dia no degrau recomeça;
-    - passada completa e limpa, depois de um dia inteiro no degrau e do fim da espera: o ciclo desce um degrau.
+    - passada completa e dia limpo, depois de um dia inteiro no degrau e do fim da espera: o ciclo desce um degrau, se
+      a passada (`passada_h` horas no teto atual) ocupar até OCUPACAO_MAX dele.
+    `evidencia`: (páginas, falhas leves) do dia inteiro, que decide se o dia foi limpo (sem ela, só a execução). As
+    punições (bloqueio, aperto, alerta, interrupção, janela estourada) olham sempre só a execução.
     """
     from datetime import timedelta
     from .db import BRASILIA
@@ -231,6 +249,7 @@ def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int
     elif interrompida:
         novo["ritmo_pausa_ate"] = (agora + timedelta(hours=PAUSA_BASE_H)).isoformat(timespec="seconds")
     situacao = saude(paginas, bloqueios, leves)
+    dia_limpo = saude(evidencia[0], 0, evidencia[1]) == "limpa" if evidencia else situacao == "limpa"
     if situacao == "ruim" or estourou:
         degrau = len(CICLOS) - 1 if seguidos >= BLOQUEIOS_PARA_DIARIO else min(nivel + 1, len(CICLOS) - 1)
         if degrau != nivel:
@@ -239,11 +258,12 @@ def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int
         novo["ciclo_espera_ate"] = _somar_dias(hoje, DIAS_DE_ESPERA)
     elif situacao == "alerta":
         novo["ciclo_desde"] = hoje
-    elif completou and situacao == "limpa":
+    elif completou and dia_limpo:
         if seguidos:
             novo["bloqueios_seguidos"] = "0"
         desde = novo.get("ciclo_desde", config.get("ciclo_desde", hoje))
-        if nivel > 0 and desde < hoje and config.get("ciclo_espera_ate", "") <= hoje:
+        cabe = passada_h is None or nivel == 0 or passada_h <= OCUPACAO_MAX * CICLOS[nivel - 1]
+        if nivel > 0 and desde < hoje and config.get("ciclo_espera_ate", "") <= hoje and cabe:
             novo["ciclo_horas"] = str(CICLOS[nivel - 1])
             novo["ciclo_desde"] = hoje
     return novo
