@@ -52,8 +52,7 @@ Sem Chrome nem Edge: `python -m playwright install chromium`, ou aponte `COMPARA
 para o executável de outro navegador.
 
 O `varrer` lê só pelo navegador (`--cliente auto`): se ele não abrir, para e diz por quê, em vez de cair em outro
-cliente. `--cliente curl` e `--cliente requests` existem, mas a Amazon costuma bloqueá-los, e um bloqueio grava no
-banco uma pausa de horas.
+cliente. `--cliente curl` e `--cliente requests` existem, mas a Amazon costuma bloqueá-los.
 
 `varrer --dry-run` confere as opções e mostra o plano (ritmo, ciclo, pausa, fatias, cliente) sem abrir o
 navegador, sem pedir nada à Amazon e sem gravar no banco.
@@ -88,12 +87,12 @@ Algumas decisões que vieram de medir as páginas reais:
   para o card, então um formato secundário pode vir de outro vendedor. Medimos isso em cerca de
   1,5% dos itens.
 - O ritmo começa em 21 páginas por minuto e sobe aos poucos até o teto. O teto fica guardado no banco: começa em
-  60 e sobe 25% por dia de coleta limpa (sem bloqueio e quase sem página curta). O dia limpo soma as execuções dele:
-  a 8 páginas por minuto (o recuo depois de bloqueio) uma execução lê ~1.300 páginas, menos que as 2.000 de evidência,
-  e com a conta por execução o teto não voltava a subir (as três sequências ficaram presas em 8 de 13 a 15/10). No GitHub cada sequência fica
+  60 e sobe 25% por dia de coleta limpa (quase sem página curta). O dia limpo soma as execuções dele: a 8 páginas por
+  minuto uma execução lê ~1.300 páginas, menos que as 2.000 de evidência, e com a conta por execução o teto não voltava a
+  subir (as três sequências ficaram presas em 8 de 13 a 15/10). No GitHub cada sequência fica
   limitada a 45 programadas (uns 40 reais por minuto), abaixo dos 60 medidos sem bloqueio, porque o volume por dia é
-  bem maior. Depois de um bloqueio o teto cai e fica parado por 3 dias. Quando a Amazon bloqueia ou devolve uma página
-  com poucos resultados, o ritmo cai na hora. Para fixar o teto, `--ritmo-max`; para mudar o limite da subida,
+  bem maior. Quando a Amazon devolve uma página com poucos resultados, o ritmo cai na hora; falhas assim repetidas baixam
+  o teto, que fica parado por 3 dias. Para fixar o teto, `--ritmo-max`; para mudar o limite da subida,
   `--teto-auto-max`.
 - A coleta roda em três sequências ao mesmo tempo, cada uma num servidor do GitHub e, portanto, com IP próprio.
   Os 29 gêneros estão divididos em três grupos de ~4,4 mil páginas (`PARTICOES_VENDIDOS`), e cada grupo tem o
@@ -102,22 +101,22 @@ Algumas decisões que vieram de medir as páginas reais:
 - **Ciclo**: o tempo entre duas passadas completas do catálogo. A meta é 3 horas (8 passadas por dia, cerca de 105
   mil páginas por dia). O maior volume que se mediu sem bloqueio foi de 12,6 mil por dia (13/10), então o ciclo é um degrau
   guardado no banco: começa em 12 horas, desce um degrau (12, 6, 3) por dia limpo e chega a 3 horas no terceiro
-  dia. Sobe um degrau a cada bloqueio, ou quando passa de 2 por mil o número de páginas curtas e erros (a limitação
-  costuma aparecer assim antes do bloqueio), ou quando uma janela acaba com fatias sem ler (a sequência não dá conta de
-  uma passada no tempo do ciclo), e vai direto ao ciclo diário depois de 3 bloqueios seguidos. Só desce quando o dia no
+  dia. Sobe um degrau quando passa de 2 por mil o número de páginas curtas e erros, ou quando uma janela acaba com
+  fatias sem ler (a sequência não dá conta de uma passada no tempo do ciclo). Só desce quando o dia no
   degrau passou sem nenhum sinal de alerta (mais de 0,5 falha leve por mil páginas, somando as execuções do dia),
   depois de 3 dias de espera, se o degrau subiu, e se a passada, no teto atual, ocupa até 85% do degrau de baixo (sem
-  isso o ciclo desceria mais rápido que o teto sobe e a passada estouraria a janela). Bloqueio, aperto e janela
-  estourada olham só a execução. Dentro da janela, as fatias são lidas das mais velhas para as mais novas, para uma sequência lenta
+  isso o ciclo desceria mais rápido que o teto sobe e a passada estouraria a janela). Aperto e janela estourada olham
+  só a execução. Dentro da janela, as fatias são lidas das mais velhas para as mais novas, para uma sequência lenta
   não repetir só as faixas baratas. Para fixar o ciclo, `--ciclo-horas`.
   A janela de 3 horas é apertada: no ritmo de 45 programadas (uns 40 reais por minuto) cada sequência leva uns 110
   minutos para ler as ~4,4 mil páginas dela, e sobram uns 70 de folga. Se a Amazon desacelerar a resposta ou o ritmo recuar,
   a passada não cabe e o ciclo sobe sozinho para 6 horas: o piso real pode acabar sendo 6 horas.
-- **Depois de um bloqueio a coleta espera horas, não minutos**: 3 horas, dobrando a cada bloqueio seguido, até 24.
-  Cada execução do GitHub roda num servidor novo, com outro IP, então tentar de novo meia hora depois seria, na
-  prática, trocar de IP por causa do bloqueio. Não há rodízio de IP, disfarce de navegador nem resolução de captcha.
-  Durante a pausa nenhuma execução pede nada à Amazon, nem a que o vigia reinicia (`--ignorar-pausa` existe, para
-  quem roda à mão). As três sequências não trocam sinais: um bloqueio pausa só a sequência que o recebeu.
+- **Bloqueio**: desde 15/10/2026, por decisão de quem mantém o repositório, não há proteção contra bloqueio: ele não
+  baixa o ritmo nem o teto, não sobe o ciclo e não grava pausa. A execução só para depois de 3 lotes seguidos com falha
+  (um servidor bloqueado não lê nada), e a próxima leitura é a da janela seguinte do ciclo, como depois de qualquer
+  problema: recomeçar logo seria, na prática, trocar de servidor e de IP por causa do bloqueio. Não há rodízio de IP,
+  disfarce de navegador nem resolução de captcha. Na primeira execução depois da mudança, o que a proteção tinha
+  gravado no banco (teto baixo, espera, ciclo diário, pausa) é apagado, e teto e ciclo recomeçam dos valores iniciais.
 - Uma página com resultado ralo, mesmo com HTTP 200, conta como falha e é lida de novo.
 - O histórico guarda intervalos ("R$ 39,90 de 2 a 15 de outubro"). Ele só cresce quando o preço muda, e com leituras
   de 3 em 3 horas muda mais vezes (estimativa a partir de 13% de preços mudando por dia e de até 30% com as oscilações: de 1,5 a 4 MB por dia no banco, antes de compactar). O site mostra um preço
@@ -137,7 +136,7 @@ cancela uma espera quando outra chega, então não há dois anéis. A próxima l
   de 165 minutos acabou);
 - senão, o início da janela seguinte, com 10 minutos de defasagem por sequência e um sorteio de até 10 minutos, para
   as três não baterem juntas;
-- nunca antes do fim da pausa que segue um bloqueio, nem menos de 10 minutos depois do começo da execução;
+- nunca menos de 10 minutos depois do começo da execução (nem antes do fim de uma pausa gravada antes de 15/10/2026);
 - se a publicação do banco falhou (por exemplo, a trava de preços recusou), pelo menos 3 horas depois: o que foi lido se
   perdeu, e ler de novo logo só repetiria o pedido à Amazon.
 
@@ -239,10 +238,10 @@ por vez, pausa de pelo menos 4 s, para na primeira página bloqueada sem tentar 
   nenhum gênero, deixaram de ser atualizados e saem do site nesse prazo.
 - O preço de capa só aparece quando há desconto (sem riscado no card, não há o que ler).
 - Ler as páginas da Amazon por programa vai contra os termos de uso dela. A coleta espaça as
-  requisições, desacelera ou para quando é bloqueada, e não tenta contornar bloqueios. Ler em três servidores
+  requisições e não tenta contornar bloqueios, mas desde 15/10/2026 não desacelera nem pausa quando é bloqueada. Ler em três servidores
   ao mesmo tempo triplica a carga em cada instante, e uma passada a cada 3 horas multiplica por oito o volume
   por dia que se mediu. Foram escolhas de quem mantém este repositório. Não há garantia de que não haverá
-  bloqueios: o que há é uma rampa de 3 dias, pausa de horas e ciclo mais longo quando eles aparecem. Para ler uma
+  bloqueios, e nada reduz o volume quando eles aparecem. Para ler uma
   sequência de cada vez, dispare `varredura.yml` à mão com a opção `alvo`; para parar, `COLETA_PAUSADA=true`.
 - O GitHub Actions é feito para o software do próprio repositório, e umas 45 horas diárias de servidor lendo (fora as de espera)
   podem ser vistas como uso indevido. O mesmo comando roda em qualquer máquina
