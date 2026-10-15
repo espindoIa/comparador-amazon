@@ -8,7 +8,8 @@ que parte da meia-noite de Brasília, e a leitura de cada sequência começa um 
 de defasagem por sequência, mais um sorteio de até 10 min), para as três não baterem na Amazon juntas nem a cada
 ciclo no mesmo segundo. Só se continua agora, sem esperar a próxima janela, se a janela atual não fechou e esta
 execução terminou limpa depois de ler páginas de verdade (o orçamento de tempo acabou); depois de um problema, quem
-decide é a próxima janela. A pausa que segue um bloqueio (horas, guardada no banco) vale sempre, e se a publicação falhou o que foi lido se perdeu, então
+decide é a próxima janela (depois de um bloqueio também: recomeçar logo seria, na prática, trocar de servidor e de IP por
+causa do bloqueio). Uma pausa gravada no banco antes de 15/10/2026 ainda vale, e se a publicação falhou o que foi lido se perdeu, então
 a próxima leitura espera também algumas horas (senão a Amazon seria consultada de novo, todo ciclo, à toa).
 """
 

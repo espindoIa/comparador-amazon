@@ -31,7 +31,7 @@ from pathlib import Path
 from . import db
 from . import ritmo as modulo_ritmo
 from .busca import SEM_TETO, ItemBusca, LayoutDesconhecido, parse_busca, url_busca
-from .rede import PAUSA_APOS_BLOQUEIO, baixar_lote, guardar_html
+from .rede import baixar_lote, guardar_html
 from .ritmo import Ritmo
 
 COLUNAS_DETALHE = {"autor": "TEXT", "imagem": "TEXT", "publicado": "TEXT", "idioma": "TEXT", "obra": "TEXT",
@@ -555,7 +555,7 @@ def varrer(
             print(f"ritmo: programado {ritmo.ppm:.0f} páginas/min ({ritmo.pistas} ao mesmo tempo); "
                   f"medido {pl.paginas / minutos_corridos:.0f}; {pl.paginas} páginas, "
                   f"{pl.bloqueios} bloqueios, {pl.erros} erros, {pl.curtas} curtas")
-        espera = ritmo.espera(len(lote), relogio() - t0) + (PAUSA_APOS_BLOQUEIO if pl.falhas_seguidas else 0)
+        espera = ritmo.espera(len(lote), relogio() - t0)
         if espera > 0:
             dormir(espera)
 
@@ -618,6 +618,18 @@ def ler_config(conn: sqlite3.Connection) -> dict:
 
 
 
+def esquecer_bloqueios(conn: sqlite3.Connection) -> bool:
+    """Apaga, uma vez só, o que a proteção contra bloqueio gravou no banco (ritmo.CHAVES_DE_BLOQUEIO): teto e ciclo
+    recomeçam dos valores iniciais. Devolve se apagou."""
+    if conn.execute("SELECT 1 FROM config WHERE chave = ?", (modulo_ritmo.MARCA_SEM_BLOQUEIO,)).fetchone():
+        return False
+    conn.execute(f"DELETE FROM config WHERE chave IN ({','.join('?' * len(modulo_ritmo.CHAVES_DE_BLOQUEIO))})",
+                 modulo_ritmo.CHAVES_DE_BLOQUEIO)
+    conn.execute("INSERT INTO config (chave, valor) VALUES (?, ?)", (modulo_ritmo.MARCA_SEM_BLOQUEIO, db.agora()))
+    conn.commit()
+    return True
+
+
 def pausa_vigente(conn: sqlite3.Connection, agora: datetime | None = None) -> datetime | None:
     """Até quando a coleta está em pausa depois de um bloqueio, ou None se não está."""
     pausa = modulo_ritmo.pausa_ate(ler_config(conn))
@@ -626,7 +638,7 @@ def pausa_vigente(conn: sqlite3.Connection, agora: datetime | None = None) -> da
 
 def evidencia_do_dia(conn: sqlite3.Connection, execucao) -> tuple[int, int]:
     """(páginas, falhas leves) das execuções terminadas no dia (Brasília) de `execucao`, ela inclusive: a evidência de
-    dia limpo (ver ritmo.aprender). Um bloqueio em qualquer delas tira a evidência do dia: (0, 0)."""
+    dia limpo (ver ritmo.aprender). Bloqueios não contam."""
     dia = db.dia_brasil(execucao["iniciada_em"])
     paginas = leves = 0
     for e in conn.execute("SELECT iniciada_em, paginas, bloqueios, erros, curtas FROM execucoes "
@@ -634,8 +646,6 @@ def evidencia_do_dia(conn: sqlite3.Connection, execucao) -> tuple[int, int]:
                           (execucao["id"], inicio_do_dia(dia))):
         if db.dia_brasil(e["iniciada_em"]) != dia:
             continue
-        if e["bloqueios"]:
-            return 0, 0
         paginas += e["paginas"]
         leves += e["erros"] + e["curtas"]
     return paginas, leves
@@ -704,6 +714,8 @@ def executar(conn: sqlite3.Connection, sessao, *, no: str = NO_HQ_MANGA, vendido
     guarda no banco o que aprendeu (teto de ritmo, ciclo, pausa). Sem `ritmo_max`/`ciclo_horas`, esses valores vêm do
     banco e são aprendidos; com eles, ficam fixos e nada é guardado."""
     criar_schema(conn)
+    if esquecer_bloqueios(conn):
+        log("estado da proteção contra bloqueio apagado: teto e ciclo recomeçam dos valores iniciais")
     config = ler_config(conn)
     auto = ritmo_max is None
     ciclo = ciclo_horas or modulo_ritmo.ciclo_guardado(config)
