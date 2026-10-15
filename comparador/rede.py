@@ -14,6 +14,9 @@ import requests
 from .cliente_http import nova_sessao  # noqa: F401  (reexportado para o CLI)
 
 
+PAUSA_APOS_FALHA = 90.0  # espera extra depois de um lote com falha leve (página curta, erro), antes de reler
+                         # (depois de bloqueio não há: a proteção contra bloqueio saiu em 15/10/2026)
+
 _PRECO_RE = re.compile(r"(\d{1,3}(?:\.\d{3})+|\d+),(\d{2})")
 
 # Página de captcha / página de erro "cachorros da Amazon". O erro é reconhecido pelo

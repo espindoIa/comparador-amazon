@@ -982,7 +982,7 @@ class TestRitmoNaVarredura(unittest.TestCase):
         self.assertEqual(self.vistos(), {a for l in por_no.values() for a, _ in l})
         self.assertTrue(any(0 < p < 5 for p in self.pausas))        # escalonou com dormir()
 
-    def test_pagina_magra_e_relida_e_o_ritmo_recua(self):
+    def test_pagina_magra_e_relida_depois_de_pausa_e_o_ritmo_recua(self):
         g = self.livros(80)                                          # 5 páginas
         amazon = AmazonRealista({"1": g}, ralas={("1", 3): [2]})
         ritmo = Ritmo(40, teto=40)
@@ -991,6 +991,7 @@ class TestRitmoNaVarredura(unittest.TestCase):
         self.assertEqual((e["curtas"], e["bloqueios"], e["erros"]), (1, 0, 0))
         self.assertEqual(len([u for u in amazon.chamadas if "p_36%3A0-3999" in u and u.endswith("page=3")]), 2)
         self.assertEqual((ritmo.falhas, ritmo.ppm, ritmo.teto), (1, 20.0, 40))   # leve e isolada: metade, e o teto fica
+        self.assertTrue(any(p >= varredura.PAUSA_APOS_FALHA for p in self.pausas))         # pausa longa antes de reler
         self.assertEqual(e["observacao"], "dia completo")
 
     def test_pagina_curta_que_se_repete_e_aceita_e_avisada(self):
@@ -1034,6 +1035,7 @@ class TestRitmoNaVarredura(unittest.TestCase):
         self.assertEqual([len(l) for l in amazon.lotes[:1]], [Ritmo(100, teto=100).pistas])      # 7 de 9 fatias
         self.assertIn("interrompida após 3 falhas seguidas", e["observacao"])
         self.assertEqual((ritmo.ppm, ritmo.teto), (100, 100))        # sem proteção contra bloqueio: nem ritmo nem teto caem
+        self.assertFalse(any(p >= varredura.PAUSA_APOS_FALHA for p in self.pausas))        # nem pausa extra
 
     def test_queda_de_livros_entre_passadas_e_avisada(self):
         amazon = AmazonRealista({"1": self.livros(300)})

@@ -31,7 +31,7 @@ from pathlib import Path
 from . import db
 from . import ritmo as modulo_ritmo
 from .busca import SEM_TETO, ItemBusca, LayoutDesconhecido, parse_busca, url_busca
-from .rede import baixar_lote, guardar_html
+from .rede import PAUSA_APOS_FALHA, baixar_lote, guardar_html
 from .ritmo import Ritmo
 
 COLUNAS_DETALHE = {"autor": "TEXT", "imagem": "TEXT", "publicado": "TEXT", "idioma": "TEXT", "obra": "TEXT",
@@ -555,7 +555,8 @@ def varrer(
             print(f"ritmo: programado {ritmo.ppm:.0f} páginas/min ({ritmo.pistas} ao mesmo tempo); "
                   f"medido {pl.paginas / minutos_corridos:.0f}; {pl.paginas} páginas, "
                   f"{pl.bloqueios} bloqueios, {pl.erros} erros, {pl.curtas} curtas")
-        espera = ritmo.espera(len(lote), relogio() - t0)
+        leve = pl.falhas_seguidas and "grave" not in resultados
+        espera = ritmo.espera(len(lote), relogio() - t0) + (PAUSA_APOS_FALHA if leve else 0)
         if espera > 0:
             dormir(espera)
 
