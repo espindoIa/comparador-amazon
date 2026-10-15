@@ -154,7 +154,7 @@
     var formatos = o.eds.length > 1 ? o.eds.map(function (e) { return '<span' + (e === m ? ' class="on"' : '') + '>' + esc(e.fmt) + ' ' + brl(e.preco) + '</span>'; }).join('') : '<span>' + esc(m.fmt) + '</span>';
     var velho = m.idade > 1 && idx ? ' <span class="pill wr">preço de ' + L.dmes(idx.hoje - m.idade) + '</span>' : '';
     return '<li><a class="row" href="./?livro=' + m.asin + '" data-r>' + capa(o) + '<div class="bd"><div class="tt">' + esc(o.t) + '</div>' +
-      '<div class="sub">' + subtitulo(o) + '</div><div class="pr">' + (preco || ((eds.length > 1 ? '<span class="de">a partir de · ' + esc(m.fmt) + '</span>' : '') + '<b>' + brl(m.preco) + '</b>' + (noMenor(m) ? MENOR : pillComum(m.preco, m.mc)) + velho)) +
+      '<div class="sub">' + subtitulo(o) + '</div><div class="pr">' + (preco || ((o.eds.length > 1 ? '<span class="de">' + (eds.length > 1 ? 'a partir de · ' : '') + esc(m.fmt) + '</span>' : '') + '<b>' + brl(m.preco) + '</b>' + (noMenor(m) ? MENOR : pillComum(m.preco, m.mc)) + velho)) +
       '</div><div class="eds">' + formatos + '</div></div>' + (o.eds.some(function (e) { return sv[e.asin]; }) ? SALVO : '') + '</a></li>';
   }
   function esqueleto(n) {

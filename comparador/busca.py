@@ -159,13 +159,18 @@ def _capa(link, preco: int) -> tuple[int | None, bool]:
     - "Preço digital sugerido:": o preço de capa do Kindle;
     - "Preço de capa sugerido:" num link do Kindle: é o preço do livro impresso, não do Kindle. Fica de fora, como
       qualquer rótulo desconhecido.
-    Sem riscado não há preço de capa: a Amazon só o mostra quando há desconto (ausente de verdade, não é falha).
+    Sem a marca de riscado, um "De: R$ X" ainda vale. Sem riscado nem "De:" não há preço de capa: a Amazon só o mostra
+    quando há desconto (ausente de verdade, não é falha).
     Suspeita: há riscado, mas ele não se lê como preço ou não é maior que o preço de venda; não é gravado.
     """
-    riscado = link.select_one('.a-price[data-a-strike="true"] > .a-offscreen')
-    if riscado is None:
-        return None, False
     rotulos = [t for t in (s.get_text(" ", strip=True) for s in link.select(".a-offscreen")) if not t.startswith("R$")]
+    riscado = link.select_one('.a-price[data-a-strike="true"] > .a-offscreen')
+    if riscado is None:            # sem a marca de riscado, mas com o rótulo "De: R$ X" (o único caso que o parser lia antes)
+        de = next((t for t in rotulos if t.startswith("De:")), None)
+        if de is None:
+            return None, False
+        capa = parse_preco(de)
+        return (capa, False) if capa is not None and capa > preco else (None, True)
     if rotulos and not any(t.startswith(r) for t in rotulos for r in _ROTULOS_CAPA):
         return None, False
     capa = parse_preco(riscado.get_text())

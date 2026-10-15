@@ -99,6 +99,9 @@ class TestParseBusca(unittest.TestCase):
         menor = parse_busca(html.replace("R$\xa069,90", "R$\xa050,00", 1))    # riscado abaixo do preço de venda (R$ 55,08)
         self.assertEqual(menor.capas_suspeitas, 1)
         self.assertIsNone({i.asin: i for i in menor.itens}["658991284X"].preco_capa_centavos)
+        # sem a marca de riscado, o "De:" ainda vale; o riscado sem rótulo não tem como ser reconhecido
+        sem_marca = {i.asin: i.preco_capa_centavos for i in parse_busca(html.replace('data-a-strike="true"', "")).itens}
+        self.assertEqual((sem_marca["6554482016"], sem_marca["658991284X"]), (11490, None))
         outro = parse_busca(html.replace("Preço digital sugerido:", "Preço sugerido pelo vendedor:"))
         self.assertIsNone({i.asin: i for i in outro.itens}["B0GRJPWPF2"].preco_capa_centavos)
         self.assertEqual(outro.capas_suspeitas, 0)
