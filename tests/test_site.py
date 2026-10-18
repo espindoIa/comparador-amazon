@@ -739,6 +739,50 @@ class TestSiteNoNavegador(unittest.TestCase):
         self.addCleanup(srv.shutdown)
         return f"http://127.0.0.1:{srv.server_port}"
 
+    def test_tema_dica_filtros_sino_e_foco_ao_voltar(self):
+        from playwright.sync_api import sync_playwright
+        itens = [(f"B00000000{i}", f"Livro {n}", "Capa comum", [("2026-10-01", "2026-10-20", 1000 + 100 * i, None)])
+                 for i, n in enumerate(["Alfa", "Beta", "Gama"], 1)]
+        base = self._servir(itens)
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            erros = []
+            claro = b.new_context(color_scheme="light")                                   # sem tema salvo: segue o sistema, antes do app.js
+            pg = claro.new_page(); pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.goto(f"{base}/?q=livro"); pg.wait_for_selector("#res .row")
+            self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "light")
+            self.assertEqual(pg.get_attribute("#tema", "aria-pressed"), "false")
+            pg.click("#tema")
+            self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "dark")
+            self.assertEqual(pg.get_attribute("#tema", "aria-pressed"), "true")
+            # sino: salva sem sair da busca, e o aviso leva ao preço-alvo
+            pg.click("#res li:nth-child(2) [data-watch]")
+            pg.wait_for_selector(".toast.on")
+            self.assertIn("q=livro", pg.url)
+            self.assertIn("Salvo", pg.inner_text("#toast"))
+            self.assertEqual(pg.evaluate("JSON.parse(localStorage.lista_v1).length"), 1)
+            pg.click("#toast button")
+            pg.wait_for_selector(".alvo-f input")
+            # Filtros aberto continua aberto depois de ligar e desligar um chip, e o foco fica no chip
+            pg.goto(f"{base}/?q=livro"); pg.wait_for_selector("#res .row")
+            pg.click(".filtros-extra summary")
+            pg.click('[data-fam="f"]'); pg.click('[data-fam="f"]')
+            self.assertTrue(pg.evaluate("document.querySelector('.filtros-extra').open"))
+            self.assertEqual(pg.evaluate("document.activeElement.dataset.fam"), "f")
+            # abrir um livro e voltar pelo botão do navegador: o foco volta ao link que abriu
+            pg.goto(f"{base}/?q=livro"); pg.wait_for_selector("#res .row")
+            href = pg.get_attribute("#res li:nth-child(3) a.row", "href")
+            pg.click("#res li:nth-child(3) a.row"); pg.wait_for_selector("#graf svg")
+            pg.go_back(); pg.wait_for_selector("#res .row")
+            self.assertEqual(pg.evaluate("document.activeElement.getAttribute('href')"), href)
+            # dica: aparece com o foco do teclado, e Esc a esconde
+            pg.focus("#tema"); pg.keyboard.press("Shift+Tab"); pg.keyboard.press("Tab")
+            self.assertEqual(pg.evaluate("getComputedStyle(document.querySelector('#tema'), '::after').opacity"), "1")
+            pg.keyboard.press("Escape")
+            self.assertEqual(pg.evaluate("getComputedStyle(document.querySelector('#tema'), '::after').opacity"), "0")
+            self.assertEqual(erros, [])
+            b.close()
+
     def test_preco_diz_de_qual_formato_e(self):
         # mesma obra em capa comum e Kindle: o "a partir de" da busca é do Kindle, e a página do livro diz o formato
         from playwright.sync_api import sync_playwright
