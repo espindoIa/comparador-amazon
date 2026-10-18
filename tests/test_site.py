@@ -821,7 +821,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.goto(f"{base}/?inicio")
             pg.evaluate("localStorage.setItem('lista_v1', JSON.stringify(['A000000002']))")
             pg.goto(f"{base}/?q=saiu")
-            pg.wait_for_function("document.querySelector('#res').textContent.includes('Nenhum livro')")  # sumiu da busca
+            pg.wait_for_function("document.querySelector('#res')?.textContent.includes('Nenhum livro')")  # sumiu da busca
             pg.click(".hdr-lista")
             pg.wait_for_selector("#lst .row b")
             self.assertIn("último preço visto em 05/10/2026", pg.inner_text("#lst"))      # mas segue na lista, com o último preço
