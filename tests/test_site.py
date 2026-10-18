@@ -729,8 +729,8 @@ class TestSiteNoNavegador(unittest.TestCase):
             self.assertEqual(titulos()[:2], ["Alfa", "Epsilon"])                         # 50% e 50%, empate por título
             pg.select_option("#ord", "titulo")
             self.assertEqual(titulos(), ["Alfa", "Beta", "Delta", "Epsilon", "Gama"])
-            self.assertIn("3", pg.inner_text('[data-fam="f"]'))                          # contagem no filtro
             pg.click(".filtros-extra summary")
+            self.assertIn("3", pg.inner_text('[data-fam="f"]'))                          # contagem no filtro aberto
             pg.click('[data-fam="f"]')                                                   # livro físico: capa comum e dura
             self.assertEqual(titulos(), ["Alfa", "Delta", "Gama"])
             self.assertIn("f=f", pg.url)
@@ -1018,10 +1018,10 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.goto(f"{base}/index.html")
             pg.wait_for_selector("#res .row")
             self.assertIn("Observador de preços", pg.inner_text(".marca"))
-            pg.click('[data-view="grade"]')
-            self.assertEqual(pg.get_attribute('[data-view="grade"]', "aria-pressed"), "true")
+            pg.click('.view-switch [data-view="grade"]')
+            self.assertEqual(pg.get_attribute('.view-switch [data-view="grade"]', "aria-pressed"), "true")
             self.assertEqual(pg.evaluate("document.body.dataset.view"), "grade")
-            pg.click('[data-view="lista"]')
+            pg.click('.view-switch [data-view="lista"]')
             pg.fill("#q", "silenciósa PACIENTE")                                         # sem acento e ordem trocada também acha
             pg.wait_for_function("document.querySelectorAll('#res .row').length === 1")  # a busca inicial já tinha resultados
             self.assertIn("A paciente silenciosa", pg.inner_text("#res"))
@@ -1083,9 +1083,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.wait_for_selector("#graf svg")
             pg.wait_for_function("document.activeElement.matches('.livro[role=region]')")    # a região do livro, nomeada pelo h1
             self.assertIn("paciente", pg.evaluate("document.getElementById(document.activeElement.getAttribute('aria-labelledby')).textContent"))
-            pg.keyboard.press("Tab")                                                     # o autor é o primeiro link do cabeçalho
-            self.assertTrue(pg.evaluate("document.activeElement.closest('.aut') !== null"))
-            pg.keyboard.press("Tab")
+            pg.keyboard.press("Tab")                                                     # sem autor no fixture: chega na ação principal
             self.assertIn("Ver na Amazon", pg.evaluate("document.activeElement.textContent"))
             self.assertIn("menor R$ 34,99", pg.get_attribute("#graf svg", "aria-label"))   # resumo do gráfico em texto
             pg.focus("#graf .graf")                                                      # gráfico pelo teclado

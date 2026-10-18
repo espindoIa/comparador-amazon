@@ -810,7 +810,7 @@
     var b = e.target.closest('button'); if (!b) return;
     var acao = b.dataset.acao;
     if(b.dataset.watch){if(!Lista.tem(b.dataset.watch))Lista.alternar(b.dataset.watch);contador();pendenteAlvo=b.dataset.watch;ir('./?lista');}
-    else if(b.dataset.view){document.body.dataset.view=b.dataset.view;document.querySelectorAll('[data-view]').forEach(function(v){v.setAttribute('aria-pressed',String(v===b));});}
+    else if(b.dataset.view){document.body.dataset.view=b.dataset.view;document.querySelectorAll('.view-switch [data-view]').forEach(function(v){v.setAttribute('aria-pressed',String(v===b));});}
     else if(b.id==='tema'){var light=document.documentElement.dataset.theme!=='light';document.documentElement.dataset.theme=light?'light':'dark';try{localStorage.setItem('observador-tema',light?'light':'dark');}catch(e){}}
     else if (b.dataset.fam) { if (S.fam[b.dataset.fam]) delete S.fam[b.dataset.fam]; else S.fam[b.dataset.fam] = 1; aplicarBusca(); }
     else if (b.dataset.idioma !== undefined) { S.i = S.i === b.dataset.idioma ? '' : b.dataset.idioma; aplicarBusca(); }
