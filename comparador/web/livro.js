@@ -192,7 +192,7 @@
   // ---------- gráfico (DOM) ----------
   // el recebe o cabeçalho com os períodos, o gráfico e a legenda. G = dadosGrafico(...)
   function grafico(el, G, titulo) {
-    var NS = 'opt_graf2', opt = { med: 1, capa: 0 };
+    var NS = 'opt_graf2', opt = { med: 0, capa: 0 };
     try { var sv = JSON.parse(localStorage.getItem(NS) || 'null'); if (sv) for (var k in opt) if (k in sv) opt[k] = sv[k] ? 1 : 0; } catch (e) { }
     var temMed = G.dias.length >= MIN_COMUM, F0 = G.full[0], F1 = G.full[1], UL = G.dias[G.dias.length - 1][0], v = { a: G.def[0], b: G.def[1] };
     var span = UL - F0, pers = [[30, '30 dias'], [90, '90 dias'], [365, '1 ano']].filter(function (p) { return span > p[0]; });
