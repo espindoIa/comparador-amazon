@@ -680,6 +680,33 @@ class TestFolhaDeReferencia(unittest.TestCase):
             for b in ("--bg", "--sf"):                                            # contorno de campo e chip: 3:1 (WCAG 1.4.11)
                 self.assertGreaterEqual(razao(t["--ln3"], t[b]), 3, f"{nome}: --ln3 sobre {b}")
 
+    def test_escala_raio_camadas_e_hover_valem_tambem_para_a_referencia(self):
+        # as mesmas regras de TestFolhaDeEstilo (U1): sem px fora da escala, raio dos tokens, z-index de token, hover só com mouse
+        self.assertEqual(re.findall(r"font-size:[\d.]+px", self.css), [], "font-size em px fora da escala (--fs-N)")
+        self.assertEqual(re.findall(r"font:[^;}]*[\d.]px", self.css), [], "font: com px fora da escala (--fs-N)")
+        self.assertEqual([r for r in re.findall(r"border-radius:\d+px(?=[;}])", self.css) if r != "border-radius:999px"], [], "raio em px fora dos tokens")
+        self.assertEqual(re.findall(r"z-index:-?\d+", self.css), [], "z-index solto")
+        fora, i, css = [], 0, self.css
+        while i < len(css):                                              # tira os blocos @media(hover:hover){...}
+            if css.startswith("@media(hover:hover){", i):
+                i, prof = css.index("{", i), 0
+                while True:
+                    prof += (css[i] == "{") - (css[i] == "}")
+                    i += 1
+                    if prof == 0:
+                        break
+                continue
+            fora.append(css[i]); i += 1
+        for regra in re.findall(r"(?:^|\})\s*([^{}@]*:hover[^{}]*)\{", "".join(fora)):
+            self.fail(f"regra de :hover fora de @media(hover:hover): {regra.strip()}")
+
+    def test_cabecalho_sem_imagem_de_icone_e_com_estado_no_tema(self):
+        html = (site.WEB / "index.html").read_text(encoding="utf-8")
+        self.assertNotRegex(html, r'<img src="[\w-]+\.svg"')                  # ícone de imagem não segue o tema nem o alto contraste
+        self.assertIn('id="tema" aria-pressed=', html)
+        self.assertLess(html.index("<script>"), html.index('rel="stylesheet"'))  # o tema vai antes do CSS: sem piscar
+        self.assertNotIn("busca-dica", html)
+
     def test_campo_e_chip_tem_contorno_de_campo(self):
         self.assertIn(".sel select{height:46px;border:1px solid var(--ln3)", self.css)
         self.assertIn(".chip{border-color:var(--ln3)", self.css)
