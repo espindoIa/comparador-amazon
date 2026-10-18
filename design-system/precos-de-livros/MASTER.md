@@ -4,6 +4,15 @@ Fonte da verdade do visual do site (`comparador/web`). Uma página com regras pr
 Os valores moram em `comparador/web/estilo.css` (`:root` e o bloco `prefers-color-scheme: dark`). Se este texto e o CSS discordarem, vale o CSS: corrija o texto.
 `tests/test_site.py::TestFolhaDeEstilo` trava as regras marcadas com 🔒.
 
+## Camada em vigor: `referencia.css`
+O visual publicado é o **escuro e dourado** escolhido pelo dono (2026-10-16), e vem de `comparador/web/referencia.css`, carregado depois de `estilo.css`. Onde as duas folhas discordam, vale `referencia.css`; as seções abaixo descrevem a base (`estilo.css`) e o que a camada não troca (componentes, foco, movimento, regras de acessibilidade).
+- **Tema:** o `<head>` do `index.html` aplica `data-theme` antes de a página pintar: o tema salvo pelo botão e, sem ele, o do sistema. O botão `#tema` tem `aria-pressed` (ligado = escuro), e a cor da barra do navegador e o manifesto são escuros.
+- **Tokens:** `referencia.css` redefine **todos** os tokens de cor nos dois temas (`:root` e `:root[data-theme=light]`); o que ela não redefinir volta a seguir o sistema. `--ln3` é `#5f6d78` (escuro) e `#7f8487` (claro); `--ac` claro é `#7d5a1c`.
+- **Fontes:** Georgia (títulos e livros) e Arial (interface); as `woff2` de `estilo.css` não são usadas por essa camada.
+- **Ícones:** SVG de traço em linha, com `currentColor` (nada de `<img>` com cor fixa, que não segue o tema nem o alto contraste).
+- **Dicas (`.hint`):** só nos ícones sem texto; aparecem com o mouse (`@media(hover:hover)`) ou com o foco do teclado, têm uma ponte invisível até a bolha (alcançável com o ponteiro) e fecham com Esc.
+- 🔒 `TestFolhaDeReferencia`: todo token de cor nos dois temas, contraste dos pares de texto e de `--ln3`, sem `px` fora da escala `--fs-*` e dos raios `--r*`, sem `z-index` solto, hover só em `@media(hover:hover)`.
+
 ## Direção
 **Livraria**: papel creme, marrom de capa de couro e âmbar nos botões. O site é uma ferramenta de consulta de preços, não uma landing page. A tela mostra números, e a decisão fica com quem lê.
 
