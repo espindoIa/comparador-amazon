@@ -299,6 +299,7 @@ Entradas fixas: os ASIN da tabela de "Como foi feito", axe-core 4.10.2 com as ta
   - campo e chip usam `--ln3` e nenhum texto usa `--mu2`.
 
   A suíte passou inteira: 351 testes, com os de navegador.
+- **axe-core depois da correção:** nas mesmas 76 execuções, `color-contrast` foi de 26 para **0**, inclusive em `?inicio`. As outras violações seguem as mesmas: `aria-prohibited-attr` (68, U6), `target-size` (6, U5), `landmark-complementary-is-top-level` (24) e `page-has-heading-one` (4).
 - **Continua aberto:**
   - U1: o resto de `TestFolhaDeEstilo` ainda não lê `referencia.css` (tamanhos em px, `z-index`, hover);
   - U2 a U13, N1 a N7, e o `MASTER.md`, que ainda descreve o tema antigo;
