@@ -270,3 +270,36 @@ Os scripts estão em `scripts/auditoria/`; o docstring de `comum.py` traz os pas
 | `dias.js` | Contagem de dias por livro com o `livro.js` do repositório |
 
 Entradas fixas: os ASIN da tabela de "Como foi feito", axe-core 4.10.2 com as tags listadas, larguras de 320 a 1280 px e CPU 4×.
+
+## Atualização: C1 a C4 corrigidos (neste PR)
+
+- **C1:** `referencia.css` agora redefine todos os tokens de cor de `estilo.css` nos dois blocos (`:root` e `:root[data-theme=light]`).
+  - Entraram os que faltavam: `--dns`, `--ups`, `--wr`, `--wrs`, `--evl`, `--ev`, `--capa`, `--filete` e, no claro, também `--mu2`, `--prif`, `--dn`, `--up`, `--med`, `--grao` e as sombras.
+  - O `--ups` escuro desceu para `#2c1311`, para `.pill.up` passar de 4,43 para 5,08:1.
+  - **[medido]** `tema.py`: para cada tema, os tokens computados são idênticos com o sistema claro e com o escuro.
+  - **[renderizado]** `conferencias.py`: nenhuma pílula da lista fica abaixo de 4,5:1, com o sistema claro ou escuro.
+- **C2:**
+  - As estatísticas do livro usam `--dn` e `--up`, pelas classes `st-menor` e `st-maior` postas em `organizarLivro`, e não mais cores fixas por posição.
+  - "Filtros" e a contagem passaram a `--mu`.
+  - O `--ac` claro foi de `#936822` para `#7d5a1c` (5,65:1 sobre `--bg`).
+  - A linha e a área do gráfico usam `--ac` no lugar de `#f1c778`.
+  - **[medido]** `contraste.py`: nenhum texto abaixo do limite nas 8 telas × 2 temas × 2 sistemas × 2 larguras. Ficam de fora só as capas geradas, sobre gradiente, que o script não mede.
+- **C3:**
+  - `.compra .fat` voltou a aparecer: comparação com o preço mais comum, menor preço registrado, "Sem coleta recente" e preço de capa.
+  - A grade voltou a ter "Preço mais comum", "Menor" e "Maior". A célula "Preço atual", que repetia o preço grande, saiu; "Acompanhado desde" continua fora.
+  - **[renderizado]** em 375, 600 e 1280 px, nos dois temas.
+  - A nota, as avaliações e os gêneros (`.l-cab .det`, `.l-gens`) **continuam escondidos**: não estão na correção proposta e dependem de uma decisão de layout.
+- **C4:**
+  - `.sel select` e `.chip` usam `--ln3`, e o campo de busca do tema claro também.
+  - O `--ln3` foi para `#5f6d78` no escuro (3,43:1 sobre `--sf`) e `#7f8487` no claro (3,41:1 sobre `--bg`).
+  - **[medido]** nenhum campo, select ou chip abaixo de 3:1.
+- **Trava:** a classe nova `TestFolhaDeReferencia` (`tests/test_site.py`) falha no `referencia.css` anterior e passa no novo. Ela confere três coisas:
+  - todo token de cor existe nos dois blocos de `referencia.css`;
+  - os mesmos pares de contraste de `TestFolhaDeEstilo` (e `--ln3` ≥ 3:1) passam nos valores de `referencia.css`;
+  - campo e chip usam `--ln3` e nenhum texto usa `--mu2`.
+
+  A suíte passou inteira: 351 testes, com os de navegador.
+- **Continua aberto:**
+  - U1: o resto de `TestFolhaDeEstilo` ainda não lê `referencia.css` (tamanhos em px, `z-index`, hover);
+  - U2 a U13, N1 a N7, e o `MASTER.md`, que ainda descreve o tema antigo;
+  - `--med` segue com o mesmo dourado da linha de preço nos dois temas (o MASTER pede uma cor fria). Os dois só se distinguem pelo tracejado.

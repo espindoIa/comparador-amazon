@@ -649,6 +649,43 @@ class TestFolhaDeEstilo(unittest.TestCase):
         self.assertEqual("viewport-fit=cover" in self.html, "safe-area-inset" in self.css)
 
 
+class TestFolhaDeReferencia(unittest.TestCase):
+    """referencia.css (o visual escuro e dourado) redefine os tokens por cima de estilo.css. Um token de cor que ela
+    esquece continua vindo de estilo.css, que segue o tema do sistema e não o botão: a página mistura os dois temas."""
+
+    def setUp(self):
+        self.css = (site.WEB / "referencia.css").read_text(encoding="utf-8")
+        base = (site.WEB / "estilo.css").read_text(encoding="utf-8")
+        self.escuro = re.search(r":root\{(.*?)\}", self.css).group(1)
+        self.claro = re.search(r":root\[data-theme=light\]\{(.*?)\}", self.css).group(1)
+        claro_base = re.search(r":root\{(.*?)color-scheme", base, re.S).group(1)
+        self.cores = {t for t in re.findall(r"(--[a-z0-9]+):", claro_base)
+                      if not t.startswith(("--fs-", "--r", "--z")) and t not in ("--f", "--serif", "--display")}
+
+    def test_todo_token_de_cor_e_redefinido_nos_dois_temas(self):
+        for nome, bloco in (("escuro", self.escuro), ("claro", self.claro)):
+            self.assertEqual(self.cores - set(re.findall(r"(--[a-z0-9]+):", bloco)), set(), f"{nome}: token herdado de estilo.css")
+
+    def test_contraste_dos_pares_de_texto_nos_dois_temas(self):
+        lum = lambda c: .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+        canal = lambda x: x / 12.92 if x <= .03928 else ((x + .055) / 1.055) ** 2.4
+        cor = lambda h: lum([canal(int(h[i:i + 2], 16) / 255) for i in (1, 3, 5)])
+        razao = lambda a, b: (max(cor(a), cor(b)) + .05) / (min(cor(a), cor(b)) + .05)
+        for nome, bloco in (("escuro", self.escuro), ("claro", self.claro)):
+            t = dict(re.findall(r"(--[a-z0-9]+):(#[0-9a-f]{6})(?=[;}]|$)", bloco))
+            pares = [(f, b) for f in ("--fg", "--mu", "--ac", "--dn", "--up", "--wr", "--med", "--evl") for b in ("--bg", "--sf", "--sf2")]
+            pares += [("--dn", "--dns"), ("--up", "--ups"), ("--wr", "--wrs"), ("--ac", "--acs"), ("--prif", "--pri"), ("--tintaf", "--tinta"), ("--bg", "--ac")]   # --bg sobre --ac: chip ligado
+            for f, b in pares:
+                self.assertGreaterEqual(razao(t[f], t[b]), 4.5, f"{nome}: {f} sobre {b}")
+            for b in ("--bg", "--sf"):                                            # contorno de campo e chip: 3:1 (WCAG 1.4.11)
+                self.assertGreaterEqual(razao(t["--ln3"], t[b]), 3, f"{nome}: --ln3 sobre {b}")
+
+    def test_campo_e_chip_tem_contorno_de_campo(self):
+        self.assertIn(".sel select{height:46px;border:1px solid var(--ln3)", self.css)
+        self.assertIn(".chip{border-color:var(--ln3)", self.css)
+        self.assertNotIn("color:var(--mu2)", self.css)                           # --mu2 não é cor de texto
+
+
 @unittest.skipUnless(navegador(), "navegador não instalado")
 class TestSiteNoNavegador(unittest.TestCase):
     def _servir(self, itens, aviso=None, avaliacoes=None, generos=None, subgeneros=None):

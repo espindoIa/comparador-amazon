@@ -633,7 +633,7 @@
     var cab=$('.l-cab'),acoes=$('.l-lado .acoes');cab.appendChild(acoes);acoes.querySelector('.ico').remove();
     acoes.insertAdjacentHTML('beforeend','<button type="button" class="btn ico hint" data-watch="'+asin+'" aria-label="Acompanhar preço" data-tip="Acompanhar com preço-alvo">'+ic('sino')+'</button>');
     $('.compra').insertAdjacentHTML('afterbegin','<div class="preco-rotulo">'+(recente?'Preço atual na Amazon':'Último preço na Amazon')+'<span class="hint" tabindex="0" data-tip="Última coleta: '+L.dl(ult)+'. Confira o valor na Amazon antes de comprar." aria-label="Data da coleta"><img src="info.svg" width="21" height="21" alt=""></span></div>');
-    var stats=$('.stats');stats.children[0].remove();stats.lastElementChild.remove();stats.insertAdjacentHTML('beforeend','<div><span>Preço atual</span><b>'+brl(f.preco)+'</b></div>');
+    var stats=$('.stats');stats.lastElementChild.remove();stats.children[1].className='st-menor';stats.children[2].className='st-maior';   // fica: mais comum, menor e maior (o preço atual já está grande acima)
     var info=[['Autor',o.autor],['Editora',l.editora],['Data de publicação',l.publicado],['ISBN / ASIN',l.isbn||asin]], resto=$('.l-resto');
     resto.children[0].insertAdjacentHTML('afterend','<section class="sec livro-info"><h2>'+ic('livro')+' Informações do livro</h2><div class="info-layout"><dl>'+info.map(function(r){return '<div><dt>'+esc(r[0])+'</dt><dd>'+esc(r[1]||'Não informado')+'</dd></div>';}).join('')+'</dl><div class="amazon-card"><a class="btn pri" href="'+L.linkAmazon(asin)+'" target="_blank" rel="noopener noreferrer">Ver na Amazon '+ic('ext','s')+'</a></div></div></section>');
   }
