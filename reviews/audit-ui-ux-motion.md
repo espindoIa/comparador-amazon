@@ -307,13 +307,13 @@ Entradas fixas: os ASIN da tabela de "Como foi feito", axe-core 4.10.2 com as ta
 
 ## Atualização: U1 a U13 (neste PR)
 
-Medido de novo com os mesmos scripts (`scripts/auditoria/`), no site regerado dos mesmos bancos. Suíte: 354 testes, sem falha, com os de navegador. Os testes novos (`TestFolhaDeReferencia` e `test_tema_dica_filtros_sino_e_foco_ao_voltar`) falham no código anterior.
+Medido de novo com os mesmos scripts (`scripts/auditoria/`), no site regerado dos mesmos bancos. Suíte: 354 testes, sem falha, com os de navegador. Os testes novos (`TestFolhaDeReferencia` e `test_tema_dica_filtros_sino_e_foco_ao_voltar`) falham no código anterior. Desfazendo um comportamento de cada vez, a asserção correspondente falha: o `toggle` dos filtros, o foco ao voltar, o aviso do sino e o Esc da dica (o tema do sistema falha no código antigo inteiro).
 
 | # | Estado | O que mudou e a evidência |
 |---|---|---|
 | U1 | Corrigido, com trava | `referencia.css` não tem mais `font-size` nem `font:` em px (eram 56 e 9), nem raio em px (18), nem `z-index` solto, nem `:hover` fora de `@media(hover:hover)` (eram 4). Os tamanhos de 9 a 11 px subiram para `--fs-1` (12 px) e os demais foram ao degrau mais próximo, o que muda alguns textos em até 2 px. A trava está em `TestFolhaDeReferencia`. **Continua aberto:** as 22 cores hexadecimais soltas (o teste não as proíbe) e o `MASTER.md` só ganhou a seção da camada em vigor. |
 | U2 | Corrigido (decisão de produto, confirme) | Link "Explorar gêneros, livros que baixaram de preço e parecidos com os seus" na busca sem texto e "Explorar" no rodapé, ambos para `?inicio`. |
-| U3 | Corrigido | O `<head>` aplica o tema antes do CSS: o salvo ou, sem ele, o do sistema. **[medido]** `piscada.py`: com o tema claro salvo e a rede lenta, não há mais quadro escuro (branco, depois claro). O botão tem `aria-pressed` e o ícone troca (lua ou sol); `theme-color` e o manifesto acompanham o tema (`#0b1217` por padrão). **Muda o padrão do dono:** quem usa o sistema claro agora abre no claro. |
+| U3 | Corrigido | O `<head>` aplica o tema antes do CSS: o salvo ou, sem ele, o do sistema. **[medido]** `piscada.py`: com o tema claro salvo e a rede lenta, não há mais quadro escuro (branco, depois claro). O botão tem `aria-pressed` e o ícone troca (lua ou sol); `theme-color` acompanha o tema (`#0b1217` por padrão); o manifesto ficou fixo no escuro, então a tela de abertura do app instalado é sempre escura. **Muda o padrão do dono:** quem usa o sistema claro agora abre no claro. |
 | U4 | Corrigido | Os selects medem 16 px em 320, 375 e 1280 px, sem rolagem horizontal. As linhas de controles quebram em 419 px ou menos. |
 | U5 | Corrigido | Cada resultado tem 2 paradas de Tab (a linha e o sino), no lugar de 4. Saíram a seta "Ver detalhes" e o link de histórico; o nome e a dica do sino coincidem. O axe não reporta mais `target-size` (de 6 para 0). |
 | U6 | Corrigido | A dica do campo de busca e a da data da coleta saíram. As dicas que ficam têm uma ponte até a bolha (dá para passar o mouse), aparecem com o hover só em `@media(hover:hover)`, aparecem com o foco do teclado e fecham com Esc (**[medido]**: opacidade 1 → 0). `aria-prohibited-attr` do axe: de 68 para 0. |
@@ -328,5 +328,11 @@ Medido de novo com os mesmos scripts (`scripts/auditoria/`), no site regerado do
 **axe-core depois de U1 a U13** (mesmas 76 execuções, sem erro): `color-contrast` 0, `aria-prohibited-attr` 0, `target-size` 0. Restam `landmark-complementary-is-top-level` (24, o `aside` da capa dentro da região do livro, impacto moderado) e `page-has-heading-one` (4, só no esqueleto de carga).
 
 **Achado novo:** em 375 px, com o aviso aberto, ele cobre parte do formato em foco na página do livro (2 dos 3 pontos medidos). O critério 2.4.11 de AA só reprova se o foco ficar totalmente escondido, então passa; o AAA 2.4.12 não. Tentei `scroll-padding-bottom` e não ajudou (o elemento já estava visível), então não o mantive.
+
+**Conferências depois da mudança:**
+- **Diff estrutural de `referencia.css`** (regra a regra, dentro de `@media` também, contra o commit `0349f01`): 14 regras removidas e 40 acrescentadas, todas as que eu quis (ícones, dicas, hover, toque, alto contraste); 84 alteradas, quase todas pelo arredondamento de tamanho e raio. Um seletor de celular que eu tinha quebrado na limpeza do `.row-fim` apareceu só numa captura e foi consertado (`.row-dir,.mini-historico`).
+- **Capturas antes e depois** (92 pares): as maiores diferenças de altura são explicadas. As telas vazias de busca e lista ficam 102 a 120 px mais altas por causa do `min-height` de 75vh (era 60vh), a busca inicial ganha a linha do "Explorar", e o livro sem coleta recente ganha de volta a pílula.
+- **Vista em grade** (não coberta pelas capturas): no celular, o título e o autor vazam do cartão (o texto começa em x=1 e o cartão em x=21). **Já existia antes** (mesma medição com o `referencia.css` de `0349f01`): `.row .bd{align-self:end}` vale também na grade. Fica fora deste PR; deixei como tarefa separada.
+- **"Limpar filtros":** com o painel aberto por haver filtro, ele continua aberto depois de limpar (o `toggle` do `<details>` já nasce aberto). É coerente com "como a pessoa deixou" e o teste ajustado já assume isso.
 
 **Continua aberto:** N1 a N7 (exceto N6, resolvido pelo arredondamento para 12 px), as 22 cores soltas, `--med` igual à linha de preço, o Web Worker do U13, o transbordamento de 4 a 19 px entre 520 e 960 px (não investigado) e o que não pôde ser verificado (Safari no iPhone, leitores de tela, aparelhos reais).
