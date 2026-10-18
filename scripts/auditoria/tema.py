@@ -28,7 +28,7 @@ with sync_playwright() as p:
     pg = ctx.new_page()
     pg.goto(BASE + "/")
     pg.wait_for_selector("#res .row")
-    attrs = "() => { const b = document.querySelector('#tema'); return {label: b.getAttribute('aria-label'), pressed: b.getAttribute('aria-pressed'), tema: document.documentElement.dataset.theme, img: b.querySelector('img').getAttribute('src')}; }"
+    attrs = "() => { const b = document.querySelector('#tema'); return {label: b.getAttribute('aria-label'), pressed: b.getAttribute('aria-pressed'), tema: document.documentElement.dataset.theme, icone: b.querySelector('svg:not([style*=none])') ? 'svg' : null}; }"
     antes = pg.evaluate(attrs)
     pg.click("#tema")
     depois = pg.evaluate(attrs)

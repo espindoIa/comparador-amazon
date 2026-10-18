@@ -41,9 +41,9 @@ with sync_playwright() as p:
     out["pular: 1º Tab"] = pg.evaluate(ATIVO)
     pg.keyboard.press("Enter"); pg.wait_for_timeout(200)
     out["pular: depois do Enter"] = pg.evaluate(ATIVO)
-    # dica: foca a .busca-dica, Esc, a dica continua visível?
-    pg.focus(".busca-dica"); pg.keyboard.press("Shift+Tab"); pg.keyboard.press("Tab"); pg.wait_for_timeout(200)
-    vis = "() => getComputedStyle(document.querySelector('.busca-dica'), '::after').opacity"
+    # dica: foca a #tema, Esc, a dica continua visível?
+    pg.focus("#tema"); pg.keyboard.press("Shift+Tab"); pg.keyboard.press("Tab"); pg.wait_for_timeout(200)
+    vis = "() => getComputedStyle(document.querySelector('#tema'), '::after').opacity"
     out["dica: opacidade com foco"] = pg.evaluate(vis)
     pg.keyboard.press("Escape"); pg.wait_for_timeout(200)
     out["dica: opacidade depois do Esc"] = pg.evaluate(vis)

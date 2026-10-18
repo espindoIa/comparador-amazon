@@ -847,7 +847,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             self.assertEqual(titulos(), ["Alfa", "Delta", "Gama"])
             pg.click('[data-acao="limpar-filtros"]')
             esperar(5)
-            pg.click(".filtros-extra summary")
+            self.assertTrue(pg.evaluate("document.querySelector('.filtros-extra').open"))   # o painel fica como a pessoa deixou
             pg.click('[data-acao="preco"]')
             pg.fill("#de", "20")
             pg.fill("#ate", "50")
