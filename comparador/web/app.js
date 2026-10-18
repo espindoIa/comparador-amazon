@@ -3,7 +3,6 @@
  * Dados em dados/*.json, gerados por `python -m comparador site` (formato descrito em site.py). */
 (function () {
   'use strict';
-  try { document.documentElement.dataset.theme = localStorage.getItem('observador-tema') || 'dark'; } catch(e) {}
   var L = window.Livro, Lista = window.Lista, Busca = window.Busca, Recomenda = window.Recomenda, esc = L.esc, brl = L.brl;
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var app = $('#app'), q = $('#q');
@@ -77,8 +76,8 @@
     return new Promise(function (ok) {
       var i = 0;
       (function fatia() {
-        var fim = Math.min(i + 3000, linhas.length);
-        lerObras(x, linhas, i, fim); i = fim;
+        var t0 = performance.now();
+        while (i < linhas.length && performance.now() - t0 < 8) { var fim = Math.min(i + 200, linhas.length); lerObras(x, linhas, i, fim); i = fim; }
         if (i < linhas.length) setTimeout(fatia, 0); else ok();
       })();
     });
@@ -160,7 +159,7 @@
     var m = eds.reduce(function (a, b) { return b.preco < a.preco ? b : a; });
     var formatos = o.eds.length > 1 ? o.eds.map(function (e) { return '<span' + (e === m ? ' class="on"' : '') + '>' + esc(e.fmt) + ' ' + brl(e.preco) + '</span>'; }).join('') : '<span>' + esc(m.fmt) + '</span>';
     var velho = m.idade > 1 && idx ? ' <span class="pill wr">preço de ' + L.dmes(idx.hoje - m.idade) + '</span>' : '';
-    return '<li class="resultado-livro"><a class="row" href="./?livro=' + m.asin + '" data-r>' + capa(o) + '<div class="bd"><div class="tt">' + esc(o.t) + '</div><div class="sub">' + esc(o.autor) + '</div></div><span class="row-dir">' + ic('dir') + '</span><div class="pr"><span class="vh">' + (eds.length > 1 ? 'a partir de · ' : '') + esc(m.fmt) + '</span><b>' + brl(m.preco) + '</b>' + velho + '</div><span class="mini-historico" data-spark="' + m.asin + '"></span>' + (o.eds.some(function(e){return sv[e.asin];}) ? SALVO.replace('class="salvo"','class="salvo vh"') : '') + '</a><div class="row-acoes"><a class="ib hint" href="./?livro=' + m.asin + '" data-r aria-label="Ver histórico de preço" data-tip="Evolução de preço na Amazon">' + ic('grafico') + '</a><button type="button" class="ib hint" data-watch="' + m.asin + '" aria-label="Acompanhar preço na minha lista" data-tip="Acompanhar com preço-alvo">' + ic('sino') + '</button><a class="row-fim" href="./?livro=' + m.asin + '" data-r aria-label="Ver detalhes">' + ic('dir','s') + '</a></div></li>';
+    return '<li class="resultado-livro"><a class="row" href="./?livro=' + m.asin + '" data-r>' + capa(o) + '<div class="bd"><div class="tt">' + esc(o.t) + '</div><div class="sub">' + esc(o.autor) + '</div></div><span class="row-dir">' + ic('dir') + '</span><div class="pr"><span class="vh">' + (eds.length > 1 ? 'a partir de · ' : '') + esc(m.fmt) + '</span><b>' + brl(m.preco) + '</b>' + velho + '</div><span class="mini-historico" data-spark="' + m.asin + '"></span>' + (o.eds.some(function(e){return sv[e.asin];}) ? SALVO.replace('class="salvo"','class="salvo vh"') : '') + '</a><div class="row-acoes"><button type="button" class="ib hint" data-watch="' + m.asin + '" aria-label="Acompanhar preço" data-tip="Acompanhar preço">' + ic('sino') + '</button></div></li>';
   }
   function esqueleto(n) {
     var r = '<div class="sk-row"><div class="cv sk"></div><div class="sk-corpo"><div class="sk l" style="width:70%"></div><div class="sk l" style="width:40%"></div><div class="sk l" style="width:25%;height:16px"></div></div></div>';
@@ -225,6 +224,15 @@
       else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && desfazer && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); var f = desfazer; fecharToast(); f(); }
     });
   })();
+  // tema: o <head> já aplicou o salvo (ou o do sistema); aqui só o botão e a cor da barra do navegador
+  function aplicarTema(t) {
+    document.documentElement.dataset.theme = t;
+    $('#tema').setAttribute('aria-pressed', String(t !== 'light'));
+    var m = $('meta[name="theme-color"]'); if (m) m.content = t === 'light' ? '#f6f3eb' : '#0b1217';
+  }
+  aplicarTema(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') document.documentElement.classList.add('sem-dica'); });
+  ['pointermove', 'focusin'].forEach(function (t) { document.addEventListener(t, function () { document.documentElement.classList.remove('sem-dica'); }, true); });
   function contador() { var n = Lista.ler().length; $('#cont').textContent = n ? String(n) : ''; }
   function titulo(t) { document.title = t ? t + ' · Preços de livros' : 'Preços de livros: histórico de preço de livros da Amazon'; }
   function compartilhar(url, t) {
@@ -246,9 +254,10 @@
     return { v: 'busca' };
   }
   // semFoco: a troca veio da digitação na busca do cabeçalho, e o foco fica no campo
-  function ir(url, substituir, semFoco) {
+  // origem: href do link ativado, guardado na entrada atual para o foco voltar a ele (popstate)
+  function ir(url, substituir, semFoco, origem) {
     var st = history.state || {};
-    history.replaceState({ y: scrollY, n: st.n || 0 }, '');
+    history.replaceState({ y: scrollY, n: st.n || 0, foco: origem || null }, '');
     history[substituir ? 'replaceState' : 'pushState']({ y: 0, n: (st.n || 0) + (substituir ? 0 : 1) }, '', url);
     scrollAlvo = 0; focar = !semFoco; desenhar();
   }
@@ -259,12 +268,13 @@
   // anunciar a troca e o Tab seguir dali. Cada tela chama ao desenhar o conteúdo final (não o esqueleto).
   // focoApos: seletor do controle que deve receber o foco quando a tela for redesenhada no lugar
   // (ex.: o botão do preço-alvo que acabou de ser salvo), já que o controle antigo some com o innerHTML
-  var focoApos = null;
+  var focoApos = null, focoVolta = null;
   function focarEl(el) { if (el) { if (!/^(A|BUTTON|INPUT|SELECT)$/.test(el.tagName)) el.tabIndex = -1; el.focus({ preventScroll: true }); } return !!el; }
   function focarTela(sempre) {
     if (focoApos) { var c = app.querySelector(focoApos); focoApos = null; if (c) { focar = false; c.focus({ preventScroll: true }); return; } sempre = true; }
     if (!focar && !sempre) return;
     focar = false;
+    if (focoVolta) { var v = app.querySelector('a[href="' + focoVolta + '"]'); focoVolta = null; if (v) { v.focus({ preventScroll: true }); return; } }
     // [data-foco]: a tela indica um alvo melhor que o h1 (no livro, a região inteira, para o Tab passar pelas ações)
     var h = app.querySelector('[data-foco]') || app.querySelector('h1:not([hidden])') || app;
     if (h !== app) h.tabIndex = -1;
@@ -397,7 +407,7 @@
 
   // ---------- busca ----------
   var VAZIO = function () { return { q: '', fam: {}, i: '', g: '', o: 'rel', de: null, ate: null }; };
-  var S = VAZIO(), mostrados = 30, verPreco = false, resultado = null;
+  var S = VAZIO(), mostrados = 30, verPreco = false, resultado = null, filtrosAbertos = false;
   function estadoDaUrl() {
     var p = new URLSearchParams(location.search), fam = {};
     (p.get('f') || '').split(',').forEach(function (f) { if (/^[fka]$/.test(f)) fam[f] = 1; });
@@ -465,7 +475,7 @@
     var selGen = gens.length ? '<label class="sel"><span class="vh">Gênero</span><select id="gen"><option value="">Todos os gêneros</option>' +
       gens.map(function (g) { return '<option value="' + g[0] + '"' + (S.g === g[0] ? ' selected' : '') + '>' + esc(g[1]) + ' (' + g[2].toLocaleString('pt-BR') + ')</option>'; }).join('') +
       '</select>' + ic('baixo', 's') + '</label>' : '';
-    $('#ferr').innerHTML = '<details class="filtros-extra"' + (nFiltros() || verPreco ? ' open' : '') + '><summary>Filtros</summary><div class="chips" role="group" aria-label="Filtros">' + chips + '</div>' +
+    $('#ferr').innerHTML = '<details class="filtros-extra"' + (filtrosAbertos || nFiltros() || verPreco ? ' open' : '') + '><summary>Filtros</summary><div class="chips" role="group" aria-label="Filtros">' + chips + '</div>' +
       (verPreco || faixa ? '<div class="faixa-preco"><span class="mu sm">Preço</span><input id="de" type="number" inputmode="decimal" min="0" step="1" placeholder="de R$" aria-label="Preço mínimo em reais" value="' + (S.de != null ? S.de / 100 : '') + '">' +
         '<span class="mu sm">até</span><input id="ate" type="number" inputmode="decimal" min="0" step="1" placeholder="até R$" aria-label="Preço máximo em reais" value="' + (S.ate != null ? S.ate / 100 : '') + '"></div>' : '') +
       selGen + '</details><div class="l2"><span></span><div class="sels"><span class="ord-label">Ordenar por</span>' + '<label class="sel"><span class="vh">Ordenar por</span><select id="ord">' + ords.map(function (o) { return '<option value="' + o[0] + '"' + (S.o === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' + ic('baixo', 's') + '</label><div class="view-switch"><button class="ib" type="button" data-view="lista" aria-label="Exibir em lista" aria-pressed="' + (document.body.dataset.view !== 'grade') + '">' + ic('lista') + '</button><button class="ib" type="button" data-view="grade" aria-label="Exibir em grade" aria-pressed="' + (document.body.dataset.view === 'grade') + '">' + ic('grade') + '</button></div></div></div>';
@@ -494,7 +504,8 @@
         (nFiltros() ? '<button type="button" class="btn" data-acao="limpar-filtros">Limpar filtros</button>' : '') + '</div>';
       return;
     }
-    el.innerHTML = nota + status + '<ul class="lst duas">' + r.slice(0, mostrados).map(function (x) { return linhaObra(x.o, x.eds, sv); }).join('') + '</ul>' +
+    var explorar = !S.q.trim() && !nFiltros() ? '<p class="nota-busca"><a href="./?inicio" data-r>Explorar gêneros, livros que baixaram de preço e parecidos com os seus</a></p>' : '';
+    el.innerHTML = explorar + nota + status + '<ul class="lst duas">' + r.slice(0, mostrados).map(function (x) { return linhaObra(x.o, x.eds, sv); }).join('') + '</ul>' +
       (n > mostrados ? '<div class="mais"><button type="button" class="btn sm" data-acao="mais" id="mais">Mostrar mais</button></div>' : '');
     observarMais(); carregarSparks();
   }
@@ -564,6 +575,8 @@
     else if (e.target.id === 'gen') { S.g = e.target.value; aplicarBusca(); }
     else if (e.target.id === 'ordl') { ordemLista = e.target.value; focoApos = '#ordl'; lista(); }
   });
+  // <details> não borbulha o toggle: ouve na captura; o redesenho da barra mantém o painel como a pessoa deixou
+  app.addEventListener('toggle', function (e) { if (e.target.classList && e.target.classList.contains('filtros-extra')) filtrosAbertos = e.target.open; }, true);
   var tPreco = null;
   app.addEventListener('input', function (e) {
     var fa = e.target.closest('[data-alvo-f]');
@@ -601,7 +614,7 @@
       if (o.idioma) det.push(esc(o.idioma));
       det.push('ASIN ' + asin);
       var eds = l.eds || [[asin, l.f || 'Livro', f.preco]];
-      app.innerHTML = '<button type="button" class="voltar" data-acao="voltar">' + ic('voltar', 's') + 'Voltar aos resultados</button>' +
+      app.innerHTML = '<button type="button" class="voltar" data-acao="voltar">' + ic('voltar', 's') + 'Voltar</button>' +
         (m.aviso ? '<p class="aviso">' + esc(m.aviso) + '</p>' : '') +
         '<div class="livro" role="region" aria-labelledby="l-tit" data-foco><aside class="l-lado">' + capa(o, 'g', true) +
         '<div class="acoes"><a class="btn pri" href="' + L.linkAmazon(asin) + '" target="_blank" rel="noopener noreferrer">Ver na Amazon ' + ic('ext', 's') + '</a>' +
@@ -631,8 +644,8 @@
   }
   function organizarLivro(l,o,asin,f,recente,ult) {
     var cab=$('.l-cab'),acoes=$('.l-lado .acoes');cab.appendChild(acoes);acoes.querySelector('.ico').remove();
-    acoes.insertAdjacentHTML('beforeend','<button type="button" class="btn ico hint" data-watch="'+asin+'" aria-label="Acompanhar preço" data-tip="Acompanhar com preço-alvo">'+ic('sino')+'</button>');
-    $('.compra').insertAdjacentHTML('afterbegin','<div class="preco-rotulo">'+(recente?'Preço atual na Amazon':'Último preço na Amazon')+'<span class="hint" tabindex="0" data-tip="Última coleta: '+L.dl(ult)+'. Confira o valor na Amazon antes de comprar." aria-label="Data da coleta"><img src="info.svg" width="21" height="21" alt=""></span></div>');
+    acoes.insertAdjacentHTML('beforeend','<button type="button" class="btn ico hint" data-watch="'+asin+'" aria-label="Acompanhar preço" data-tip="Acompanhar preço">'+ic('sino')+'</button>');
+    $('.compra').insertAdjacentHTML('afterbegin','<div class="preco-rotulo">'+(recente?'Preço atual na Amazon':'Último preço na Amazon')+'</div>');
     var stats=$('.stats');stats.lastElementChild.remove();stats.children[1].className='st-menor';stats.children[2].className='st-maior';   // fica: mais comum, menor e maior (o preço atual já está grande acima)
     var info=[['Autor',o.autor],['Editora',l.editora],['Data de publicação',l.publicado],['ISBN / ASIN',l.isbn||asin]], resto=$('.l-resto');
     resto.children[0].insertAdjacentHTML('afterend','<section class="sec livro-info"><h2>'+ic('livro')+' Informações do livro</h2><div class="info-layout"><dl>'+info.map(function(r){return '<div><dt>'+esc(r[0])+'</dt><dd>'+esc(r[1]||'Não informado')+'</dd></div>';}).join('')+'</dl><div class="amazon-card"><a class="btn pri" href="'+L.linkAmazon(asin)+'" target="_blank" rel="noopener noreferrer">Ver na Amazon '+ic('ext','s')+'</a></div></div></section>');
@@ -806,12 +819,17 @@
   document.addEventListener('click', function (e) {
     if (e.target.closest('.pular')) { e.preventDefault(); focarTela(true); return; }
     var a = e.target.closest('a[data-r]');
-    if (a && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) { e.preventDefault(); ir(a.getAttribute('href'), a.hasAttribute('data-sub')); return; }
+    if (a && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) { e.preventDefault(); ir(a.getAttribute('href'), a.hasAttribute('data-sub'), false, app.contains(a) ? a.getAttribute('href') : null); return; }
     var b = e.target.closest('button'); if (!b) return;
     var acao = b.dataset.acao;
-    if(b.dataset.watch){if(!Lista.tem(b.dataset.watch))Lista.alternar(b.dataset.watch);contador();pendenteAlvo=b.dataset.watch;ir('./?lista');}
+    // sino: salva sem sair da tela; o aviso leva à lista com o campo do preço-alvo aberto
+    if (b.dataset.watch) {
+      var aw = b.dataset.watch, ja = Lista.tem(aw);
+      if (!ja) { Lista.alternar(aw); contador(); botaoSalvar(); }
+      toast(ja ? 'Já está na sua lista' : 'Salvo na sua lista', 'Definir preço-alvo', function () { pendenteAlvo = aw; ir('./?lista'); });
+    }
     else if(b.dataset.view){document.body.dataset.view=b.dataset.view;document.querySelectorAll('.view-switch [data-view]').forEach(function(v){v.setAttribute('aria-pressed',String(v===b));});}
-    else if(b.id==='tema'){var light=document.documentElement.dataset.theme!=='light';document.documentElement.dataset.theme=light?'light':'dark';try{localStorage.setItem('observador-tema',light?'light':'dark');}catch(e){}}
+    else if (b.id === 'tema') { var t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'; aplicarTema(t); try { localStorage.setItem('observador-tema', t); } catch (e) { } }
     else if (b.dataset.fam) { if (S.fam[b.dataset.fam]) delete S.fam[b.dataset.fam]; else S.fam[b.dataset.fam] = 1; aplicarBusca(); }
     else if (b.dataset.idioma !== undefined) { S.i = S.i === b.dataset.idioma ? '' : b.dataset.idioma; aplicarBusca(); }
     else if (b.dataset.baixa !== undefined) { filtroBaixa = b.dataset.baixa; baixaTudo = false; destaques().then(function (x) { secaoBaixa(x); focarEl($('[data-baixa="' + filtroBaixa + '"]')); }); }
@@ -882,7 +900,7 @@
     focoApos = '[data-alvo="' + f.dataset.alvoF + '"]';
     lista();
   });
-  window.addEventListener('popstate', function () { scrollAlvo = (history.state || {}).y || 0; focar = true; desenhar(); });
+  window.addEventListener('popstate', function () { var st = history.state || {}; scrollAlvo = st.y || 0; focoVolta = st.foco || null; focar = true; desenhar(); });
   window.addEventListener('storage', function (e) { if (e.key === 'lista_v1') { contador(); if (rotaAtual.v === 'lista' && !rotaAtual.comp) lista(); } });
 
   // ---------- início ----------
