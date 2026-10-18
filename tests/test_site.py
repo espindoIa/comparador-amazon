@@ -1023,7 +1023,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             self.assertEqual(pg.evaluate("document.body.dataset.view"), "grade")
             pg.click('[data-view="lista"]')
             pg.fill("#q", "silenciósa PACIENTE")                                         # sem acento e ordem trocada também acha
-            pg.wait_for_selector("#res .row")
+            pg.wait_for_function("document.querySelectorAll('#res .row').length === 1")  # a busca inicial já tinha resultados
             self.assertIn("A paciente silenciosa", pg.inner_text("#res"))
             self.assertNotIn("Outro livro", pg.inner_text("#res"))
             pg.click("#res .row")
