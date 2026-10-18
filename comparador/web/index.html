@@ -9,8 +9,16 @@
 <meta property="og:description" content="Histórico de preço dos livros mais vendidos da Amazon.com.br, lido todo dia: quanto um livro custa agora e quanto já custou.">
 <meta property="og:locale" content="pt_BR">
 <meta name="twitter:card" content="summary">
-<meta name="theme-color" content="#faf5ea" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#17130f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#0b1217">
+<script>
+  // o tema antes de a página pintar: o salvo pelo botão ou, sem ele, o do sistema (app.js troca no clique)
+  (function () {
+    var t = null; try { t = localStorage.getItem('observador-tema'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.dataset.theme = t;
+    document.querySelector('meta[name="theme-color"]').content = t === 'light' ? '#f6f3eb' : '#0b1217';
+  })();
+</script>
 <link rel="icon" href="icone.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icone-180.png">
 <link rel="manifest" href="manifest.json">
@@ -22,13 +30,13 @@
 <a class="pular" href="#app">Pular para o conteúdo</a>
 <header class="hdr">
   <div class="hdr-in">
-    <a class="marca" href="./" data-r><img src="book-open.svg" alt="" width="44" height="44"><span>Observador de preços<br>da amazon</span></a>
-    <nav class="header-tools"><a class="ib hint" href="./?sobre" data-r aria-label="Como funciona" data-tip="Como funciona"><img src="help-circle.svg" width="24" height="24" alt=""></a><button class="ib hint" type="button" id="tema" aria-label="Alternar tema" data-tip="Alternar tema"><img src="sun.svg" width="24" height="24" alt=""></button></nav><form class="busca" role="search" action="./">
+    <a class="marca" href="./" data-r><svg class="i marca-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><span>Observador de preços<br>da amazon</span></a>
+    <a class="hdr-lista" aria-label="Minha lista" href="./?lista" data-r><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="rot">Minha lista</span><span class="badge" id="cont"></span></a>
+    <nav class="header-tools"><a class="ib hint" href="./?sobre" data-r aria-label="Como funciona" data-tip="Como funciona"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg></a><button class="ib hint" type="button" id="tema" aria-pressed="true" aria-label="Tema escuro" data-tip="Tema escuro"><svg class="i lua" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg class="i sol" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg></button></nav><form class="busca" role="search" action="./">
       <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input id="q" name="q" type="search" placeholder="Buscar por título, autor ou ISBN" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Buscar livro">
       <button type="button" class="limpa" id="limpa" aria-label="Limpar busca" hidden><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-    <button class="enviar" type="submit" aria-label="Buscar"><img src="arrow-right.svg" width="26" height="26" alt=""></button><span class="busca-dica hint" tabindex="0" data-tip="Busque pelo título, autor ou ISBN" aria-label="Busque pelo título, autor ou ISBN"><img src="info.svg" width="22" height="22" alt=""></span></form>
-    <a class="hdr-lista" aria-label="Minha lista" href="./?lista" data-r><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="rot">Minha lista</span><span class="badge" id="cont"></span></a>
+    <button class="enviar" type="submit" aria-label="Buscar"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button></form>
   </div>
 </header>
 <main class="pg" id="app" tabindex="-1">
@@ -36,7 +44,7 @@
 </main>
 <footer class="rod">
   <span>Preços lidos da Amazon.com.br, sem vínculo com a Amazon. Confira o preço na loja antes de comprar.</span>
-  <a href="./?sobre" data-r>Como funciona</a>
+  <span class="rod-links"><a href="./?inicio" data-r>Explorar</a> · <a href="./?sobre" data-r>Como funciona</a></span>
 </footer>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="livro.js"></script><script src="lista.js"></script><script src="busca.js"></script><script src="recomenda.js"></script><script src="app.js"></script>

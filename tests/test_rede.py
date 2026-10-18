@@ -267,7 +267,7 @@ class TestClienteNavegador(unittest.TestCase):
         r = self.cliente.get_lote([f"{self.base}/l{i}" for i in range(4)], [0.0, 0.3, 0.6, 0.9])
         self.assertEqual([(x.status_code, x.text) for x in r], [(200, "ação ok")] * 4)
         self.assertTrue(all(x.ms > 0 for x in r))
-        chegadas = {c: t for c, t in _Servidor.tempos}
+        chegadas = {c: t for c, t in _Servidor.tempos if c != "/favicon.ico"}      # o navegador pode pedir o favicon durante o lote
         self.assertEqual(set(chegadas), {"/l0", "/l1", "/l2", "/l3"})
         ordem = sorted(chegadas, key=chegadas.get)
         self.assertEqual(ordem, ["/l0", "/l1", "/l2", "/l3"])

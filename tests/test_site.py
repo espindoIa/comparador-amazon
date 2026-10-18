@@ -649,6 +649,70 @@ class TestFolhaDeEstilo(unittest.TestCase):
         self.assertEqual("viewport-fit=cover" in self.html, "safe-area-inset" in self.css)
 
 
+class TestFolhaDeReferencia(unittest.TestCase):
+    """referencia.css (o visual escuro e dourado) redefine os tokens por cima de estilo.css. Um token de cor que ela
+    esquece continua vindo de estilo.css, que segue o tema do sistema e não o botão: a página mistura os dois temas."""
+
+    def setUp(self):
+        self.css = (site.WEB / "referencia.css").read_text(encoding="utf-8")
+        base = (site.WEB / "estilo.css").read_text(encoding="utf-8")
+        self.escuro = re.search(r":root\{(.*?)\}", self.css).group(1)
+        self.claro = re.search(r":root\[data-theme=light\]\{(.*?)\}", self.css).group(1)
+        claro_base = re.search(r":root\{(.*?)color-scheme", base, re.S).group(1)
+        self.cores = {t for t in re.findall(r"(--[a-z0-9]+):", claro_base)
+                      if not t.startswith(("--fs-", "--r", "--z")) and t not in ("--f", "--serif", "--display")}
+
+    def test_todo_token_de_cor_e_redefinido_nos_dois_temas(self):
+        for nome, bloco in (("escuro", self.escuro), ("claro", self.claro)):
+            self.assertEqual(self.cores - set(re.findall(r"(--[a-z0-9]+):", bloco)), set(), f"{nome}: token herdado de estilo.css")
+
+    def test_contraste_dos_pares_de_texto_nos_dois_temas(self):
+        lum = lambda c: .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+        canal = lambda x: x / 12.92 if x <= .03928 else ((x + .055) / 1.055) ** 2.4
+        cor = lambda h: lum([canal(int(h[i:i + 2], 16) / 255) for i in (1, 3, 5)])
+        razao = lambda a, b: (max(cor(a), cor(b)) + .05) / (min(cor(a), cor(b)) + .05)
+        for nome, bloco in (("escuro", self.escuro), ("claro", self.claro)):
+            t = dict(re.findall(r"(--[a-z0-9]+):(#[0-9a-f]{6})(?=[;}]|$)", bloco))
+            pares = [(f, b) for f in ("--fg", "--mu", "--ac", "--dn", "--up", "--wr", "--med", "--evl") for b in ("--bg", "--sf", "--sf2")]
+            pares += [("--dn", "--dns"), ("--up", "--ups"), ("--wr", "--wrs"), ("--ac", "--acs"), ("--prif", "--pri"), ("--tintaf", "--tinta"), ("--bg", "--ac")]   # --bg sobre --ac: chip ligado
+            for f, b in pares:
+                self.assertGreaterEqual(razao(t[f], t[b]), 4.5, f"{nome}: {f} sobre {b}")
+            for b in ("--bg", "--sf"):                                            # contorno de campo e chip: 3:1 (WCAG 1.4.11)
+                self.assertGreaterEqual(razao(t["--ln3"], t[b]), 3, f"{nome}: --ln3 sobre {b}")
+
+    def test_escala_raio_camadas_e_hover_valem_tambem_para_a_referencia(self):
+        # as mesmas regras de TestFolhaDeEstilo (U1): sem px fora da escala, raio dos tokens, z-index de token, hover só com mouse
+        self.assertEqual(re.findall(r"font-size:[\d.]+px", self.css), [], "font-size em px fora da escala (--fs-N)")
+        self.assertEqual(re.findall(r"font:[^;}]*[\d.]px", self.css), [], "font: com px fora da escala (--fs-N)")
+        self.assertEqual([r for r in re.findall(r"border-radius:\d+px(?=[;}])", self.css) if r != "border-radius:999px"], [], "raio em px fora dos tokens")
+        self.assertEqual(re.findall(r"z-index:-?\d+", self.css), [], "z-index solto")
+        fora, i, css = [], 0, self.css
+        while i < len(css):                                              # tira os blocos @media(hover:hover){...}
+            if css.startswith("@media(hover:hover){", i):
+                i, prof = css.index("{", i), 0
+                while True:
+                    prof += (css[i] == "{") - (css[i] == "}")
+                    i += 1
+                    if prof == 0:
+                        break
+                continue
+            fora.append(css[i]); i += 1
+        for regra in re.findall(r"(?:^|\})\s*([^{}@]*:hover[^{}]*)\{", "".join(fora)):
+            self.fail(f"regra de :hover fora de @media(hover:hover): {regra.strip()}")
+
+    def test_cabecalho_sem_imagem_de_icone_e_com_estado_no_tema(self):
+        html = (site.WEB / "index.html").read_text(encoding="utf-8")
+        self.assertNotRegex(html, r'<img src="[\w-]+\.svg"')                  # ícone de imagem não segue o tema nem o alto contraste
+        self.assertIn('id="tema" aria-pressed=', html)
+        self.assertLess(html.index("<script>"), html.index('rel="stylesheet"'))  # o tema vai antes do CSS: sem piscar
+        self.assertNotIn("busca-dica", html)
+
+    def test_campo_e_chip_tem_contorno_de_campo(self):
+        self.assertIn(".sel select{height:46px;border:1px solid var(--ln3)", self.css)
+        self.assertIn(".chip{border-color:var(--ln3)", self.css)
+        self.assertNotIn("color:var(--mu2)", self.css)                           # --mu2 não é cor de texto
+
+
 @unittest.skipUnless(navegador(), "navegador não instalado")
 class TestSiteNoNavegador(unittest.TestCase):
     def _servir(self, itens, aviso=None, avaliacoes=None, generos=None, subgeneros=None):
@@ -674,6 +738,50 @@ class TestSiteNoNavegador(unittest.TestCase):
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.shutdown)
         return f"http://127.0.0.1:{srv.server_port}"
+
+    def test_tema_dica_filtros_sino_e_foco_ao_voltar(self):
+        from playwright.sync_api import sync_playwright
+        itens = [(f"B00000000{i}", f"Livro {n}", "Capa comum", [("2026-10-01", "2026-10-20", 1000 + 100 * i, None)])
+                 for i, n in enumerate(["Alfa", "Beta", "Gama"], 1)]
+        base = self._servir(itens)
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            erros = []
+            claro = b.new_context(color_scheme="light")                                   # sem tema salvo: segue o sistema, antes do app.js
+            pg = claro.new_page(); pg.on("pageerror", lambda e: erros.append(str(e)))
+            pg.goto(f"{base}/?q=livro"); pg.wait_for_selector("#res .row")
+            self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "light")
+            self.assertEqual(pg.get_attribute("#tema", "aria-pressed"), "false")
+            pg.click("#tema")
+            self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "dark")
+            self.assertEqual(pg.get_attribute("#tema", "aria-pressed"), "true")
+            # sino: salva sem sair da busca, e o aviso leva ao preço-alvo
+            pg.click("#res li:nth-child(2) [data-watch]")
+            pg.wait_for_selector(".toast.on")
+            self.assertIn("q=livro", pg.url)
+            self.assertIn("Salvo", pg.inner_text("#toast"))
+            self.assertEqual(pg.evaluate("JSON.parse(localStorage.lista_v1).length"), 1)
+            pg.click("#toast button")
+            pg.wait_for_selector(".alvo-f input")
+            # Filtros aberto continua aberto depois de ligar e desligar um chip, e o foco fica no chip
+            pg.goto(f"{base}/?q=livro"); pg.wait_for_selector("#res .row")
+            pg.click(".filtros-extra summary")
+            pg.click('[data-fam="f"]'); pg.click('[data-fam="f"]')
+            self.assertTrue(pg.evaluate("document.querySelector('.filtros-extra').open"))
+            self.assertEqual(pg.evaluate("document.activeElement.dataset.fam"), "f")
+            # abrir um livro e voltar pelo botão do navegador: o foco volta ao link que abriu
+            pg.goto(f"{base}/?q=livro"); pg.wait_for_selector("#res .row")
+            href = pg.get_attribute("#res li:nth-child(3) a.row", "href")
+            pg.click("#res li:nth-child(3) a.row"); pg.wait_for_selector("#graf svg")
+            pg.go_back(); pg.wait_for_selector("#res .row")
+            self.assertEqual(pg.evaluate("document.activeElement.getAttribute('href')"), href)
+            # dica: aparece com o foco do teclado, e Esc a esconde
+            pg.focus("#tema"); pg.keyboard.press("Shift+Tab"); pg.keyboard.press("Tab")
+            self.assertEqual(pg.evaluate("getComputedStyle(document.querySelector('#tema'), '::after').opacity"), "1")
+            pg.keyboard.press("Escape")
+            self.assertEqual(pg.evaluate("getComputedStyle(document.querySelector('#tema'), '::after').opacity"), "0")
+            self.assertEqual(erros, [])
+            b.close()
 
     def test_preco_diz_de_qual_formato_e(self):
         # mesma obra em capa comum e Kindle: o "a partir de" da busca é do Kindle, e a página do livro diz o formato
@@ -739,7 +847,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             self.assertEqual(titulos(), ["Alfa", "Delta", "Gama"])
             pg.click('[data-acao="limpar-filtros"]')
             esperar(5)
-            pg.click(".filtros-extra summary")
+            self.assertTrue(pg.evaluate("document.querySelector('.filtros-extra').open"))   # o painel fica como a pessoa deixou
             pg.click('[data-acao="preco"]')
             pg.fill("#de", "20")
             pg.fill("#ate", "50")
@@ -784,7 +892,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.goto(f"{base}/?inicio")
             pg.evaluate("localStorage.setItem('lista_v1', JSON.stringify(['A000000002']))")
             pg.goto(f"{base}/?q=saiu")
-            pg.wait_for_function("document.querySelector('#res').textContent.includes('Nenhum livro')")  # sumiu da busca
+            pg.wait_for_function("document.querySelector('#res')?.textContent.includes('Nenhum livro')")  # sumiu da busca
             pg.click(".hdr-lista")
             pg.wait_for_selector("#lst .row b")
             self.assertIn("último preço visto em 05/10/2026", pg.inner_text("#lst"))      # mas segue na lista, com o último preço
