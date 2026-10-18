@@ -687,7 +687,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             erros = []
             pg.on("pageerror", lambda e: erros.append(str(e)))
             pg.goto(f"{base}/index.html")
-            pg.wait_for_selector(".boas h1")
+            pg.wait_for_selector("#res .row")
             pg.fill("#q", "duna")
             pg.wait_for_selector("#res .row")
             self.assertIn("a partir de · Kindle", pg.inner_text("#res .row .pr"))
@@ -716,7 +716,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg = b.new_page()
             erros = []
             pg.on("pageerror", lambda e: erros.append(str(e)))
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.evaluate("localStorage.clear()")
             pg.goto(f"{base}/?o=preco")                                                  # ordenar sozinho já lista tudo
             pg.wait_for_selector("#res .row")
@@ -730,6 +730,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.select_option("#ord", "titulo")
             self.assertEqual(titulos(), ["Alfa", "Beta", "Delta", "Epsilon", "Gama"])
             self.assertIn("3", pg.inner_text('[data-fam="f"]'))                          # contagem no filtro
+            pg.click(".filtros-extra summary")
             pg.click('[data-fam="f"]')                                                   # livro físico: capa comum e dura
             self.assertEqual(titulos(), ["Alfa", "Delta", "Gama"])
             self.assertIn("f=f", pg.url)
@@ -738,6 +739,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             self.assertEqual(titulos(), ["Alfa", "Delta", "Gama"])
             pg.click('[data-acao="limpar-filtros"]')
             esperar(5)
+            pg.click(".filtros-extra summary")
             pg.click('[data-acao="preco"]')
             pg.fill("#de", "20")
             pg.fill("#ate", "50")
@@ -779,7 +781,7 @@ class TestSiteNoNavegador(unittest.TestCase):
         with sync_playwright() as p:
             b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
             pg = b.new_page()
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.evaluate("localStorage.setItem('lista_v1', JSON.stringify(['A000000002']))")
             pg.goto(f"{base}/?q=saiu")
             pg.wait_for_function("document.querySelector('#res').textContent.includes('Nenhum livro')")  # sumiu da busca
@@ -814,6 +816,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.wait_for_function("location.search.includes('raridade') && document.querySelector('#res .carregando')"
                                  " && !document.querySelector('#res .row')")
             self.assertNotIn("Nenhum livro", pg.inner_text("#res"))
+            pg.click(".filtros-extra summary")
             pg.click('[data-acao="preco"]')                                            # a pessoa está digitando um preço...
             pg.fill("#de", "5")
             presos[0].continue_()                                                       # ...quando chega a última parte
@@ -844,7 +847,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
             for largura, esperado in ((1280, True), (390, False)):
                 pg = b.new_page(viewport={"width": largura, "height": 900})
-                pg.goto(f"{base}/")
+                pg.goto(f"{base}/?inicio")
                 pg.wait_for_selector("#baixa .cartao")
                 pg.wait_for_timeout(200)
                 visiveis = pg.eval_on_selector_all("#baixa .cartao", "e => e.filter(c => !c.inert).length")
@@ -885,9 +888,9 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg = b.new_page()
             erros = []
             pg.on("pageerror", lambda e: erros.append(str(e)))
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.evaluate("localStorage.clear()")
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.click(".gens a:has-text('Romance')")                                      # explorar um gênero
             pg.wait_for_selector("#res .row")
             self.assertEqual(pg.inner_text("#bh"), "Romance")
@@ -896,7 +899,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.wait_for_selector("#graf svg")
             self.assertIn("Romance", pg.inner_text(".l-gens"))
             pg.click("[data-salvar]")
-            pg.goto(f"{base}/")                                                         # vistos recentemente, no início
+            pg.goto(f"{base}/?inicio")                                                         # vistos recentemente, no início
             pg.wait_for_selector(".cartao")
             self.assertIn("Vistos recentemente", pg.inner_text("main"))
             pg.goto(f"{base}/?lista")                                                   # preço-alvo na lista
@@ -936,9 +939,9 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.goto(f"{base}/?livro=A000000003")                                                 # sem subgênero: nada ao lado do título
             pg.wait_for_selector("#parecidos .cartao")
             self.assertEqual(pg.locator("#parecidos .sec-h .nota").count(), 0)
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.evaluate("localStorage.setItem('lista_v1', JSON.stringify(['A000000001']))")
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.wait_for_selector("#parecidos .cartao")
             self.assertEqual(pg.locator("#parecidos .sec-h .nota").count(), 0)                  # no início, a nota não aparece
             self.assertEqual(erros, [])
@@ -962,9 +965,9 @@ class TestSiteNoNavegador(unittest.TestCase):
             erros, pedidos = [], []
             pg.on("pageerror", lambda e: erros.append(str(e)))
             pg.on("request", lambda r: pedidos.append(r.url))
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.evaluate("localStorage.clear()")
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.wait_for_selector(".gens a")
             self.assertEqual(pg.locator("#parecidos").count(), 0)                    # sem lista nem vistos: nada
             pedidos.clear()
@@ -983,7 +986,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.goto(f"{base}/?livro=C000000001")                                      # nada parecido: a seção some
             pg.wait_for_selector("#graf svg")
             pg.wait_for_function("!document.querySelector('#parecidos')")
-            pg.goto(f"{base}/")                                                         # no início: junta as listas da lista e dos vistos
+            pg.goto(f"{base}/?inicio")                                                         # no início: junta as listas da lista e dos vistos
             pg.wait_for_selector("#parecidos .cartao")
             self.assertIn("Parecidos com os seus livros", pg.inner_text("#parecidos h2"))
             # Romance Um saiu: foi salvo no Kindle, e "Romance Dois" (visto) o traz no cartão do livro físico; os vistos também saem
@@ -1013,7 +1016,12 @@ class TestSiteNoNavegador(unittest.TestCase):
             erros = []
             pg.on("pageerror", lambda e: erros.append(str(e)))
             pg.goto(f"{base}/index.html")
-            pg.wait_for_selector(".boas h1")
+            pg.wait_for_selector("#res .row")
+            self.assertIn("Observador de preços", pg.inner_text(".marca"))
+            pg.click('[data-view="grade"]')
+            self.assertEqual(pg.get_attribute('[data-view="grade"]', "aria-pressed"), "true")
+            self.assertEqual(pg.evaluate("document.body.dataset.view"), "grade")
+            pg.click('[data-view="lista"]')
             pg.fill("#q", "silenciósa PACIENTE")                                         # sem acento e ordem trocada também acha
             pg.wait_for_selector("#res .row")
             self.assertIn("A paciente silenciosa", pg.inner_text("#res"))
@@ -1053,9 +1061,9 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg = b.new_page()
             erros = []
             pg.on("pageerror", lambda e: erros.append(str(e)))
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.evaluate("localStorage.clear()")
-            pg.goto(f"{base}/")
+            pg.goto(f"{base}/?inicio")
             pg.wait_for_selector(".boas h1")
             pg.keyboard.press("Tab")                                                     # o primeiro Tab chega no link de pular
             self.assertEqual(pg.evaluate(ativo), "pular")
@@ -1065,6 +1073,7 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.wait_for_selector("#res .row")
             self.assertEqual(pg.evaluate(ativo), "q")
             pg.wait_for_function("document.querySelector('#cont-res').textContent === '1 livro encontrado'")
+            pg.click(".filtros-extra summary")
             pg.focus("[data-fam=k]")                                                     # o chip recriado pela barra mantém o foco
             pg.keyboard.press("Enter")
             pg.wait_for_selector("[data-fam=k][aria-pressed=true]")
@@ -1074,7 +1083,9 @@ class TestSiteNoNavegador(unittest.TestCase):
             pg.wait_for_selector("#graf svg")
             pg.wait_for_function("document.activeElement.matches('.livro[role=region]')")    # a região do livro, nomeada pelo h1
             self.assertIn("paciente", pg.evaluate("document.getElementById(document.activeElement.getAttribute('aria-labelledby')).textContent"))
-            pg.keyboard.press("Tab")                                                     # o Tab seguinte chega na ação principal
+            pg.keyboard.press("Tab")                                                     # o autor é o primeiro link do cabeçalho
+            self.assertTrue(pg.evaluate("document.activeElement.closest('.aut') !== null"))
+            pg.keyboard.press("Tab")
             self.assertIn("Ver na Amazon", pg.evaluate("document.activeElement.textContent"))
             self.assertIn("menor R$ 34,99", pg.get_attribute("#graf svg", "aria-label"))   # resumo do gráfico em texto
             pg.focus("#graf .graf")                                                      # gráfico pelo teclado

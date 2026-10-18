@@ -17,17 +17,18 @@
 <link rel="preconnect" href="https://m.media-amazon.com">
 <link rel="preload" href="cormorant-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="estilo.css">
+<link rel="stylesheet" href="referencia.css">
 <body>
 <a class="pular" href="#app">Pular para o conteúdo</a>
 <header class="hdr">
   <div class="hdr-in">
-    <a class="marca" href="./" data-r><img src="icone.svg" alt="" width="30" height="30"><span>Preços de livros</span></a>
-    <form class="busca" role="search" action="./">
+    <a class="marca" href="./" data-r><img src="book-open.svg" alt="" width="44" height="44"><span>Observador de preços<br>da amazon</span></a>
+    <nav class="header-tools"><a class="ib hint" href="./?sobre" data-r aria-label="Como funciona" data-tip="Como funciona"><img src="help-circle.svg" width="24" height="24" alt=""></a><button class="ib hint" type="button" id="tema" aria-label="Alternar tema" data-tip="Alternar tema"><img src="sun.svg" width="24" height="24" alt=""></button></nav><form class="busca" role="search" action="./">
       <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input id="q" name="q" type="search" placeholder="Buscar por título, autor ou ISBN" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Buscar livro">
       <button type="button" class="limpa" id="limpa" aria-label="Limpar busca" hidden><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-    </form>
-    <a class="hdr-lista" href="./?lista" data-r><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="rot">Minha lista</span><span class="badge" id="cont"></span></a>
+    <button class="enviar" type="submit" aria-label="Buscar"><img src="arrow-right.svg" width="26" height="26" alt=""></button><span class="busca-dica hint" tabindex="0" data-tip="Busque pelo título, autor ou ISBN" aria-label="Busque pelo título, autor ou ISBN"><img src="info.svg" width="22" height="22" alt=""></span></form>
+    <a class="hdr-lista" aria-label="Minha lista" href="./?lista" data-r><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="rot">Minha lista</span><span class="badge" id="cont"></span></a>
   </div>
 </header>
 <main class="pg" id="app" tabindex="-1">

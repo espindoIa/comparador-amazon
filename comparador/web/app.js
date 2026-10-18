@@ -3,6 +3,7 @@
  * Dados em dados/*.json, gerados por `python -m comparador site` (formato descrito em site.py). */
 (function () {
   'use strict';
+  try { document.documentElement.dataset.theme = localStorage.getItem('observador-tema') || 'dark'; } catch(e) {}
   var L = window.Livro, Lista = window.Lista, Busca = window.Busca, Recomenda = window.Recomenda, esc = L.esc, brl = L.brl;
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var app = $('#app'), q = $('#q');
@@ -18,6 +19,12 @@
     alerta: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/>', estrela: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
     dir: '<path d="M9 18l6-6-6-6"/>', livro: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5V21h16"/>'
   };
+  // Feather icon paths (MIT), matching the reference line icon family.
+  IC.coracao = '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/>';
+  IC.sino = '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>';
+  IC.grafico = '<path d="M4 13h3v8H4zM10 8h3v13h-3zM16 3h3v18h-3z"/>';
+  IC.grade = '<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/>';
+  IC.lista = '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>';
   function ic(n, c) { return '<svg class="i' + (c ? ' ' + c : '') + '" viewBox="0 0 24 24" aria-hidden="true">' + IC[n] + '</svg>'; }
 
   // ---------- dados ----------
@@ -153,9 +160,7 @@
     var m = eds.reduce(function (a, b) { return b.preco < a.preco ? b : a; });
     var formatos = o.eds.length > 1 ? o.eds.map(function (e) { return '<span' + (e === m ? ' class="on"' : '') + '>' + esc(e.fmt) + ' ' + brl(e.preco) + '</span>'; }).join('') : '<span>' + esc(m.fmt) + '</span>';
     var velho = m.idade > 1 && idx ? ' <span class="pill wr">preço de ' + L.dmes(idx.hoje - m.idade) + '</span>' : '';
-    return '<li><a class="row" href="./?livro=' + m.asin + '" data-r>' + capa(o) + '<div class="bd"><div class="tt">' + esc(o.t) + '</div>' +
-      '<div class="sub">' + subtitulo(o) + '</div><div class="pr">' + (preco || ((o.eds.length > 1 ? '<span class="de">' + (eds.length > 1 ? 'a partir de · ' : '') + esc(m.fmt) + '</span>' : '') + '<b>' + brl(m.preco) + '</b>' + (noMenor(m) ? MENOR : pillComum(m.preco, m.mc)) + velho)) +
-      '</div><div class="eds">' + formatos + '</div></div>' + (o.eds.some(function (e) { return sv[e.asin]; }) ? SALVO : '') + '</a></li>';
+    return '<li class="resultado-livro"><a class="row" href="./?livro=' + m.asin + '" data-r>' + capa(o) + '<div class="bd"><div class="tt">' + esc(o.t) + '</div><div class="sub">' + esc(o.autor) + '</div></div><span class="row-dir">' + ic('dir') + '</span><div class="pr"><span class="vh">' + (eds.length > 1 ? 'a partir de · ' : '') + esc(m.fmt) + '</span><b>' + brl(m.preco) + '</b>' + velho + '</div><span class="mini-historico" data-spark="' + m.asin + '"></span>' + (o.eds.some(function(e){return sv[e.asin];}) ? SALVO.replace('class="salvo"','class="salvo vh"') : '') + '</a><div class="row-acoes"><a class="ib hint" href="./?livro=' + m.asin + '" data-r aria-label="Ver histórico de preço" data-tip="Evolução de preço na Amazon">' + ic('grafico') + '</a><button type="button" class="ib hint" data-watch="' + m.asin + '" aria-label="Acompanhar preço na minha lista" data-tip="Acompanhar com preço-alvo">' + ic('sino') + '</button><a class="row-fim" href="./?livro=' + m.asin + '" data-r aria-label="Ver detalhes">' + ic('dir','s') + '</a></div></li>';
   }
   function esqueleto(n) {
     var r = '<div class="sk-row"><div class="cv sk"></div><div class="sk-corpo"><div class="sk l" style="width:70%"></div><div class="sk l" style="width:40%"></div><div class="sk l" style="width:25%;height:16px"></div></div></div>';
@@ -236,8 +241,9 @@
     if (p.has('livro')) return { v: 'livro', asin: (p.get('livro') || '').toUpperCase() };
     if (p.has('lista') || location.hash === '#lista') return { v: 'lista', comp: p.get('lista') || '' };
     if (p.has('sobre')) return { v: 'sobre' };
+    if (p.has('inicio')) return { v: 'inicio' };
     if (['q', 'f', 'i', 'g', 'o', 'de', 'ate'].some(function (k) { return p.get(k); })) return { v: 'busca' };
-    return { v: 'inicio' };
+    return { v: 'busca' };
   }
   // semFoco: a troca veio da digitação na busca do cabeçalho, e o foco fica no campo
   function ir(url, substituir, semFoco) {
@@ -266,7 +272,7 @@
   }
   function voltar() { if ((history.state || {}).n > 0) history.back(); else ir('./'); }
   function desenhar() {
-    var r = rota(); rotaAtual = r;
+    var r = rota(); rotaAtual = r; document.body.dataset.tela = r.v;
     var lnk = $('.hdr-lista'); if (r.v === 'lista') lnk.setAttribute('aria-current', 'page'); else lnk.removeAttribute('aria-current');
     if (r.v !== 'busca' && document.activeElement !== q) { q.value = ''; $('#limpa').hidden = true; }
     if (r.v === 'busca') return busca(true);
@@ -449,7 +455,7 @@
     var faixa = S.de != null || S.ate != null;
     chips += '<span class="sep"></span><button type="button" class="chip" data-acao="preco" aria-pressed="' + (faixa || verPreco) + '">' +
       (faixa ? (S.de != null ? brl(S.de) : 'R$ 0') + ' a ' + (S.ate != null ? brl(S.ate) : 'qualquer') : 'Preço') + ' ' + ic('baixo', 's') + '</button>';
-    var ords = [['rel', 'Mais relevantes']];
+    var ords = [['rel', 'Relevância']];
     if (idx.temAv) ords.push(['avaliacoes', 'Mais avaliados']);
     ords.push(['preco', 'Menor preço'], ['preco_desc', 'Maior preço'], ['desconto', 'Maior desconto sobre a capa']);
     if (idx.temMC) ords.push(['abaixo', 'Mais abaixo do preço comum']);
@@ -459,10 +465,10 @@
     var selGen = gens.length ? '<label class="sel"><span class="vh">Gênero</span><select id="gen"><option value="">Todos os gêneros</option>' +
       gens.map(function (g) { return '<option value="' + g[0] + '"' + (S.g === g[0] ? ' selected' : '') + '>' + esc(g[1]) + ' (' + g[2].toLocaleString('pt-BR') + ')</option>'; }).join('') +
       '</select>' + ic('baixo', 's') + '</label>' : '';
-    $('#ferr').innerHTML = '<div class="chips" role="group" aria-label="Filtros">' + chips + '</div>' +
+    $('#ferr').innerHTML = '<details class="filtros-extra"' + (nFiltros() || verPreco ? ' open' : '') + '><summary>Filtros</summary><div class="chips" role="group" aria-label="Filtros">' + chips + '</div>' +
       (verPreco || faixa ? '<div class="faixa-preco"><span class="mu sm">Preço</span><input id="de" type="number" inputmode="decimal" min="0" step="1" placeholder="de R$" aria-label="Preço mínimo em reais" value="' + (S.de != null ? S.de / 100 : '') + '">' +
         '<span class="mu sm">até</span><input id="ate" type="number" inputmode="decimal" min="0" step="1" placeholder="até R$" aria-label="Preço máximo em reais" value="' + (S.ate != null ? S.ate / 100 : '') + '"></div>' : '') +
-      '<div class="l2"><span></span><div class="sels">' + selGen + '<label class="sel"><span class="vh">Ordenar por</span><select id="ord">' + ords.map(function (o) { return '<option value="' + o[0] + '"' + (S.o === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' + ic('baixo', 's') + '</label></div></div>';
+      selGen + '</details><div class="l2"><span></span><div class="sels"><span class="ord-label">Ordenar por</span>' + '<label class="sel"><span class="vh">Ordenar por</span><select id="ord">' + ords.map(function (o) { return '<option value="' + o[0] + '"' + (S.o === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' + ic('baixo', 's') + '</label><div class="view-switch"><button class="ib" type="button" data-view="lista" aria-label="Exibir em lista" aria-pressed="' + (document.body.dataset.view !== 'grade') + '">' + ic('lista') + '</button><button class="ib" type="button" data-view="grade" aria-label="Exibir em grade" aria-pressed="' + (document.body.dataset.view === 'grade') + '">' + ic('grade') + '</button></div></div></div>';
     var nv = volta && ($('#ferr ' + volta) || $('#ferr .chip')); if (nv) nv.focus({ preventScroll: true });
   }
   function curta() { var t = S.q.trim(); return t.length === 1 && !L.asinDe(t) && !nFiltros() && S.o === 'rel'; }
@@ -473,7 +479,7 @@
       return;
     }
     var r = resultado.lista, el = $('#res'), n = r.length, sv = salvos(), carregando = !idx.completo;
-    $('#ferr .l2 > span').innerHTML = '<span class="cont">' + (n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro' : ' livros') + (carregando ? ' até agora' : '') : '') + '</span>' +
+    $('#ferr .l2 > span').innerHTML = '<strong class="resultados-titulo">Resultados</strong><span class="cont">' + (n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro' : ' livros') + (carregando ? ' até agora' : '') : '') + '</span>' +
       (nFiltros() ? ' <button type="button" class="btn gh sm" data-acao="limpar-filtros">Limpar filtros</button>' : '');
     anunciarContagem(carregando ? '' : n ? n.toLocaleString('pt-BR') + (n === 1 ? ' livro encontrado' : ' livros encontrados') : 'Nenhum livro encontrado');
     var nota = resultado.correcao ? '<p class="nota-busca">Mostrando resultados para <b>' + esc(resultado.correcao) + '</b></p>' :
@@ -490,7 +496,21 @@
     }
     el.innerHTML = nota + status + '<ul class="lst duas">' + r.slice(0, mostrados).map(function (x) { return linhaObra(x.o, x.eds, sv); }).join('') + '</ul>' +
       (n > mostrados ? '<div class="mais"><button type="button" class="btn sm" data-acao="mais" id="mais">Mostrar mais</button></div>' : '');
-    observarMais();
+    observarMais(); carregarSparks();
+  }
+  var sparkObserver, sparkFila = [], sparkAtivos = 0;
+  function carregarSparks() {
+    if (!window.IntersectionObserver) return;
+    if (!sparkObserver) sparkObserver = new IntersectionObserver(function(es) {
+      es.forEach(function(e){if(e.isIntersecting){sparkObserver.unobserve(e.target);sparkFila.push(e.target);}}); processarSpark();
+    }, {rootMargin:'120px'});
+    document.querySelectorAll('[data-spark]:not([data-observado])').forEach(function(el){el.dataset.observado='1';sparkObserver.observe(el);});
+  }
+  function processarSpark() {
+    while(sparkAtivos < 2 && sparkFila.length) {
+      var el=sparkFila.shift(); if(!el.isConnected)continue; sparkAtivos++;
+      (function(alvo){historico(alvo.dataset.spark).then(function(h){if(h && alvo.isConnected){alvo.innerHTML=spark(h.h,h.h[h.h.length-1][1]);alvo.dataset.tendencia=h.h[h.h.length-1][2]>h.h[0][2]?'alta':h.h[h.h.length-1][2]<h.h[0][2]?'baixa':'igual';}}).catch(function(){}).finally(function(){sparkAtivos--;processarSpark();});})(el);
+    }
   }
   // a contagem vai para uma região viva (só para leitor de tela), com espera, para não anunciar a cada tecla
   var tCont = null;
@@ -508,6 +528,7 @@
     if (!resultado || !$('#res')) return;
     var antes = mostrados, sv = salvos(); mostrados += 30;
     $('#res .lst').insertAdjacentHTML('beforeend', resultado.lista.slice(antes, mostrados).map(function (x) { return linhaObra(x.o, x.eds, sv); }).join(''));
+    carregarSparks();
     if (mostrados >= resultado.lista.length) {
       var m = $('#res .mais');
       if (m) { var tinha = m.contains(document.activeElement); m.remove(); if (tinha) focarEl($('#res .lst').children[antes].querySelector('a')); }
@@ -580,7 +601,7 @@
       if (o.idioma) det.push(esc(o.idioma));
       det.push('ASIN ' + asin);
       var eds = l.eds || [[asin, l.f || 'Livro', f.preco]];
-      app.innerHTML = '<button type="button" class="voltar" data-acao="voltar">' + ic('voltar', 's') + 'Voltar</button>' +
+      app.innerHTML = '<button type="button" class="voltar" data-acao="voltar">' + ic('voltar', 's') + 'Voltar aos resultados</button>' +
         (m.aviso ? '<p class="aviso">' + esc(m.aviso) + '</p>' : '') +
         '<div class="livro" role="region" aria-labelledby="l-tit" data-foco><aside class="l-lado">' + capa(o, 'g', true) +
         '<div class="acoes"><a class="btn pri" href="' + L.linkAmazon(asin) + '" target="_blank" rel="noopener noreferrer">Ver na Amazon ' + ic('ext', 's') + '</a>' +
@@ -599,6 +620,7 @@
         '<div class="l-resto"><section class="card pad sec"><div id="graf"></div>' + L.estatisticas(f, tr[0][0]) + '</section>' +
         L.secaoEventos(tr, ev, m.ultima_coleta || ult) + estante('Outras edições', l.outras) +
         estante('Mais de ' + (l.autor1 || o.autor), l.mesmo_autor) + '<section class="sec" id="parecidos"></section></div></div></div>';
+      organizarLivro(l,o,asin,f,recente,ult);
       botaoSalvar();
       arrumarEstantes();
       L.grafico($('#graf'), L.dadosGrafico(tr, ev));
@@ -607,10 +629,18 @@
       parecidos.then(function (p) { if (aindaEm(r)) estanteParecidos('Parecidos com este livro', p ? p.lista.map(function (c) { return { c: c }; }) : [], p && p.sub); });
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar este livro'); });
   }
+  function organizarLivro(l,o,asin,f,recente,ult) {
+    var cab=$('.l-cab'),acoes=$('.l-lado .acoes');cab.appendChild(acoes);acoes.querySelector('.ico').remove();
+    acoes.insertAdjacentHTML('beforeend','<button type="button" class="btn ico hint" data-watch="'+asin+'" aria-label="Acompanhar preço" data-tip="Acompanhar com preço-alvo">'+ic('sino')+'</button>');
+    $('.compra').insertAdjacentHTML('afterbegin','<div class="preco-rotulo">'+(recente?'Preço atual na Amazon':'Último preço na Amazon')+'<span class="hint" tabindex="0" data-tip="Última coleta: '+L.dl(ult)+'. Confira o valor na Amazon antes de comprar." aria-label="Data da coleta"><img src="info.svg" width="21" height="21" alt=""></span></div>');
+    var stats=$('.stats');stats.children[0].remove();stats.lastElementChild.remove();stats.insertAdjacentHTML('beforeend','<div><span>Preço atual</span><b>'+brl(f.preco)+'</b></div>');
+    var info=[['Autor',o.autor],['Editora',l.editora],['Data de publicação',l.publicado],['ISBN / ASIN',l.isbn||asin]], resto=$('.l-resto');
+    resto.children[0].insertAdjacentHTML('afterend','<section class="sec livro-info"><h2>'+ic('livro')+' Informações do livro</h2><div class="info-layout"><dl>'+info.map(function(r){return '<div><dt>'+esc(r[0])+'</dt><dd>'+esc(r[1]||'Não informado')+'</dd></div>';}).join('')+'</dl><div class="amazon-card"><a class="btn pri" href="'+L.linkAmazon(asin)+'" target="_blank" rel="noopener noreferrer">Ver na Amazon '+ic('ext','s')+'</a></div></div></section>');
+  }
   function botaoSalvar() {
     var b = $('[data-salvar]'); if (!b) return;
     var na = Lista.tem(b.dataset.salvar);
-    b.setAttribute('aria-pressed', String(na)); b.innerHTML = ic('salvar', 's') + (na ? 'Na sua lista' : 'Salvar');
+    b.setAttribute('aria-pressed', String(na)); b.setAttribute('aria-label',na?'Remover da minha lista':'Salvar na minha lista'); b.title=na?'Na sua lista':'Salvar na minha lista'; b.innerHTML=ic('coracao');
   }
   // estante de livros calculada em site.py (outras edições, mais do autor): [[asin, título, capa, formato, preço], ...]
   function estante(tit, livros) {
@@ -634,7 +664,7 @@
   }
 
   // ---------- minha lista ----------
-  var ordemLista = 'recentes';
+  var ordemLista = 'recentes', pendenteAlvo = null;
   // a lista usa só o histórico de cada livro (h/XX.json): não precisa esperar o índice da busca
   function carregarItens(asins) {
     return Promise.all([META].concat(asins.map(function (a) { return historico(a).then(function (h) { return { asin: a, h: h }; }); })));
@@ -712,6 +742,7 @@
           (noAlvo ? '<span class="pill dn">' + L.plural(noAlvo, 'chegou no seu preço', 'chegaram no seu preço') + '</span>' : '') + '</div>' : '') +
         '<ul class="lst" id="lst">' + v.map(function (i) { return linhaLista(i, base, true, alv); }).join('') + '</ul>';
       rolar(); focarTela();
+      if(pendenteAlvo){var alvo=$('[data-alvo="'+pendenteAlvo+'"]');pendenteAlvo=null;if(alvo)alvo.click();}
     }).catch(function () { if (aindaEm(r)) erro('Não consegui carregar sua lista'); });
   }
   function listaCompartilhada(texto) {
@@ -778,7 +809,10 @@
     if (a && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.button === 0) { e.preventDefault(); ir(a.getAttribute('href'), a.hasAttribute('data-sub')); return; }
     var b = e.target.closest('button'); if (!b) return;
     var acao = b.dataset.acao;
-    if (b.dataset.fam) { if (S.fam[b.dataset.fam]) delete S.fam[b.dataset.fam]; else S.fam[b.dataset.fam] = 1; aplicarBusca(); }
+    if(b.dataset.watch){if(!Lista.tem(b.dataset.watch))Lista.alternar(b.dataset.watch);contador();pendenteAlvo=b.dataset.watch;ir('./?lista');}
+    else if(b.dataset.view){document.body.dataset.view=b.dataset.view;document.querySelectorAll('[data-view]').forEach(function(v){v.setAttribute('aria-pressed',String(v===b));});}
+    else if(b.id==='tema'){var light=document.documentElement.dataset.theme!=='light';document.documentElement.dataset.theme=light?'light':'dark';try{localStorage.setItem('observador-tema',light?'light':'dark');}catch(e){}}
+    else if (b.dataset.fam) { if (S.fam[b.dataset.fam]) delete S.fam[b.dataset.fam]; else S.fam[b.dataset.fam] = 1; aplicarBusca(); }
     else if (b.dataset.idioma !== undefined) { S.i = S.i === b.dataset.idioma ? '' : b.dataset.idioma; aplicarBusca(); }
     else if (b.dataset.baixa !== undefined) { filtroBaixa = b.dataset.baixa; baixaTudo = false; destaques().then(function (x) { secaoBaixa(x); focarEl($('[data-baixa="' + filtroBaixa + '"]')); }); }
     else if (b.dataset.salvar) {
