@@ -253,7 +253,7 @@ Cinco tarefas reais em 375 e 1280 px, tema padrão. Para cada passo: a pessoa sa
 - Os subgêneros (`.sec-h .nota`) ficaram fora porque o site foi gerado sem `--subgeneros`.
 
 ## Como refazer
-Os scripts ficaram na scratchpad desta sessão e não foram para o repositório. Peça se quiser que eu os ponha em `scripts/auditoria/`. Para refazer, gere e sirva o site como descrito em "Como foi feito" e rode os scripts com `AUDIT_BASE=http://127.0.0.1:8765`:
+Os scripts estão em `scripts/auditoria/`; o docstring de `comum.py` traz os passos completos. Gere o site em `data/site`, sirva em `http://127.0.0.1:8765`, baixe o axe-core 4.10.2 para `data/auditoria/axe.min.js` e rode cada script de dentro da pasta. A saída vai para `data/auditoria/`, fora do git. As capturas desta execução não estão no repositório.
 
 | Script | O que mede |
 |---|---|
