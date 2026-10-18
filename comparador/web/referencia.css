@@ -18,7 +18,7 @@ body[data-tela=livro] .busca{display:none}body[data-tela=livro] .pg{max-width:10
 /* Tooltips and SVG paint must not create horizontal page scrolling. */
 html{overflow-x:clip}
 /* Toque: alvos de 44px também nos controles do cabeçalho e da linha (os seletores de cima são mais específicos que os de estilo.css). */
-@media(pointer:coarse){.header-tools .ib,.hdr-lista{width:44px;height:44px}.busca .limpa{height:44px}.view-switch .ib{height:44px}.row-acoes .ib{width:44px;height:44px}.alvo .lnk{min-height:44px;padding:0 6px}.l-cab .acoes .btn,.compra .hint{min-height:44px}.voltar{min-height:44px}.l-cab .acoes .salvar,.l-cab .acoes .ico{width:44px}.view-switch .ib{width:40px}.busca .limpa{width:40px}.filtros-extra summary{min-height:44px;display:flex;align-items:center}}
+@media(pointer:coarse){.header-tools .ib,.hdr-lista{width:44px;height:44px}.busca .limpa{height:44px}.view-switch .ib{height:44px}.row-acoes .ib{width:44px;height:44px}.alvo .lnk{min-height:44px;padding:0 6px}.l-cab .acoes .btn,.compra .hint{min-height:44px}.voltar{min-height:44px}.l-cab .acoes .salvar,.l-cab .acoes .ico{width:44px}.view-switch .ib{width:40px}.busca .limpa{width:40px}.filtros-extra summary{min-height:44px;min-width:44px;display:flex;align-items:center}}
 @media(pointer:coarse) and (max-width:359px){.hdr-in{column-gap:0}.marca{font-size:var(--fs-3)}.header-tools{gap:0}.header-tools .ib,.hdr-lista{width:40px}}
 /* Alto contraste: o estado ligado da alternância e a sparkline perdem a cor de fundo; ganham contorno e CanvasText. */
 @media(forced-colors:active){.view-switch [aria-pressed=true]{outline:2px solid CanvasText;outline-offset:-2px}.mini-historico .spark path{stroke:CanvasText}.hint::after{border:1px solid CanvasText}.marca-i{color:CanvasText}}

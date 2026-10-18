@@ -71,6 +71,10 @@
     IDX.catch(function () { IDX = null; });
     return IDX;
   }
+  // cede a vez ao navegador sem a pausa mínima de 4 ms que o setTimeout encadeado impõe (as fatias de 8 ms ficam seguidas)
+  var canal = window.MessageChannel ? new MessageChannel() : null, fila = [];
+  if (canal) canal.port1.onmessage = function () { var f = fila.shift(); if (f) f(); };
+  function ceder(f) { if (canal) { fila.push(f); canal.port2.postMessage(0); } else setTimeout(f, 0); }
   // lê as obras em fatias, com pausas entre elas, para a página não travar enquanto a pessoa digita
   function lerAosPoucos(x, linhas) {
     return new Promise(function (ok) {
@@ -78,7 +82,7 @@
       (function fatia() {
         var t0 = performance.now();
         while (i < linhas.length && performance.now() - t0 < 8) { var fim = Math.min(i + 200, linhas.length); lerObras(x, linhas, i, fim); i = fim; }
-        if (i < linhas.length) setTimeout(fatia, 0); else ok();
+        if (i < linhas.length) ceder(fatia); else ok();
       })();
     });
   }
