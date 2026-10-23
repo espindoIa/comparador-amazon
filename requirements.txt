@@ -1,3 +1,7 @@
-requests>=2.31
-beautifulsoup4>=4.12
-playwright>=1.40  # recomendado: usa o Chrome/Edge instalado para evitar bloqueios
+# Pisos nas versões que fecham os avisos de segurança conhecidos.
+# requests < 2.32.4 vaza credencial de .netrc (CVE-2024-47081); < 2.33.0 reusa arquivo temporário (CVE-2026-25645).
+# urllib3 < 2.8.0 tem falhas de proxy TLS, de linha de chunk e de deflate (setembro/2026).
+requests>=2.34.2
+urllib3>=2.8.0
+beautifulsoup4>=4.14.2
+playwright>=1.49.0  # usa o Chrome ou o Edge instalado; sem eles: python -m playwright install chromium

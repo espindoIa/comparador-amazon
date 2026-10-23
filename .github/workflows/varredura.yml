@@ -89,9 +89,9 @@ jobs:
       # que os 60 medidos sem bloqueio, porque o volume diário é até 8 vezes maior; subir isto multiplica a carga por três.
       TETO_POR_SEQUENCIA: "45"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip

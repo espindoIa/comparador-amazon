@@ -232,6 +232,26 @@ tudo se refaz dele, sem pedir nada de novo (`--pasta` muda o lugar). Cortesia co
 por vez, pausa de pelo menos 4 s, para na primeira página bloqueada sem tentar de novo e tem um teto de
 400 páginas (`--max-paginas`), que conta as que já estão em disco. O comando não abre banco.
 
+## Manter a base em dia
+
+A base não entra no git (`data/` fica de fora). O que está no ar são os SQLite da release `catalogo` (um por sequência: `vendidos`, `vendidos-b`, `vendidos-c`) e o site no Pages, gerado a partir deles.
+
+Não há chave de API nem segredo de loja. O Actions usa o `GITHUB_TOKEN` que o próprio GitHub fornece. O que liga e desliga a coleta são variáveis de repositório (Settings → Secrets and variables → Actions → Variables):
+
+- `COLETA_PAUSADA=true` para o anel, o vigia e os subgêneros;
+- `SUBGENEROS_ATIVO=true` para a coleta dos subgêneros da ficção (desligada até lá);
+- `SUBGENEROS_NO_SITE=true` para esses rótulos entrarem no site.
+
+Para ver se está fresco, sem baixar o banco: `dados/meta.json` do site (`lido_ate`) ou o resumo da última execução de `varredura.yml`. Para atualizar à mão, com Chrome ou Edge:
+
+```bash
+python -m comparador varrer --dry-run    # plano, sem pedir nada à Amazon e sem gravar
+python -m comparador varrer --minutos 20
+python -m comparador catalogo
+```
+
+Publicar na release e no Pages é o workflow, não um commit. Uma passada completa são cerca de 13 mil páginas; a Amazon bloqueia cliente apressado, e um bloqueio grava pausa de horas no banco daquela sequência.
+
 ## Limites
 
 - Só livros que aparecem nas listas de mais vendidos dos gêneros. Um livro que sai da lista para de receber

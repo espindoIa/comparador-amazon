@@ -686,6 +686,8 @@ class TestFolhaDeReferencia(unittest.TestCase):
         self.assertEqual(re.findall(r"font:[^;}]*[\d.]px", self.css), [], "font: com px fora da escala (--fs-N)")
         self.assertEqual([r for r in re.findall(r"border-radius:\d+px(?=[;}])", self.css) if r != "border-radius:999px"], [], "raio em px fora dos tokens")
         self.assertEqual(re.findall(r"z-index:-?\d+", self.css), [], "z-index solto")
+        # na grade o .row é coluna flex com align-items:flex-start; sem esticar o .bd, o autor (nowrap) vaza do cartão
+        self.assertIn("body[data-view=grade] .resultado-livro .row .bd{align-self:stretch;min-width:0}", self.css)
         fora, i, css = [], 0, self.css
         while i < len(css):                                              # tira os blocos @media(hover:hover){...}
             if css.startswith("@media(hover:hover){", i):
@@ -715,7 +717,7 @@ class TestFolhaDeReferencia(unittest.TestCase):
 
 @unittest.skipUnless(navegador(), "navegador não instalado")
 class TestSiteNoNavegador(unittest.TestCase):
-    def _servir(self, itens, aviso=None, avaliacoes=None, generos=None, subgeneros=None):
+    def _servir(self, itens, aviso=None, avaliacoes=None, generos=None, subgeneros=None, autores=None):
         d = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, d, True)
         banco(d / "a.db", itens, aviso)
@@ -728,6 +730,11 @@ class TestSiteNoNavegador(unittest.TestCase):
             c = sqlite3.connect(d / "a.db")
             c.executemany("UPDATE catalogo SET avaliacoes = ? WHERE asin = ?", [(n, a) for a, n in avaliacoes.items()])
             c.execute("UPDATE catalogo SET obra = 'R000000001' WHERE asin LIKE 'R%'")
+            c.commit()
+            c.close()
+        if autores:
+            c = sqlite3.connect(d / "a.db")
+            c.executemany("UPDATE catalogo SET autor = ? WHERE asin = ?", [(n, a) for a, n in autores.items()])
             c.commit()
             c.close()
         if subgeneros:
@@ -984,6 +991,33 @@ class TestSiteNoNavegador(unittest.TestCase):
             self.assertRegex(texto, r"preços lidos até 09/10 às 09:00")          # 12:00 UTC, no horário de Brasília
             self.assertIn("Preço de cada dia", texto)
             self.assertEqual(erros, [])
+            b.close()
+
+    def test_texto_do_cartao_da_grade_nao_vaza_do_cartao(self):
+        # na grade o .row é uma coluna flex; align-self:end do .bd (feito para o grid da lista) empurrava o texto para fora
+        from playwright.sync_api import sync_playwright
+        longo = "Harry Potter e a Pedra Filosofal: edição comemorativa dos vinte anos com ilustrações"
+        autor = "J. K. Rowling, John Tiffany, Jack Thorne e Mary GrandPré"
+        base = self._servir([(f"H00000000{i}", f"{longo} {i}", "Capa comum", [("2026-10-01", "2026-10-20", 3499, 6490)]) for i in range(4)],
+                            autores={f"H00000000{i}": autor for i in range(4)})
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=navegador(), args=["--no-sandbox"])
+            pg = b.new_page()
+            for largura in (320, 375, 600, 800, 1280):
+                with self.subTest(largura=largura):
+                    pg.set_viewport_size({"width": largura, "height": 800})
+                    pg.goto(f"{base}/?q=harry")
+                    pg.wait_for_selector("#res .row")
+                    pg.click('.view-switch [data-view="grade"]')
+                    self.assertEqual(pg.evaluate("document.body.dataset.view"), "grade")
+                    self.assertEqual(pg.locator(".resultado-livro .row").count(), 4)
+                    fora = pg.evaluate("""() => [...document.querySelectorAll('.resultado-livro .row')].flatMap(r => {
+                        const c = r.getBoundingClientRect();
+                        return [...r.querySelectorAll('.bd, .tt, .sub')].map(e => e.getBoundingClientRect())
+                            .filter(t => t.width > 0 && (t.left < c.left - 0.5 || t.right > c.right + 0.5))
+                            .map(t => [t.left, t.right, c.left, c.right]);
+                    })""")
+                    self.assertEqual(fora, [])
             b.close()
 
     def test_genero_vistos_recentemente_e_preco_alvo(self):
