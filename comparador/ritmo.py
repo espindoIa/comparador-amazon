@@ -2,13 +2,13 @@
 
 O ritmo que a Amazon enxerga é o programado aqui (espaçamento uniforme entre as requisições, com um
 pouco de variação), não uma rajada. Ele sobe aos poucos enquanto tudo dá certo, até um teto, e
-recua ao primeiro sinal de falha: bloqueio, erro, ou página que veio curta demais (ver
+recua ao primeiro sinal de falha: erro ou página que veio curta demais (ver
 `varredura.CARDS_MIN_PAGINA`).
 
 Dois tipos de recuo, porque falhas isoladas acontecem (1 página curta em ~2.200 medidas, que voltou
 inteira na leitura seguinte) e não devem corroer o ritmo do dia:
 - falha leve e isolada (página curta, erro de rede, layout): o ritmo cai pela metade e volta a subir;
-- bloqueio (captcha, HTTP 500/503) ou falha leve repetida (outra em menos de `JANELA_REPETIDA` páginas
+- falha leve repetida (outra em menos de `JANELA_REPETIDA` páginas
   boas): o ritmo cai para o mínimo e o teto passa a ser 70% do ritmo em que ela aconteceu.
 
 O ritmo é "programado": cada lote espera a requisição mais lenta, então o real fica abaixo (~10% a 60 programadas,
@@ -21,7 +21,7 @@ import math
 import random
 
 PPM_BASE = 21.0          # medido em out/2026 com pausa de 1–3 s: 0 bloqueios em ~11 mil páginas
-PPM_RECUO = 8.0          # depois de um bloqueio: parecido com a pausa 3x maior que existia antes
+PPM_RECUO = 8.0          # piso do ritmo depois de falhas leves
 PPM_TETO_PADRAO = 60.0   # ~46 páginas/min reais; o limpo medido foi 120 programadas (~80 reais) por ~9 min
 # Cada lote começa uma requisição por pista, espaçadas no tempo, e só o lote seguinte começa quando a mais
 # lenta termina. Se a requisição leva mais que o intervalo entre elas (~0,9 s contra 0,67 s a 90 por minuto),
@@ -86,12 +86,15 @@ class Ritmo:
             self.boas = 0
 
     def falha(self, grave: bool = False) -> None:
-        """`grave`: bloqueio (captcha, 500/503). Uma falha leve só é tratada como grave se for repetida."""
+        """`grave`: bloqueio (captcha, 500/503). Bloqueio não muda o ritmo (a proteção contra bloqueio foi tirada a
+        pedido de quem mantém o repositório, em 15/10/2026); só a falha leve recua."""
+        if grave:
+            return
         repetida = self.falhas > 0 and self.boas_desde_falha < JANELA_REPETIDA
         self.falhas += 1
         self.boas_desde_falha = 0
         self.boas = 0
-        if grave or repetida:
+        if repetida:
             self.teto = max(PPM_RECUO, min(self.teto, self.ppm * FATOR_TETO_APOS_FALHA))
             self.ppm = min(self.ppm, PPM_RECUO)
         else:
@@ -100,17 +103,24 @@ class Ritmo:
 
 # ---------- teto que se ajusta de um dia para o outro ----------
 # O teto não é fixo: fica guardado no banco (tabela config, que viaja na release) e sobe 25% por dia em que a
-# coleta rodou limpa no teto, até PPM_TETO_AUTO_MAX. Depois de um bloqueio (ou de falha repetida) cai para o
-# que o freio da execução deixou e fica parado por DIAS_DE_ESPERA dias. Assim cada dia de coleta (~4,4 mil
+# coleta rodou limpa no teto, até PPM_TETO_AUTO_MAX. Depois de falha leve repetida cai para o que o freio da execução
+# deixou e fica parado por DIAS_DE_ESPERA dias (bloqueio não baixa o teto: ver Ritmo.falha). Assim cada dia de coleta (~4,4 mil
 # páginas por sequência) é a evidência para o próximo passo, e quem roda pode baixar o teto com `--ritmo-max`.
 PASSO_TETO = 1.25
 DIAS_DE_ESPERA = 3
 PAGINAS_MIN_EVIDENCIA = 2000     # páginas lidas na execução para ela valer como evidência de subida
 FALHAS_LEVES_POR_MIL = 0.5       # erros + páginas curtas por mil páginas aceitos numa execução "limpa" (medido: 0,2)
 AO_RETOMAR = 0.8                 # a execução seguinte começa a 80% do último ritmo limpo (e sobe de novo)
-# A evidência de dia limpo é a soma das execuções do dia (Brasília), não uma execução só: a 8 páginas/min (o recuo depois
-# de um bloqueio) uma execução de 165 minutos lê ~1.300 páginas, e com a evidência por execução o teto nunca voltava a
+# A evidência de dia limpo é a soma das execuções do dia (Brasília), não uma execução só: a 8 páginas/min (o recuo que um
+# bloqueio causava até 15/10/2026) uma execução de 165 minutos lê ~1.300 páginas, e com a evidência por execução o teto nunca voltava a
 # subir nem o ciclo a descer (medido nas três sequências de 13 a 15/10: 6 execuções limpas cada, nenhuma contada).
+
+
+# O que a proteção contra bloqueio deixou no banco: o teto que caiu, a espera, o ciclo que subiu e a pausa. Apagado uma
+# vez, quando a proteção saiu (varredura.esquecer_bloqueios): o teto e o ciclo recomeçam dos valores iniciais.
+CHAVES_DE_BLOQUEIO = ("ritmo_teto", "ritmo_espera_ate", "ritmo_ultimo_limpo", "ritmo_subiu_em", "ritmo_pausa_ate",
+                      "bloqueios_seguidos", "ciclo_horas", "ciclo_desde", "ciclo_espera_ate")
+MARCA_SEM_BLOQUEIO = "protecao_bloqueio_removida"
 
 
 def ritmo_guardado(config: dict, padrao_teto: float, base: float = PPM_BASE,
@@ -131,9 +141,9 @@ def aprender(config: dict, hoje: str, ritmo: "Ritmo", teto_inicial: float, pagin
              leves: int, maximo: float = PPM_TETO_AUTO_MAX, evidencia: tuple[int, int] | None = None) -> dict:
     """Novos valores de config depois de uma execução. `hoje` = AAAA-MM-DD (Brasília). Só devolve o que mudou.
     O teto sobe sozinho até `maximo`, no máximo. `evidencia`: (páginas, falhas leves) do dia inteiro, que decide se
-    houve coleta limpa (sem ela, só a execução); o bloqueio que baixa o teto é sempre o da execução."""
+    houve coleta limpa (sem ela, só a execução). `bloqueios` não muda nada (ver Ritmo.falha)."""
     novo: dict = {}
-    if ritmo.teto < teto_inicial - 1e-9 or bloqueios:
+    if ritmo.teto < teto_inicial - 1e-9:       # falha leve repetida (bloqueio não conta: ver Ritmo.falha)
         novo["ritmo_teto"] = f"{max(PPM_RECUO, min(ritmo.teto, teto_inicial)):.1f}"
         novo["ritmo_espera_ate"] = _somar_dias(hoje, DIAS_DE_ESPERA)
         novo["ritmo_ultimo_limpo"] = ""
@@ -159,17 +169,15 @@ def _somar_dias(dia: str, n: int) -> str:
 # Quantas vezes por dia o catálogo inteiro é lido. O objetivo é CICLOS[0] (uma passada a cada 3 h, 8 por dia, ~105 mil
 # páginas por dia no total), mas nunca se mediu esse volume: o mais alto sem bloqueio foi 12,6 mil páginas por dia. Por
 # isso o ciclo é um degrau que se guarda no banco, como o teto de ritmo: começa em CICLO_INICIAL e desce UM degrau por dia
-# limpo (12 → 6 → 3 h), sobe um degrau a cada bloqueio ou sinal de aperto e, depois de bloqueios seguidos, volta ao diário.
+# limpo (12 → 6 → 3 h) e sobe um degrau a cada sinal de aperto (páginas curtas) ou janela estourada.
 #
-# Depois de um bloqueio a pausa é de HORAS, nunca de minutos: cada execução cai num servidor novo do GitHub, com outro IP,
-# então tentar de novo meia hora depois seria, na prática, trocar de IP por causa do bloqueio. A pausa dura pelo menos
-# PAUSA_BASE_H (o ciclo mínimo) e dobra a cada bloqueio seguido; junto com ela o ciclo sobe, que é o que reduz o volume.
+# Bloqueio não pausa a coleta nem sobe o ciclo: a proteção contra bloqueio (pausa de horas, ciclo diário, teto que cai)
+# foi tirada a pedido de quem mantém o repositório em 15/10/2026. A chave `ritmo_pausa_ate` continua sendo lida, mas nada
+# mais a grava.
 CICLOS = (3, 6, 12, 24)
 CICLO_INICIAL = 12
-PAUSA_BASE_H = 3
-PAUSA_MAX_H = 24
-BLOQUEIOS_PARA_DIARIO = 3        # bloqueios seguidos que levam direto ao ciclo de 24 h
-LEVES_POR_MIL_RUIM = 2.0         # acima disto (páginas curtas e erros por mil) o ciclo sobe: a limitação costuma aparecer assim antes do bloqueio
+PAUSA_BASE_H = 3                 # espera depois de uma publicação que falhou (scripts/proximo_ciclo.py)
+LEVES_POR_MIL_RUIM = 2.0         # acima disto (páginas curtas e erros por mil) o ciclo sobe
 # O ciclo só desce se a passada couber no degrau de baixo: sem isso ele desceria mais rápido que o teto sobe (um degrau
 # por dia contra 25%), a passada estouraria a janela e o ciclo voltaria a subir, com mais 3 dias de espera.
 REAL_SOBRE_PROGRAMADO = 0.9      # páginas reais por minuto / programadas (ver o começo deste arquivo)
@@ -195,7 +203,7 @@ def ciclo_guardado(config: dict) -> int:
 
 
 def pausa_ate(config: dict):
-    """Instante (aware) até o qual não se lê depois de um bloqueio, ou None."""
+    """Instante (aware) até o qual não se lê (pausa gravada antes de 15/10/2026, quando bloqueio ainda pausava), ou None."""
     from datetime import datetime
     try:
         return datetime.fromisoformat(config["ritmo_pausa_ate"])
@@ -204,9 +212,9 @@ def pausa_ate(config: dict):
 
 
 def saude(paginas: int, bloqueios: int, leves: int) -> str:
-    """"ruim" (bloqueio ou aperto), "limpa" (evidência suficiente e quase nenhuma falha), "alerta" (evidência suficiente e
+    """"ruim" (aperto; `bloqueios` não conta), "limpa" (evidência suficiente e quase nenhuma falha), "alerta" (evidência suficiente e
     mais falhas que o limpo, menos que o ruim) ou "neutra" (pouca evidência)."""
-    if bloqueios or (paginas >= PAGINAS_MIN_EVIDENCIA // 2 and leves * 1000 > LEVES_POR_MIL_RUIM * paginas):
+    if paginas >= PAGINAS_MIN_EVIDENCIA // 2 and leves * 1000 > LEVES_POR_MIL_RUIM * paginas:   # bloqueio não conta
         return "ruim"
     if paginas >= PAGINAS_MIN_EVIDENCIA:
         return "limpa" if leves * 1000 <= FALHAS_LEVES_POR_MIL * paginas else "alerta"
@@ -216,42 +224,30 @@ def saude(paginas: int, bloqueios: int, leves: int) -> str:
 def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int, interrompida: bool,
                    completou: bool, estourou: bool = False, evidencia: tuple[int, int] | None = None,
                    passada_h: float | None = None) -> dict:
-    """Novos valores de config para o ciclo e a pausa depois de uma execução. `agora`: datetime com fuso. Só devolve o
-    que mudou.
+    """Novos valores de config para o ciclo depois de uma execução. `agora`: datetime com fuso. Só devolve o que mudou.
+    `bloqueios` e `interrompida` não mudam nada (ver o comentário de CICLOS).
 
-    - bloqueio: o ciclo sobe um degrau (ao diário depois de BLOQUEIOS_PARA_DIARIO seguidos), o degrau fica parado por
-      DIAS_DE_ESPERA dias e a pausa é de PAUSA_BASE_H horas, dobrando a cada bloqueio seguido, até PAUSA_MAX_H;
-    - falhas seguidas sem bloqueio (execução interrompida): só a pausa de PAUSA_BASE_H horas;
     - aperto (muitas páginas curtas) ou janela que acabou com fatias sem ler (`estourou`: a sequência não dá conta de
       uma passada no tempo do ciclo): o ciclo sobe um degrau e fica parado, sem pausa;
     - alerta (mais falhas leves que o limpo, menos que o aperto): o ciclo fica onde está e o dia no degrau recomeça;
     - passada completa e dia limpo, depois de um dia inteiro no degrau e do fim da espera: o ciclo desce um degrau, se
       a passada (`passada_h` horas no teto atual) ocupar até OCUPACAO_MAX dele.
     `evidencia`: (páginas, falhas leves) do dia inteiro, que decide se o dia foi limpo (sem ela, só a execução). As
-    punições (bloqueio, aperto, alerta, interrupção, janela estourada) olham sempre só a execução.
+    punições (aperto, alerta, janela estourada) olham sempre só a execução.
     """
-    from datetime import timedelta
     from .db import BRASILIA
     hoje = agora.astimezone(BRASILIA).date().isoformat()
     ciclo = ciclo_guardado(config)
     nivel = CICLOS.index(ciclo)
-    seguidos = _numero(config, "bloqueios_seguidos", 0)
     novo: dict = {}
     if "ciclo_horas" not in config:
         novo["ciclo_horas"] = str(ciclo)
     if "ciclo_desde" not in config:
         novo["ciclo_desde"] = hoje
-    if bloqueios:
-        seguidos += 1
-        novo["bloqueios_seguidos"] = str(seguidos)
-        horas = min(PAUSA_MAX_H, PAUSA_BASE_H * 2 ** (seguidos - 1))
-        novo["ritmo_pausa_ate"] = (agora + timedelta(hours=horas)).isoformat(timespec="seconds")
-    elif interrompida:
-        novo["ritmo_pausa_ate"] = (agora + timedelta(hours=PAUSA_BASE_H)).isoformat(timespec="seconds")
     situacao = saude(paginas, bloqueios, leves)
     dia_limpo = saude(evidencia[0], 0, evidencia[1]) == "limpa" if evidencia else situacao == "limpa"
     if situacao == "ruim" or estourou:
-        degrau = len(CICLOS) - 1 if seguidos >= BLOQUEIOS_PARA_DIARIO else min(nivel + 1, len(CICLOS) - 1)
+        degrau = min(nivel + 1, len(CICLOS) - 1)
         if degrau != nivel:
             novo["ciclo_horas"] = str(CICLOS[degrau])
             novo["ciclo_desde"] = hoje
@@ -259,8 +255,6 @@ def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int
     elif situacao == "alerta":
         novo["ciclo_desde"] = hoje
     elif completou and dia_limpo:
-        if seguidos:
-            novo["bloqueios_seguidos"] = "0"
         desde = novo.get("ciclo_desde", config.get("ciclo_desde", hoje))
         cabe = passada_h is None or nivel == 0 or passada_h <= OCUPACAO_MAX * CICLOS[nivel - 1]
         if nivel > 0 and desde < hoje and config.get("ciclo_espera_ate", "") <= hoje and cabe:

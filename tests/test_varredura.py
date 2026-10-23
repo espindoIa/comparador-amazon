@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from comparador import __main__ as varredura_cli
 from comparador import db, varredura
 from comparador.busca import ItemBusca, LayoutDesconhecido, parse_busca, url_busca
-from comparador.ritmo import PPM_RECUO, Ritmo
+from comparador.ritmo import Ritmo
 
 # Os testes de mecanismo usam 3 faixas largas; as faixas de produção têm o seu próprio teste.
 FAIXAS_PRODUCAO = list(varredura.FAIXAS_VENDIDOS)
@@ -740,7 +740,7 @@ class TestMaisVendidos(unittest.TestCase):
         r2.ppm = 75
         self.assertEqual(varredura.aprender_ritmo(self.conn, r2, 75.0, e), {"ritmo_ultimo_limpo": "75.0"})   # hoje já subiu
 
-    def test_execucoes_curtas_do_mesmo_dia_somam_evidencia_e_bloqueio_tira_a_do_dia(self):
+    def test_execucoes_curtas_do_mesmo_dia_somam_evidencia(self):
         varredura.criar_schema(self.conn)
         ins = ("INSERT INTO execucoes (iniciada_em, finalizada_em, paginas, bloqueios, erros, curtas) "
                "VALUES (?, ?, 1300, ?, 0, ?)")
@@ -755,8 +755,8 @@ class TestMaisVendidos(unittest.TestCase):
         r = Ritmo(8, 8)
         r.ppm = 8
         self.assertEqual(varredura.aprender_ritmo(self.conn, r, 8.0, e)["ritmo_teto"], "10.0")
-        self.conn.execute(ins, (agora, agora, 1, 0))
-        self.assertEqual(varredura.evidencia_do_dia(self.conn, e), (0, 0))
+        self.conn.execute(ins, (agora, agora, 1, 0))                         # bloqueio não tira a evidência do dia
+        self.assertEqual(varredura.evidencia_do_dia(self.conn, e), (5200, 1))
 
     def test_limite_do_teto_vale_na_gravacao_do_banco(self):
         varredura.criar_schema(self.conn)
@@ -991,7 +991,7 @@ class TestRitmoNaVarredura(unittest.TestCase):
         self.assertEqual((e["curtas"], e["bloqueios"], e["erros"]), (1, 0, 0))
         self.assertEqual(len([u for u in amazon.chamadas if "p_36%3A0-3999" in u and u.endswith("page=3")]), 2)
         self.assertEqual((ritmo.falhas, ritmo.ppm, ritmo.teto), (1, 20.0, 40))   # leve e isolada: metade, e o teto fica
-        self.assertTrue(any(p >= varredura.PAUSA_APOS_BLOQUEIO for p in self.pausas))      # pausa longa antes de reler
+        self.assertTrue(any(p >= varredura.PAUSA_APOS_FALHA for p in self.pausas))         # pausa longa antes de reler
         self.assertEqual(e["observacao"], "dia completo")
 
     def test_pagina_curta_que_se_repete_e_aceita_e_avisada(self):
@@ -1027,16 +1027,15 @@ class TestRitmoNaVarredura(unittest.TestCase):
         self.assertEqual((e["bloqueios"], e["paginas"], len(amazon.chamadas)), (1, 2, 3))
         self.assertIn("parada na primeira falha, programada a 50 páginas/min", e["observacao"])
 
-    def test_falha_em_lote_conta_uma_vez_e_derruba_para_uma_pista(self):
+    def test_bloqueio_em_lote_nao_muda_o_ritmo_e_tres_lotes_seguidos_encerram_a_execucao(self):
         amazon = AmazonRealista({n: self.livros(160, prefixo=chr(64 + int(n))) for n in "123"},
-                                falhas=[CACHORROS] * 10, lote=True)
+                                falhas=[CACHORROS] * 30, lote=True)
         ritmo = Ritmo(100, teto=100)
         e = self.varrer(amazon, nos="123", ritmo=ritmo)
         self.assertEqual([len(l) for l in amazon.lotes[:1]], [Ritmo(100, teto=100).pistas])      # 7 de 9 fatias
-        self.assertEqual(e["bloqueios"], 9)                          # lote de 7, depois 1 e 1: 3 lotes com falha
         self.assertIn("interrompida após 3 falhas seguidas", e["observacao"])
-        self.assertEqual((ritmo.falhas, ritmo.ppm, ritmo.pistas), (3, PPM_RECUO, 1))
-        self.assertLess(ritmo.teto, 100)                             # bloqueio é grave: o teto desce
+        self.assertEqual((ritmo.ppm, ritmo.teto), (100, 100))        # sem proteção contra bloqueio: nem ritmo nem teto caem
+        self.assertFalse(any(p >= varredura.PAUSA_APOS_FALHA for p in self.pausas))        # nem pausa extra
 
     def test_queda_de_livros_entre_passadas_e_avisada(self):
         amazon = AmazonRealista({"1": self.livros(300)})

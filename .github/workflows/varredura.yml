@@ -13,10 +13,9 @@
 #
 # Um ciclo é o tempo entre duas passadas completas do catálogo (comparador/ritmo.py: 3, 6, 12 ou 24 h). O objetivo é 3 h
 # (8 passadas por dia, ~105 mil páginas por dia no total), mas o volume mais alto medido sem bloqueio foi 12,6 mil páginas
-# por dia. Por isso o ciclo é um degrau guardado no banco: começa em 12 h, desce um degrau por dia limpo, sobe quando há
-# bloqueio ou aperto (muitas páginas curtas) e vai direto ao diário depois de bloqueios seguidos. Depois de um bloqueio a
-# pausa é de horas (3 h, dobrando): cada execução cai num servidor novo, com outro IP, então tentar de novo logo
-# seria trocar de IP por causa do bloqueio. Nada aqui reage a bloqueio trocando de servidor ou de identidade.
+# por dia. Por isso o ciclo é um degrau guardado no banco: começa em 12 h, desce um degrau por dia limpo e sobe quando há
+# aperto (muitas páginas curtas). Bloqueio não pausa nem alarga o ciclo (desde 15/10/2026), mas a execução bloqueada
+# não é refeita logo: a próxima leitura é a da janela seguinte. Nada aqui reage a bloqueio trocando de servidor ou de identidade.
 # O ritmo de cada sequência é limitado a TETO_POR_SEQUENCIA páginas por minuto programadas (menor que o das versões de
 # uma passada por dia, porque o volume diário é até 8 vezes maior).
 #
@@ -106,7 +105,7 @@ jobs:
           python scripts/catalogo_release.py baixar "$ALVO" "$DB"
           if [ -f "$DB" ]; then cp "$DB" "$RUNNER_TEMP/antes.db"; fi
 
-      # O ciclo e a pausa vêm do banco. Em pausa (depois de um bloqueio) a execução termina sem ler nada.
+      # O ciclo vem do banco. Uma pausa gravada antes de 15/10/2026 ainda faria a execução terminar sem ler nada.
       - name: Varre
         env:
           MINUTOS: ${{ inputs.minutos || '165' }}
@@ -152,7 +151,7 @@ jobs:
         run: gh workflow run site.yml --repo "$GITHUB_REPOSITORY" --ref "$REF"
 
       # scripts/proximo_ciclo.py decide o instante: agora, se a janela do ciclo não fechou e esta execução terminou limpa;
-      # senão, a próxima janela (ou o fim da pausa depois de bloqueio). Se a publicação falhou, o que foi lido se perdeu:
+      # senão (inclusive depois de bloqueio), a próxima janela. Se a publicação falhou, o que foi lido se perdeu:
       # ler de novo logo só repetiria o pedido à Amazon, então a próxima leitura espera algumas horas. Se este passo ou a
       # espera falharem, o vigia reinicia a sequência em até ~1 h.
       - name: Agenda o próximo ciclo

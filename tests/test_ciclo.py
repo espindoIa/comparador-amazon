@@ -3,7 +3,7 @@
 A simulação no fim roda vários dias de execuções com relógio falso (o tempo só anda quando a coleta dorme), o mesmo
 `varredura.executar` que a linha de comando usa e o mesmo `scripts/proximo_ciclo.py` que o workflow usa para marcar a próxima
 leitura, e confere as propriedades que importam: o volume sobe em rampa, nenhuma fatia fica mais de 2 ciclos sem leitura,
-nunca há duas leituras coladas, e depois de um bloqueio a coleta espera horas e alarga o ciclo.
+nunca há duas leituras coladas, e um bloqueio não pausa a coleta nem alarga o ciclo (a proteção saiu em 15/10/2026).
 """
 
 import importlib.util
@@ -184,25 +184,37 @@ class TestExecutar(Base):
         self.executar(ciclo_horas=3)
         self.assertNotIn("ciclo_horas", self.config())
 
-    def test_bloqueio_pausa_por_horas_alarga_o_ciclo_e_a_execucao_seguinte_nem_comeca(self):
+    def test_bloqueio_nao_pausa_nem_alarga_o_ciclo(self):
+        varredura.esquecer_bloqueios(self.conn)            # o banco já passou pela limpeza (senão o ciclo voltaria a 12 h)
         self.conn.execute("INSERT INTO config (chave, valor) VALUES ('ciclo_horas', '3'), ('ciclo_desde', '2026-10-10')")
         self.conn.commit()
         self.amazon.falhas = [CACHORROS] * 40
         r = self.executar()
-        e = self.conn.execute("SELECT bloqueios, paginas FROM execucoes WHERE id = ?", (r.exec_id,)).fetchone()
+        e = self.conn.execute("SELECT bloqueios FROM execucoes WHERE id = ?", (r.exec_id,)).fetchone()
         self.assertGreaterEqual(e["bloqueios"], 1)
-        self.assertEqual(self.config()["ciclo_horas"], "6")
-        pausa = ritmo.pausa_ate(self.config())
-        self.assertGreaterEqual(pausa - self.mundo.t, timedelta(hours=2, minutes=50))     # horas, não minutos
+        self.assertEqual(self.config()["ciclo_horas"], "3")
+        self.assertIsNone(ritmo.pausa_ate(self.config()))
         chamadas = len(self.amazon.chamadas)
-        self.mundo.t += timedelta(hours=2)
-        r2 = self.executar()
-        self.assertEqual((r2.exec_id, r2.pausa_ate), (None, pausa))
-        self.assertEqual(len(self.amazon.chamadas), chamadas)                              # não pediu nada à Amazon
-        self.mundo.t = pausa + timedelta(minutes=1)
-        self.assertIsNotNone(self.executar().exec_id)                                      # passada a pausa, volta a ler
+        self.mundo.t += timedelta(minutes=10)
+        self.assertIsNotNone(self.executar().exec_id)                                      # lê de novo logo
+        self.assertGreater(len(self.amazon.chamadas), chamadas)
+
+    def test_estado_da_protecao_contra_bloqueio_e_apagado_uma_vez(self):
+        antigo = {"ritmo_teto": "8.0", "ritmo_espera_ate": "2026-10-16", "ritmo_ultimo_limpo": "", "ciclo_horas": "24",
+                  "ciclo_desde": "2026-10-13", "ciclo_espera_ate": "2026-10-16", "bloqueios_seguidos": "1",
+                  "ritmo_pausa_ate": (self.mundo.t + timedelta(hours=3)).isoformat()}
+        self.conn.executemany("INSERT INTO config (chave, valor) VALUES (?, ?)", antigo.items())
+        self.conn.commit()
+        r = self.executar()
+        self.assertIsNotNone(r.exec_id)                                                    # a pausa antiga não vale mais
+        self.assertEqual((r.ciclo_horas, r.teto), (12, 45.0))                              # valores iniciais
+        cfg = self.config()
+        self.assertIn(ritmo.MARCA_SEM_BLOQUEIO, cfg)
+        self.assertFalse({"ritmo_espera_ate", "bloqueios_seguidos", "ritmo_pausa_ate", "ciclo_espera_ate"} & set(cfg))
+        self.assertFalse(varredura.esquecer_bloqueios(self.conn))                          # só uma vez
 
     def test_ignorar_a_pausa_so_por_pedido_explicito(self):
+        varredura.esquecer_bloqueios(self.conn)
         self.conn.execute("INSERT INTO config (chave, valor) VALUES ('ritmo_pausa_ate', ?)",
                           ((self.mundo.t + timedelta(hours=3)).isoformat(),))
         self.conn.commit()
@@ -300,45 +312,25 @@ class TestAnel(Base):
         self.assertGreaterEqual(sum(x["res"].completou for x in anel.execucoes[-8:]), 3)
         self.assertLessEqual(int(self.config()["ciclo_horas"]), 12)
 
-    def test_bloqueios_alargam_o_ciclo_com_pausas_que_dobram_e_a_rampa_volta_depois(self):
+    def test_bloqueios_nao_pausam_o_anel_nem_alargam_o_ciclo(self):
         anel = Anel(self)
         anel.ate(brasilia(17, 0))
         self.assertEqual(self.config()["ciclo_horas"], "3")
-        # a Amazon passa a bloquear
+        # a Amazon passa a bloquear: cada execução para nos 3 lotes falhos e a seguinte espera só a próxima janela do
+        # ciclo (sem pausa de horas que dobra, e sem recomeçar logo noutro servidor)
         self.amazon.falhas = [CACHORROS] * 400
         inicio_bloqueio = len(anel.execucoes)
-        anel.ate(brasilia(18, 12))
+        anel.ate(brasilia(18, 0))
         bloqueadas = [x for x in anel.execucoes[inicio_bloqueio:] if x["bloqueios"]]
         self.assertGreaterEqual(len(bloqueadas), 3)
-        pausas = [x["proxima"] - x["fim"] for x in bloqueadas]
-        self.assertTrue(all(p >= timedelta(hours=2, minutes=50) for p in pausas), pausas)          # sempre horas
-        self.assertGreater(pausas[2], pausas[0])                                                    # e crescendo
-        self.assertEqual(self.config()["ciclo_horas"], "24")                                         # bloqueios seguidos: diário
-        # durante a pausa não houve leitura: o início de cada execução é depois do fim da pausa anterior
-        for a, b in zip(anel.execucoes[inicio_bloqueio:], anel.execucoes[inicio_bloqueio + 1:]):
-            self.assertGreaterEqual(b["inicio"], a["proxima"])
-        # a Amazon volta ao normal: a rampa recomeça de 24 h e desce um degrau por dia, depois dos 3 dias de espera
-        self.amazon.falhas = []
-        ciclos = []
-        for d in (21, 24, 25, 26, 27):
-            anel.ate(brasilia(d, 0))
-            ciclos.append(self.config()["ciclo_horas"])
-        self.assertEqual(ciclos[0], "24")                                                           # ainda na espera
+        esperas = [x["proxima"] - x["fim"] for x in bloqueadas]
+        self.assertTrue(all(timedelta(minutes=5) <= p <= timedelta(hours=3, minutes=30) for p in esperas), esperas)
         self.assertEqual(self.config()["ciclo_horas"], "3")
-        self.assertEqual(ciclos, sorted(ciclos, key=int, reverse=True))                             # só desceu
-
-    def test_pausa_nao_e_pulada_nem_pelo_vigia_reiniciando_a_sequencia(self):
-        anel = Anel(self)
-        self.amazon.falhas = [CACHORROS] * 400
-        x = anel.passo()
-        self.assertTrue(x["bloqueios"])
-        pausa = ritmo.pausa_ate(self.config())
-        chamadas = len(self.amazon.chamadas)
-        for horas in (0.5, 1, 2, 2.9):                    # o vigia reinicia a sequência várias vezes durante a pausa
-            self.mundo.t = x["fim"] + timedelta(hours=horas)
-            self.assertIsNone(self.executar().exec_id)
-        self.assertEqual(len(self.amazon.chamadas), chamadas)
-        self.assertGreater(pausa, self.mundo.t)
+        self.assertIsNone(ritmo.pausa_ate(self.config()))
+        # a Amazon volta ao normal: segue em 3 h
+        self.amazon.falhas = []
+        anel.ate(brasilia(19, 12))
+        self.assertEqual(self.config()["ciclo_horas"], "3")
 
 
 if __name__ == "__main__":

@@ -35,16 +35,14 @@ class TestRitmo(unittest.TestCase):
         # acima de PPM_MAXIMO (120) o ritmo é cortado, então 3 é o máximo na prática
         self.assertEqual([Ritmo(p).pistas for p in (8, 15, 21, 22, 30, 31, 60, 61, 90, 91, 120, 400)], [1, 1, 1, 2, 2, 3, 4, 5, 6, 7, 8, 8])
 
-    def test_bloqueio_recua_para_o_minimo_e_baixa_o_teto(self):
+    def test_bloqueio_nao_muda_o_ritmo(self):
+        # a proteção contra bloqueio saiu (15/10/2026): nem o ritmo nem o teto caem
         x = Ritmo(60, teto=100)
-        x.falha(grave=True)
-        self.assertEqual((x.ppm, x.teto, x.pistas, x.falhas), (r.PPM_RECUO, 42.0, 1, 1))
-        for _ in range(300):                            # a subida recomeça devagar, de baixo, e para no teto novo
-            x.pagina_boa()
-        self.assertLess(x.ppm, 42.0 + 1e-9)
-        self.assertGreater(x.ppm, r.PPM_RECUO)
-        x.falha(grave=True)                             # novo bloqueio: teto cai de novo (70% do ritmo em que falhou)
-        self.assertLess(x.teto, 42.0)
+        for _ in range(5):
+            x.falha(grave=True)
+        self.assertEqual((x.ppm, x.teto, x.falhas), (60, 100, 0))
+        x.falha()                                       # a falha leve continua recuando, e não conta como repetida
+        self.assertEqual((x.ppm, x.teto), (30.0, 100))
 
     def test_falha_leve_isolada_so_corta_o_ritmo_pela_metade(self):
         x = Ritmo(60, teto=60, a_cada=100)
@@ -80,7 +78,7 @@ class TestRitmo(unittest.TestCase):
     def test_falha_nunca_leva_o_teto_abaixo_do_recuo(self):
         x = Ritmo(10)
         for _ in range(5):
-            x.falha(grave=True)
+            x.falha()
         self.assertEqual((x.ppm, x.teto), (r.PPM_RECUO, r.PPM_RECUO))
         y = Ritmo(10)
         y.falha()
@@ -161,15 +159,21 @@ class TestTetoQueSeAjusta(unittest.TestCase):
         n = r.aprender({}, "2026-10-16", x, 8.0, 1300, 0, 0, evidencia=(3900, 1))           # 3 execuções no dia
         self.assertEqual((n["ritmo_teto"], n["ritmo_ultimo_limpo"]), ("10.0", "8.0"))
         self.assertNotIn("ritmo_teto", r.aprender({}, "2026-10-16", x, 8.0, 1300, 0, 0, evidencia=(3900, 5)))   # falhas demais
-        # o bloqueio da execução baixa o teto, com qualquer evidência do dia
+        # bloqueio não baixa o teto nem tira a evidência do dia
         x.falha(grave=True)
-        self.assertIn("ritmo_espera_ate", r.aprender({}, "2026-10-16", x, 8.0, 1300, 1, 0, evidencia=(9000, 0)))
+        n = r.aprender({}, "2026-10-16", x, 8.0, 1300, 1, 0, evidencia=(9000, 0))
+        self.assertEqual((n["ritmo_teto"], "ritmo_espera_ate" in n), ("10.0", False))
 
-    def test_bloqueio_baixa_o_teto_e_segura_a_subida(self):
+    def test_bloqueio_nao_baixa_o_teto_e_falha_leve_repetida_baixa_e_segura_a_subida(self):
         x = Ritmo(60, 75)
-        x.falha(grave=True)                                                                 # o freio da execução: teto 70% de 60
+        x.falha(grave=True)
         n = r.aprender({}, "2026-10-13", x, 75.0, 3000, 1, 0)
-        self.assertEqual((n["ritmo_teto"], n["ritmo_espera_ate"], n["ritmo_ultimo_limpo"]), ("42.0", "2026-10-16", ""))
+        self.assertNotIn("ritmo_espera_ate", n)
+        self.assertEqual(n["ritmo_ultimo_limpo"], "60.0")
+        x.falha()                                                                           # 60 -> 30
+        x.falha()                                                                           # repetida: teto 70% de 30
+        n = r.aprender({}, "2026-10-13", x, 75.0, 3000, 0, 2)
+        self.assertEqual((n["ritmo_teto"], n["ritmo_espera_ate"], n["ritmo_ultimo_limpo"]), ("21.0", "2026-10-16", ""))
         # nos dias de espera, uma execução limpa guarda o ritmo mas não sobe
         espera = {"ritmo_espera_ate": "2026-10-16"}
         self.assertNotIn("ritmo_teto", self.execucao(espera, ppm=42, teto=42, inicial=42, hoje="2026-10-14"))
@@ -185,12 +189,6 @@ class TestTetoQueSeAjusta(unittest.TestCase):
         # abaixo do limite continua subindo, e para nele
         self.assertEqual(self.execucao({}, ppm=45, teto=45, inicial=45, maximo=60.0)["ritmo_teto"], "56.2")
         self.assertEqual(self.execucao({}, ppm=56, teto=56, inicial=56, maximo=60.0)["ritmo_teto"], "60.0")
-
-    def test_bloqueio_com_limite_menor_continua_baixando_o_teto_e_segurando_a_subida(self):
-        x = Ritmo(60, 60)
-        x.falha(grave=True)
-        n = r.aprender({}, "2026-10-13", x, 60.0, 3000, 1, 0, 60.0)
-        self.assertEqual((n["ritmo_teto"], n["ritmo_espera_ate"], n["ritmo_ultimo_limpo"]), ("42.0", "2026-10-16", ""))
 
 
 class TestCiclo(unittest.TestCase):
@@ -214,7 +212,7 @@ class TestCiclo(unittest.TestCase):
         self.assertEqual(r.saude(3000, 0, 1), "limpa")
         self.assertEqual(r.saude(3000, 0, 4), "alerta")            # 1,3 por mil: mais que o limpo, menos que o aperto
         self.assertEqual(r.saude(3000, 0, 7), "ruim")              # 2,3 por mil: aperto
-        self.assertEqual(r.saude(300, 1, 0), "ruim")               # bloqueio, com qualquer número de páginas
+        self.assertEqual(r.saude(3000, 5, 1), "limpa")             # bloqueio não conta
         self.assertEqual(r.saude(500, 0, 0), "neutra")             # pouca evidência
         self.assertEqual(r.saude(1200, 0, 5), "ruim")              # com metade da evidência, o aperto já conta
 
@@ -250,41 +248,25 @@ class TestCiclo(unittest.TestCase):
         self.assertEqual((novo["ciclo_horas"], novo["ciclo_espera_ate"]), ("12", "2026-10-18"))
         self.assertNotIn("ritmo_pausa_ate", novo)
 
-    def test_bloqueio_sobe_um_degrau_segura_e_pausa_por_horas_dobrando(self):
+    def test_bloqueio_nao_pausa_nem_sobe_o_ciclo(self):
         cfg = {"ciclo_horas": "3", "ciclo_desde": "2026-10-10"}
-        cfg, novo = self.aprende(cfg, 15, paginas=800, bloqueios=2, completou=False)
-        self.assertEqual((novo["ciclo_horas"], novo["bloqueios_seguidos"], novo["ciclo_espera_ate"]), ("6", "1", "2026-10-18"))
-        self.assertEqual(r.pausa_ate(cfg), self.t(15, 15))                                # 3 h
-        cfg, novo = self.aprende(cfg, 15, paginas=400, bloqueios=1, completou=False)
-        self.assertEqual((novo["ciclo_horas"], r.pausa_ate(cfg)), ("12", self.t(15, 18)))  # 6 h
-        cfg, novo = self.aprende(cfg, 15, paginas=400, bloqueios=1, completou=False)
-        self.assertEqual((novo["ciclo_horas"], novo["bloqueios_seguidos"], r.pausa_ate(cfg)),
-                         ("24", "3", self.t(16, 0)))                                      # 12 h, e direto ao diário
-        for _ in range(3):
-            cfg, novo = self.aprende(cfg, 15, paginas=400, bloqueios=1, completou=False)
-        self.assertEqual(r.pausa_ate(cfg), self.t(15, 12) + timedelta(hours=r.PAUSA_MAX_H))   # nunca passa de 24 h
-        self.assertEqual(cfg["ciclo_horas"], "24")
+        for _ in range(4):
+            cfg, novo = self.aprende(cfg, 15, paginas=400, bloqueios=2, interrompida=True, completou=False)
+            self.assertEqual(novo, {})
+        self.assertIsNone(r.pausa_ate(cfg))
+        self.assertEqual(cfg["ciclo_horas"], "3")
 
-    def test_tres_bloqueios_seguidos_vao_direto_ao_diario_mesmo_vindo_de_3_h(self):
-        cfg = {"ciclo_horas": "3", "ciclo_desde": "2026-10-10", "bloqueios_seguidos": "2"}
-        self.assertEqual(self.aprende(cfg, 15, paginas=100, bloqueios=1, completou=False)[1]["ciclo_horas"], "24")
-
-    def test_execucao_limpa_zera_os_bloqueios_seguidos_mas_a_subida_espera_a_pausa_de_3_dias(self):
-        cfg = {"ciclo_horas": "24", "ciclo_desde": "2026-10-15", "bloqueios_seguidos": "2", "ciclo_espera_ate": "2026-10-18"}
-        cfg, novo = self.aprende(cfg, 16)
-        self.assertEqual(novo, {"bloqueios_seguidos": "0"})                               # ainda esperando
+    def test_a_descida_espera_o_fim_da_espera_do_degrau(self):
+        cfg = {"ciclo_horas": "24", "ciclo_desde": "2026-10-15", "ciclo_espera_ate": "2026-10-18"}
+        self.assertEqual(self.aprende(cfg, 16)[1], {})
         self.assertEqual(self.aprende(cfg, 17)[1], {})
         self.assertEqual(self.aprende(cfg, 18)[1]["ciclo_horas"], "12")                  # acabou a espera: desce um degrau
 
-    def test_aperto_sobe_o_ciclo_sem_pausa_e_execucao_interrompida_so_pausa(self):
+    def test_aperto_sobe_o_ciclo_sem_pausa(self):
         cfg = {"ciclo_horas": "6", "ciclo_desde": "2026-10-10"}
         cfg2, novo = self.aprende(cfg, 15, leves=9)
         self.assertEqual(novo["ciclo_horas"], "12")
         self.assertNotIn("ritmo_pausa_ate", novo)
-        self.assertNotIn("bloqueios_seguidos", novo)
-        cfg3, novo = self.aprende(cfg, 15, paginas=900, interrompida=True, completou=False)
-        self.assertNotIn("ciclo_horas", novo)
-        self.assertEqual(r.pausa_ate(cfg3), self.t(15, 15))
 
     def test_dia_limpo_soma_as_execucoes_mas_punicao_e_so_da_execucao(self):
         cfg = {"ciclo_horas": "24", "ciclo_desde": "2026-10-13", "ciclo_espera_ate": "2026-10-16"}

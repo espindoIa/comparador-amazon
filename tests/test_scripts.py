@@ -413,8 +413,9 @@ class TestProximoCiclo(unittest.TestCase):
             self.execucao(**kw)
             self.assertEqual(self.decidir()[0], proxima, kw)
 
-    def test_a_pausa_depois_de_bloqueio_vale_mesmo_depois_da_proxima_janela(self):
-        self.execucao(bloqueios=2)
+    def test_uma_pausa_gravada_ainda_vale_mesmo_depois_da_proxima_janela(self):
+        self.execucao()
+        self.completar_a_janela()
         self.config(ritmo_pausa_ate="2026-10-14T21:00:00+00:00")
         quando, motivo = self.decidir()
         self.assertEqual(quando, datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc))
