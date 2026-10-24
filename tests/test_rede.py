@@ -129,6 +129,8 @@ class TestBaixarLote(unittest.TestCase):
         R = cliente_http.Resposta
         self.assertIsNone(rede.classificar(R(200, "<html>ok</html>", "u"))[2])
         self.assertEqual(rede.classificar(R(503, "x", "u"))[2].status, "bloqueado")
+        self.assertEqual(rede.classificar(R(202, "x", "u"))[2].status, "bloqueado")   # recusa da Amazon, sem captcha
+        self.assertEqual(rede.classificar(R(429, "x", "u"))[2].status, "bloqueado")
         self.assertEqual(rede.classificar(R(200, PAGINA_CACHORROS, "u"))[2].status, "bloqueado")
         self.assertEqual(rede.classificar(R(404, "x", "u"))[2].status, "erro_http")
         status, html, erro = rede.classificar(R(0, "TypeError: Failed to fetch", "u"))   # nem chegou
@@ -243,11 +245,11 @@ class TestClienteNavegador(unittest.TestCase):
         self.cliente = cliente_http.ClienteNavegador()
         self.addCleanup(self.cliente.fechar)
 
-    def test_navegacao_depois_fetch_com_cookies(self):
-        r1 = self.cliente.get(self.base + "/define-cookie")  # 1ª: navegação real
+    def test_navegacao_seguida_mantem_os_cookies(self):
+        r1 = self.cliente.get(self.base + "/define-cookie")  # cada página é uma navegação
         self.assertEqual(r1.status_code, 200)
         self.assertIn("ação ok", r1.text)
-        r2 = self.cliente.get(self.base + "/pagina2")  # 2ª: fetch na mesma sessão
+        r2 = self.cliente.get(self.base + "/pagina2")
         self.assertEqual((r2.status_code, r2.text), (200, "ação ok"))
         self.assertIn("session-id=123-456", _Servidor.recebidos[-1].get("Cookie", ""))
 

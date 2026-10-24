@@ -358,7 +358,7 @@ class TestVerificarPrecos(unittest.TestCase):
 
 
 class TestProximoCiclo(unittest.TestCase):
-    """Janelas de 12 h de Brasília: 00:00–12:00 e 12:00–24:00 (03:00–15:00 e 15:00–03:00 em UTC)."""
+    """Janelas de 12 h de Brasília: 00:00–12:00 e 12:00–24:00. A agenda é 03:10 e 18:10, mais a defasagem."""
 
     def setUp(self):
         from comparador import db, varredura
@@ -392,51 +392,56 @@ class TestProximoCiclo(unittest.TestCase):
         self.assertEqual(quando, self.agora)
         self.assertIn("não fechou", motivo)
 
-    def test_com_a_janela_completa_espera_a_proxima_com_a_defasagem_de_cada_sequencia(self):
+    def test_com_a_janela_completa_espera_a_agenda_com_a_defasagem_de_cada_sequencia(self):
         self.execucao()
         self.completar_a_janela()
-        fim = datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)                 # 12:00 de Brasília
+        tarde = datetime(2026, 10, 14, 21, 10, tzinfo=timezone.utc)              # 18:10 de Brasília
         for alvo, minutos in (("vendidos", 0), ("vendidos-b", 10), ("vendidos-c", 20)):
-            self.assertEqual(self.decidir(alvo)[0], fim + timedelta(minutes=minutos), alvo)
+            self.assertEqual(self.decidir(alvo)[0], tarde + timedelta(minutes=minutos), alvo)
 
-    def test_o_sorteio_so_atrasa_a_leitura_da_janela_nunca_antecipa(self):
+    def test_o_sorteio_so_atrasa_a_leitura_da_agenda_nunca_antecipa(self):
         self.execucao()
         self.completar_a_janela()
         quando, _ = proximo_ciclo.decidir(self.conn, "vendidos", self.inicio, self.agora, sorteio=lambda a, b: b)
-        self.assertEqual(quando, datetime(2026, 10, 14, 15, 10, tzinfo=timezone.utc))
+        self.assertEqual(quando, datetime(2026, 10, 14, 21, 20, tzinfo=timezone.utc))    # 18:10 + 10 min
 
-    def test_depois_de_bloqueio_aviso_de_layout_ou_execucao_curta_espera_a_proxima_janela(self):
-        proxima = datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)
-        for kw in (dict(bloqueios=1), dict(obs="interrompida após 3 falhas seguidas"),
-                   dict(obs=f"poucos itens com capa: {self.varredura.AVISO_LAYOUT}"), dict(paginas=120)):
+    def test_depois_de_bloqueio_ou_interrupcao_retoma_sem_esperar_o_dia(self):
+        for kw in (dict(bloqueios=1), dict(obs="interrompida após 3 falhas seguidas")):
+            self.conn.execute("DELETE FROM execucoes")
+            self.execucao(**kw)
+            self.assertEqual(self.decidir()[0], self.agora, kw)
+
+    def test_aviso_de_layout_ou_execucao_curta_espera_o_proximo_horario(self):
+        proxima = datetime(2026, 10, 14, 21, 10, tzinfo=timezone.utc)            # 18:10 de Brasília
+        for kw in (dict(obs=f"poucos itens com capa: {self.varredura.AVISO_LAYOUT}"), dict(paginas=120)):
             self.conn.execute("DELETE FROM execucoes")
             self.execucao(**kw)
             self.assertEqual(self.decidir()[0], proxima, kw)
 
-    def test_a_pausa_depois_de_bloqueio_vale_mesmo_depois_da_proxima_janela(self):
+    def test_a_pausa_depois_de_bloqueio_manda_mesmo_antes_do_proximo_horario(self):
         self.execucao(bloqueios=2)
         self.config(ritmo_pausa_ate="2026-10-14T21:00:00+00:00")
         quando, motivo = self.decidir()
         self.assertEqual(quando, datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc))
         self.assertIn("pausa", motivo)
-        self.config(ritmo_pausa_ate="2026-10-14T14:00:00+00:00")             # pausa que acaba antes da janela: a janela manda
-        self.assertEqual(self.decidir()[0], datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc))
+        self.config(ritmo_pausa_ate="2026-10-14T14:00:00+00:00")             # a pausa acaba antes da agenda: retoma nela
+        self.assertEqual(self.decidir()[0], datetime(2026, 10, 14, 14, 0, tzinfo=timezone.utc))
 
     def test_nunca_menos_de_10_minutos_depois_do_comeco_da_execucao(self):
-        self.execucao(quando="2026-10-14T14:55:00+00:00")
-        self.completar_a_janela()
-        quando, _ = self.decidir(agora=datetime(2026, 10, 14, 14, 56, tzinfo=timezone.utc),
-                                 inicio=datetime(2026, 10, 14, 14, 55, tzinfo=timezone.utc))
-        self.assertEqual(quando, datetime(2026, 10, 14, 15, 5, tzinfo=timezone.utc))      # a janela seria às 15:00
+        self.execucao(quando="2026-10-14T14:55:00+00:00", bloqueios=1)      # retomaria já, mas o piso de 10 min segura
+        quando, motivo = self.decidir(agora=datetime(2026, 10, 14, 14, 56, tzinfo=timezone.utc),
+                                      inicio=datetime(2026, 10, 14, 14, 55, tzinfo=timezone.utc))
+        self.assertEqual(quando, datetime(2026, 10, 14, 15, 5, tzinfo=timezone.utc))
+        self.assertIn("10 min", motivo)
 
     def test_sobrando_pouco_tempo_na_janela_nao_continua_ja(self):
         self.execucao()
         quando, _ = self.decidir(agora=datetime(2026, 10, 14, 14, 50, tzinfo=timezone.utc))
-        self.assertEqual(quando, datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc))
+        self.assertEqual(quando, datetime(2026, 10, 14, 21, 10, tzinfo=timezone.utc))    # 18:10 de Brasília
 
     def test_so_conta_a_execucao_desta_rodada(self):
         self.execucao(quando="2026-10-14T05:00:00+00:00")                       # uma execução antiga e limpa não vale
-        self.assertEqual(self.decidir()[0], datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc))
+        self.assertEqual(self.decidir()[0], datetime(2026, 10, 14, 21, 10, tzinfo=timezone.utc))
 
     def test_publicacao_que_falhou_espera_horas_em_vez_de_ler_de_novo_logo(self):
         self.execucao()                                                       # janela incompleta, execução limpa: continuaria já
@@ -444,10 +449,10 @@ class TestProximoCiclo(unittest.TestCase):
                                                publicacao_falhou=True)
         self.assertEqual(quando, self.agora + timedelta(hours=3))
         self.assertIn("publicação falhou", motivo)
-        self.completar_a_janela()                                             # janela completa: a próxima janela já é mais tarde
+        self.completar_a_janela()                                             # janela completa: a agenda das 18:10 já é mais tarde que +3 h
         quando, _ = proximo_ciclo.decidir(self.conn, "vendidos", self.inicio, self.agora, sorteio=lambda a, b: 0,
                                           publicacao_falhou=True)
-        self.assertEqual(quando, datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc))
+        self.assertEqual(quando, datetime(2026, 10, 14, 21, 10, tzinfo=timezone.utc))
 
     def test_o_ciclo_guardado_define_a_janela(self):
         self.config(ciclo_horas="3")
@@ -455,9 +460,9 @@ class TestProximoCiclo(unittest.TestCase):
         self.completar_a_janela("2026-10-14T15:30:00+00:00", "2026-10-14T15:55:00+00:00")
         agora = datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc)            # 13:00 de Brasília: janela das 12:00 às 15:00
         self.assertEqual(self.decidir(agora=agora)[0], datetime(2026, 10, 14, 18, 0, tzinfo=timezone.utc))
-        self.config(ciclo_horas="24")                                         # janela do dia inteiro: a de 12 h acima não vale
-        self.completar_a_janela("2026-10-14T05:00:00+00:00", "2026-10-14T15:55:00+00:00")
-        self.assertEqual(self.decidir(agora=agora)[0], datetime(2026, 10, 15, 3, 0, tzinfo=timezone.utc))
+        self.config(ciclo_horas="24")                                         # 24 h é lido como 12; a agenda manda
+        self.completar_a_janela("2026-10-14T15:10:00+00:00", "2026-10-14T15:50:00+00:00")
+        self.assertEqual(self.decidir(agora=agora)[0], datetime(2026, 10, 14, 21, 10, tzinfo=timezone.utc))
 
     def test_linha_de_comando_com_um_banco_de_verdade(self):
         import subprocess

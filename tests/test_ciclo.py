@@ -1,9 +1,9 @@
-"""Testes do ciclo de leitura (uma passada completa a cada 3, 6, 12 ou 24 h) e do anel de execuções.
+"""Testes do ciclo de leitura (duas passadas por dia, em janelas de 12 h) e do anel de execuções.
 
 A simulação no fim roda vários dias de execuções com relógio falso (o tempo só anda quando a coleta dorme), o mesmo
 `varredura.executar` que a linha de comando usa e o mesmo `scripts/proximo_ciclo.py` que o workflow usa para marcar a próxima
-leitura, e confere as propriedades que importam: o volume sobe em rampa, nenhuma fatia fica mais de 2 ciclos sem leitura,
-nunca há duas leituras coladas, e depois de um bloqueio a coleta espera horas e alarga o ciclo.
+leitura, e confere as propriedades que importam: duas passadas por dia, nenhuma fatia fica mais de 2 ciclos sem leitura,
+nunca há duas leituras coladas, e depois de um bloqueio a coleta espera horas e retoma quando a pausa acaba.
 """
 
 import importlib.util
@@ -244,20 +244,20 @@ class TestAnel(Base):
             por_dia[d] = por_dia.get(d, 0) + x["paginas"]
         return por_dia
 
-    def test_rampa_sem_falhas_12_6_3_h_com_volume_dobrando_por_dia(self):
+    def test_duas_passadas_por_dia_e_o_ciclo_fica_em_12_h(self):
         anel = Anel(self)
         atrasadas = []
         fim = brasilia(18, 0)
         while anel.quando < fim:
-            x = anel.passo()
+            anel.passo()
             atrasadas.append(varredura.cobertura(self.conn, varredura.GRUPO_VENDIDOS).atrasadas)
         self.assertEqual(sum(atrasadas), 0)                                       # nunca passou de 2 ciclos + 2 h
-        passada = self.paginas_por_dia(anel)[brasilia(14).date()] / 2             # 2 passadas no dia 14 (12 h)
+        passada = self.paginas_por_dia(anel)[brasilia(14).date()] / 2             # manhã e tarde no dia 14
         por_dia = self.paginas_por_dia(anel)
         dias = sorted(por_dia)
         n = [round(por_dia[d] / passada) for d in dias[:4]]
-        self.assertEqual(n, [2, 4, 8, 8])                                         # 12 h → 6 h → 3 h, e fica em 3 h
-        self.assertEqual(self.config()["ciclo_horas"], "3")
+        self.assertEqual(n, [2, 2, 2, 2])                                         # o volume não sobe: o ciclo não desce de 12 h
+        self.assertEqual(self.config()["ciclo_horas"], "12")
         for a, b in zip(anel.execucoes, anel.execucoes[1:]):
             self.assertGreaterEqual(b["inicio"] - a["inicio"], timedelta(minutes=proximo_ciclo.ENTRE_EXECUCOES_MIN))
 
@@ -268,7 +268,7 @@ class TestAnel(Base):
         while anel.quando < fim:
             anel.passo()
             self.assertEqual(varredura.cobertura(self.conn, varredura.GRUPO_VENDIDOS).atrasadas, 0)
-        self.assertGreater(len(anel.execucoes), 10)
+        self.assertGreaterEqual(len(anel.execucoes), 6)                          # duas passadas por dia, mesmo com a fila atrasando
 
     def test_orcamento_curto_continua_logo_sem_laco_apertado(self):
         self.conn.execute("INSERT INTO config (chave, valor) VALUES ('ciclo_horas', '12'), ('ciclo_desde', '2026-10-14')")
@@ -300,10 +300,10 @@ class TestAnel(Base):
         self.assertGreaterEqual(sum(x["res"].completou for x in anel.execucoes[-8:]), 3)
         self.assertLessEqual(int(self.config()["ciclo_horas"]), 12)
 
-    def test_bloqueios_alargam_o_ciclo_com_pausas_que_dobram_e_a_rampa_volta_depois(self):
+    def test_bloqueios_pausam_por_horas_que_dobram_e_o_ciclo_fica_em_12_h(self):
         anel = Anel(self)
         anel.ate(brasilia(17, 0))
-        self.assertEqual(self.config()["ciclo_horas"], "3")
+        self.assertEqual(self.config()["ciclo_horas"], "12")
         # a Amazon passa a bloquear
         self.amazon.falhas = [CACHORROS] * 400
         inicio_bloqueio = len(anel.execucoes)
@@ -313,19 +313,17 @@ class TestAnel(Base):
         pausas = [x["proxima"] - x["fim"] for x in bloqueadas]
         self.assertTrue(all(p >= timedelta(hours=2, minutes=50) for p in pausas), pausas)          # sempre horas
         self.assertGreater(pausas[2], pausas[0])                                                    # e crescendo
-        self.assertEqual(self.config()["ciclo_horas"], "24")                                         # bloqueios seguidos: diário
+        self.assertEqual(self.config()["ciclo_horas"], "12")                                        # não vai ao diário de 24 h
         # durante a pausa não houve leitura: o início de cada execução é depois do fim da pausa anterior
         for a, b in zip(anel.execucoes[inicio_bloqueio:], anel.execucoes[inicio_bloqueio + 1:]):
             self.assertGreaterEqual(b["inicio"], a["proxima"])
-        # a Amazon volta ao normal: a rampa recomeça de 24 h e desce um degrau por dia, depois dos 3 dias de espera
+        # a Amazon volta ao normal: o ciclo continua em 12 h (não há rampa de volta para 3 h)
         self.amazon.falhas = []
         ciclos = []
         for d in (21, 24, 25, 26, 27):
             anel.ate(brasilia(d, 0))
             ciclos.append(self.config()["ciclo_horas"])
-        self.assertEqual(ciclos[0], "24")                                                           # ainda na espera
-        self.assertEqual(self.config()["ciclo_horas"], "3")
-        self.assertEqual(ciclos, sorted(ciclos, key=int, reverse=True))                             # só desceu
+        self.assertEqual(ciclos, ["12", "12", "12", "12", "12"])
 
     def test_pausa_nao_e_pulada_nem_pelo_vigia_reiniciando_a_sequencia(self):
         anel = Anel(self)

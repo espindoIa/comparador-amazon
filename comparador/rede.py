@@ -53,11 +53,16 @@ def guardar_html(pasta: Path | None, nome: str, html: str | None) -> str | None:
     destino.write_bytes(gzip.compress(html.encode("utf-8")))
     return str(destino)
 
+# 202 e 429 são recusa da Amazon (a partir de 22/10/2026 as páginas fundas vinham com HTTP 202, sem captcha).
+# 404 continua erro: a página não existe, não é bloqueio.
+_STATUS_BLOQUEIO = frozenset({202, 429, 500, 503})
+
+
 def classificar(resp) -> tuple[int | None, str | None, Erro | None]:
     """Resposta -> (status_http, html, erro ou None). Status 0 = a requisição nem chegou (rede, tempo)."""
     if resp.status_code == 0:
         return None, None, Erro("erro_http", f"falha de rede: {resp.text[:120]}")
-    if resp.status_code in (500, 503) or parece_bloqueio(resp.text):
+    if resp.status_code in _STATUS_BLOQUEIO or parece_bloqueio(resp.text):
         return resp.status_code, resp.text, Erro("bloqueado", f"HTTP {resp.status_code}: captcha ou página de erro")
     if resp.status_code != 200:
         return resp.status_code, resp.text, Erro("erro_http", f"HTTP {resp.status_code}")
