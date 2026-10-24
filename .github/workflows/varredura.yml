@@ -155,8 +155,8 @@ jobs:
           REF: ${{ github.ref_name }}
         run: gh workflow run site.yml --repo "$GITHUB_REPOSITORY" --ref "$REF"
 
-      # scripts/proximo_ciclo.py decide o instante: agora, se a janela do ciclo não fechou e esta execução terminou limpa;
-      # senão, a próxima janela (ou o fim da pausa depois de bloqueio). Se a publicação falhou, o que foi lido se perdeu:
+      # scripts/proximo_ciclo.py decide o instante: agora, se a janela não fechou e a execução foi limpa, ou se ela
+      # parou com fatias por ler (no fim da pausa, se ainda valer); senão, 03:10 ou 18:10 de Brasília. Se a publicação falhou, o que foi lido se perdeu:
       # ler de novo logo só repetiria o pedido à Amazon, então a próxima leitura espera algumas horas. Se este passo ou a
       # espera falharem, o vigia reinicia a sequência em até ~1 h.
       - name: Agenda o próximo ciclo

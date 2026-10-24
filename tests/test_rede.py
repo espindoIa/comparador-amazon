@@ -250,7 +250,8 @@ class TestClienteNavegador(unittest.TestCase):
         self.assertEqual(r1.status_code, 200)
         self.assertIn("ação ok", r1.text)
         r2 = self.cliente.get(self.base + "/pagina2")
-        self.assertEqual((r2.status_code, r2.text), (200, "ação ok"))
+        self.assertEqual(r2.status_code, 200)
+        self.assertIn("ação ok", r2.text)          # page.goto devolve o HTML da página, não só o corpo cru
         self.assertIn("session-id=123-456", _Servidor.recebidos[-1].get("Cookie", ""))
 
     def test_status_de_erro_e_redirecionamento(self):
@@ -289,7 +290,7 @@ class TestClienteNavegador(unittest.TestCase):
         self.assertEqual(self.cliente.reaberturas, 1)
         r = self.cliente.get(self.base + "/define-cookie")                 # ...e a seguinte já navega de novo
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(self.cliente.get(self.base + "/pagina2").text, "ação ok")
+        self.assertIn("ação ok", self.cliente.get(self.base + "/pagina2").text)
         self.cliente._navegador.close()                                    # agora o navegador inteiro cai
         with self.assertRaises(Exception):
             self.cliente.get(self.base + "/pagina")

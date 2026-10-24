@@ -460,9 +460,10 @@ class TestProximoCiclo(unittest.TestCase):
         self.completar_a_janela("2026-10-14T15:30:00+00:00", "2026-10-14T15:55:00+00:00")
         agora = datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc)            # 13:00 de Brasília: janela das 12:00 às 15:00
         self.assertEqual(self.decidir(agora=agora)[0], datetime(2026, 10, 14, 18, 0, tzinfo=timezone.utc))
-        self.config(ciclo_horas="24")                                         # 24 h é lido como 12; a agenda manda
+        self.config(ciclo_horas="24")                                         # 24 h é lido como 12
         self.completar_a_janela("2026-10-14T15:10:00+00:00", "2026-10-14T15:50:00+00:00")
-        self.assertEqual(self.decidir(agora=agora)[0], datetime(2026, 10, 14, 21, 10, tzinfo=timezone.utc))
+        # a janela da tarde (12:00–24:00) já fechou às 13:00: 18:10 ainda cairia nela e não leria nada
+        self.assertEqual(self.decidir(agora=agora)[0], datetime(2026, 10, 15, 6, 10, tzinfo=timezone.utc))
 
     def test_linha_de_comando_com_um_banco_de_verdade(self):
         import subprocess
