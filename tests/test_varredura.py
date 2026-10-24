@@ -462,8 +462,8 @@ class TestLinhaDeComando(unittest.TestCase):
             self.banco_com_ciclo(b, 24)
             ciclo = lambda *args: json.loads(self.principal(*args)[1])["ciclo_horas"]
             self.assertEqual(ciclo("--db", a, "catalogo", "--json"), 6)                  # antes do comando
-            self.assertEqual(ciclo("catalogo", "--db", b, "--json"), 24)                 # depois do comando
-            self.assertEqual(ciclo("--db", a, "catalogo", "--db", b, "--json"), 24)      # nos dois: vale o de depois
+            self.assertEqual(ciclo("catalogo", "--db", b, "--json"), 12)                 # 24 h guardado vale como 12
+            self.assertEqual(ciclo("--db", a, "catalogo", "--db", b, "--json"), 12)      # nos dois: vale o de depois
             codigo, _, erro = self.principal("catalogo", "--json")                       # nenhum: o padrão, que não existe aqui
             self.assertEqual(codigo, 1)
             self.assertIn(f"banco não encontrado: {varredura_cli.DB_PADRAO}", erro)

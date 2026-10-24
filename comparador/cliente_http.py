@@ -151,7 +151,9 @@ class ClienteNavegador:
         proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
         self._contexto = self._navegador.new_context(
             locale="pt-BR",
-            user_agent=None,  # o do próprio navegador
+            timezone_id="America/Sao_Paulo",
+            viewport={"width": 1366, "height": 768},
+            user_agent=None,  # o do próprio navegador; sem disfarce nem evasão de automação
             # Só para ambientes com proxy que intercepta TLS (ex.: sandbox de testes).
             ignore_https_errors=os.environ.get("COMPARADOR_IGNORAR_TLS") == "1",
             **({"proxy": _proxy(proxy)} if proxy else {}),
@@ -194,15 +196,17 @@ class ClienteNavegador:
         )
 
     def get(self, url: str, timeout: float = 30) -> Resposta:
+        """Uma navegação de cada vez (page.goto), inclusive depois da primeira página.
+
+        O fetch dentro da página, usado antes nas páginas seguintes, era o que a Amazon respondia com HTTP 202
+        nas páginas fundas (22/10/2026 em diante). Não há patch de webdriver nem resolução de captcha: o
+        navegador só pede a página como quem a abre. O fetch em paralelo continua em `get_lote`, e a coleta
+        recorrente não o usa (no teto de 15 páginas/min há uma pista só).
+        """
         try:
-            if not self._aberta:
-                # Primeira requisição: navegação real, que cria a sessão (cookies etc.).
-                resp = self._pagina.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
-                self._aberta = True
-                return Resposta(resp.status if resp else 0, self._pagina.content(), self._pagina.url)
-            self._pagina.set_default_timeout(timeout * 1000)
-            status, texto, url_final, ms = self._pagina.evaluate(_FETCH_JS, [url, timeout * 1000])
-            return Resposta(int(status), texto, url_final or url, ms)
+            resp = self._pagina.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+            self._aberta = True
+            return Resposta(resp.status if resp else 0, self._pagina.content(), self._pagina.url)
         except Exception as e:
             if "Timeout" in type(e).__name__:
                 raise requests.Timeout(str(e)) from e

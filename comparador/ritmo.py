@@ -156,19 +156,22 @@ def _somar_dias(dia: str, n: int) -> str:
 
 
 # ---------- frequência das passadas (ciclo) ----------
-# Quantas vezes por dia o catálogo inteiro é lido. O objetivo é CICLOS[0] (uma passada a cada 3 h, 8 por dia, ~105 mil
-# páginas por dia no total), mas nunca se mediu esse volume: o mais alto sem bloqueio foi 12,6 mil páginas por dia. Por
-# isso o ciclo é um degrau que se guarda no banco, como o teto de ritmo: começa em CICLO_INICIAL e desce UM degrau por dia
-# limpo (12 → 6 → 3 h), sobe um degrau a cada bloqueio ou sinal de aperto e, depois de bloqueios seguidos, volta ao diário.
+# Duas passadas por dia (CICLO_OPERACIONAL, 12 h). A meta antiga de CICLOS[0] (uma passada a cada 3 h, ~105 mil páginas
+# por dia) nunca se mediu sem bloqueio: o mais alto limpo foi 12,6 mil páginas por dia, e a partir de 22/10/2026 a Amazon
+# passou a recusar a leitura. O ciclo guardado não desce de 12 h; um 24 h antigo (o "diário") volta a 12. Os degraus de
+# 3 e 6 h continuam válidos para `--ciclo-horas` e sobem em direção a 12 quando há bloqueio ou aperto, mas a coleta
+# recorrente não desce até eles.
 #
 # Depois de um bloqueio a pausa é de HORAS, nunca de minutos: cada execução cai num servidor novo do GitHub, com outro IP,
 # então tentar de novo meia hora depois seria, na prática, trocar de IP por causa do bloqueio. A pausa dura pelo menos
-# PAUSA_BASE_H (o ciclo mínimo) e dobra a cada bloqueio seguido; junto com ela o ciclo sobe, que é o que reduz o volume.
+# PAUSA_BASE_H e dobra a cada bloqueio seguido. Acabada a pausa, a leitura seguinte começa na hora (quem marca isso é
+# scripts/proximo_ciclo.py): não espera a janela do dia seguinte.
 CICLOS = (3, 6, 12, 24)
 CICLO_INICIAL = 12
+CICLO_OPERACIONAL = 12           # piso e teto do que a coleta recorrente aprende: duas passadas por dia
 PAUSA_BASE_H = 3
 PAUSA_MAX_H = 24
-BLOQUEIOS_PARA_DIARIO = 3        # bloqueios seguidos que levam direto ao ciclo de 24 h
+BLOQUEIOS_PARA_DIARIO = 3        # bloqueios seguidos que levam direto ao ciclo operacional (12 h), sem passar por 24 h
 LEVES_POR_MIL_RUIM = 2.0         # acima disto (páginas curtas e erros por mil) o ciclo sobe: a limitação costuma aparecer assim antes do bloqueio
 # O ciclo só desce se a passada couber no degrau de baixo: sem isso ele desceria mais rápido que o teto sobe (um degrau
 # por dia contra 25%), a passada estouraria a janela e o ciclo voltaria a subir, com mais 3 dias de espera.
@@ -189,8 +192,14 @@ def _numero(config: dict, chave: str, padrao: int) -> int:
 
 
 def ciclo_guardado(config: dict) -> int:
-    """Horas entre passadas completas, a partir de `config` (chave -> texto); sem valor válido, CICLO_INICIAL."""
+    """Horas entre passadas completas, a partir de `config` (chave -> texto); sem valor válido, CICLO_INICIAL.
+
+    Um 24 h guardado (o antigo ciclo diário) vale como CICLO_OPERACIONAL: a janela de leitura é de 12 h mesmo
+    antes de o banco ser reescrito.
+    """
     c = _numero(config, "ciclo_horas", CICLO_INICIAL)
+    if c == 24:
+        return CICLO_OPERACIONAL
     return c if c in CICLOS else CICLO_INICIAL
 
 
@@ -219,14 +228,16 @@ def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int
     """Novos valores de config para o ciclo e a pausa depois de uma execução. `agora`: datetime com fuso. Só devolve o
     que mudou.
 
-    - bloqueio: o ciclo sobe um degrau (ao diário depois de BLOQUEIOS_PARA_DIARIO seguidos), o degrau fica parado por
-      DIAS_DE_ESPERA dias e a pausa é de PAUSA_BASE_H horas, dobrando a cada bloqueio seguido, até PAUSA_MAX_H;
+    - bloqueio: o ciclo sobe um degrau, no máximo até CICLO_OPERACIONAL (direto a ele depois de BLOQUEIOS_PARA_DIARIO
+      seguidos), o degrau fica parado por DIAS_DE_ESPERA dias e a pausa é de PAUSA_BASE_H horas, dobrando a cada
+      bloqueio seguido, até PAUSA_MAX_H;
     - falhas seguidas sem bloqueio (execução interrompida): só a pausa de PAUSA_BASE_H horas;
     - aperto (muitas páginas curtas) ou janela que acabou com fatias sem ler (`estourou`: a sequência não dá conta de
-      uma passada no tempo do ciclo): o ciclo sobe um degrau e fica parado, sem pausa;
+      uma passada no tempo do ciclo): o ciclo sobe um degrau (até CICLO_OPERACIONAL) e fica parado, sem pausa;
     - alerta (mais falhas leves que o limpo, menos que o aperto): o ciclo fica onde está e o dia no degrau recomeça;
     - passada completa e dia limpo, depois de um dia inteiro no degrau e do fim da espera: o ciclo desce um degrau, se
-      a passada (`passada_h` horas no teto atual) ocupar até OCUPACAO_MAX dele.
+      estiver acima de CICLO_OPERACIONAL e a passada (`passada_h` horas no teto atual) ocupar até OCUPACAO_MAX dele.
+      Na prática o piso é 12 h: um 24 h guardado volta a 12 e dali não desce.
     `evidencia`: (páginas, falhas leves) do dia inteiro, que decide se o dia foi limpo (sem ela, só a execução). As
     punições (bloqueio, aperto, alerta, interrupção, janela estourada) olham sempre só a execução.
     """
@@ -235,10 +246,11 @@ def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int
     hoje = agora.astimezone(BRASILIA).date().isoformat()
     ciclo = ciclo_guardado(config)
     nivel = CICLOS.index(ciclo)
+    teto_nivel = CICLOS.index(CICLO_OPERACIONAL)
     seguidos = _numero(config, "bloqueios_seguidos", 0)
     novo: dict = {}
-    if "ciclo_horas" not in config:
-        novo["ciclo_horas"] = str(ciclo)
+    if "ciclo_horas" not in config or config.get("ciclo_horas") == "24":
+        novo["ciclo_horas"] = str(ciclo)          # 24 h guardado volta a 12 na primeira execução que aprende
     if "ciclo_desde" not in config:
         novo["ciclo_desde"] = hoje
     if bloqueios:
@@ -251,7 +263,7 @@ def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int
     situacao = saude(paginas, bloqueios, leves)
     dia_limpo = saude(evidencia[0], 0, evidencia[1]) == "limpa" if evidencia else situacao == "limpa"
     if situacao == "ruim" or estourou:
-        degrau = len(CICLOS) - 1 if seguidos >= BLOQUEIOS_PARA_DIARIO else min(nivel + 1, len(CICLOS) - 1)
+        degrau = teto_nivel if seguidos >= BLOQUEIOS_PARA_DIARIO else min(nivel + 1, teto_nivel)
         if degrau != nivel:
             novo["ciclo_horas"] = str(CICLOS[degrau])
             novo["ciclo_desde"] = hoje
@@ -263,7 +275,7 @@ def aprender_ciclo(config: dict, agora, paginas: int, bloqueios: int, leves: int
             novo["bloqueios_seguidos"] = "0"
         desde = novo.get("ciclo_desde", config.get("ciclo_desde", hoje))
         cabe = passada_h is None or nivel == 0 or passada_h <= OCUPACAO_MAX * CICLOS[nivel - 1]
-        if nivel > 0 and desde < hoje and config.get("ciclo_espera_ate", "") <= hoje and cabe:
+        if nivel > teto_nivel and desde < hoje and config.get("ciclo_espera_ate", "") <= hoje and cabe:
             novo["ciclo_horas"] = str(CICLOS[nivel - 1])
             novo["ciclo_desde"] = hoje
     return novo

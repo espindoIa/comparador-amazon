@@ -11,14 +11,16 @@
 # ciclo próprios. Cada servidor tem o seu IP, e é isso que permite ler em paralelo: a carga sobre a Amazon é três vezes
 # a de uma sequência só, em cada instante.
 #
-# Um ciclo é o tempo entre duas passadas completas do catálogo (comparador/ritmo.py: 3, 6, 12 ou 24 h). O objetivo é 3 h
-# (8 passadas por dia, ~105 mil páginas por dia no total), mas o volume mais alto medido sem bloqueio foi 12,6 mil páginas
-# por dia. Por isso o ciclo é um degrau guardado no banco: começa em 12 h, desce um degrau por dia limpo, sobe quando há
-# bloqueio ou aperto (muitas páginas curtas) e vai direto ao diário depois de bloqueios seguidos. Depois de um bloqueio a
-# pausa é de horas (3 h, dobrando): cada execução cai num servidor novo, com outro IP, então tentar de novo logo
-# seria trocar de IP por causa do bloqueio. Nada aqui reage a bloqueio trocando de servidor ou de identidade.
-# O ritmo de cada sequência é limitado a TETO_POR_SEQUENCIA páginas por minuto programadas (menor que o das versões de
-# uma passada por dia, porque o volume diário é até 8 vezes maior).
+# Um ciclo é o tempo entre duas passadas completas do catálogo. A coleta recorrente fica em 12 h (duas por dia,
+# comparador/ritmo.py): a meta antiga de 3 h (~105 mil páginas por dia) nunca se mediu sem bloqueio, e a partir de
+# 22/10/2026 a Amazon passou a recusar as páginas fundas. Um 24 h guardado no banco volta a 12. Depois de um bloqueio
+# a pausa é de horas (3 h, dobrando até 24): cada execução cai num servidor novo, com outro IP, então tentar de novo
+# logo seria trocar de IP por causa do bloqueio. Acabada a pausa, a leitura seguinte começa na hora se ainda há fatias
+# por ler (scripts/proximo_ciclo.py), sem esperar o dia seguinte. Nada aqui reage a bloqueio trocando de servidor,
+# disfarçando o navegador ou resolvendo captcha.
+# O ritmo de cada sequência é limitado a TETO_POR_SEQUENCIA páginas por minuto programadas. 15 fica abaixo das 20
+# em que a Amazon ainda respondeu HTTP 202 (22/10), e mantém uma página de cada vez (o fetch em paralelo só entra
+# acima de 21). O teto guardado no banco, se for menor, continua menor: este valor só impede a subida.
 #
 # O anel de execuções não depende do cron do GitHub, que atrasa em horas: ao fim de cada execução, o passo "Agenda o
 # próximo ciclo" (scripts/proximo_ciclo.py) dispara espera.yml com o instante da próxima leitura; ela dorme em saltos e
@@ -40,11 +42,12 @@ name: varredura
 run-name: varredura ${{ inputs.alvo || 'todas' }}
 
 on:
-  # Rede de segurança do anel: uma vez por dia (00:41 de Brasília, quando também se confere se ontem ficou completo). Com o
-  # anel funcionando, é uma leitura dentro da janela (ou nenhuma, se ela já fechou) e o anel segue em uma só linha; sem
-  # ele, é a coleta diária de antes. O cron do GitHub atrasa em horas, por isso não é ele quem manda.
+  # Rede de segurança do anel, duas vezes por dia (o cron do GitHub atrasa em horas, por isso não é ele quem manda;
+  # quem marca a hora é scripts/proximo_ciclo.py). 06:10 UTC = 03:10 de Brasília, para a passada da manhã poder
+  # terminar antes das 8h; 21:10 UTC = 18:10 de Brasília, a atualização depois das 18h. Brasília é UTC−3, sem horário de verão.
   schedule:
-    - cron: "41 3 * * *"
+    - cron: "10 6 * * *"
+    - cron: "10 21 * * *"
   workflow_dispatch:
     inputs:
       alvo:
@@ -85,9 +88,10 @@ jobs:
       ALVO: ${{ matrix.alvo }}
       DB: data/catalogo-${{ matrix.alvo }}.db
       FORCAR_PRECOS: ${{ inputs.forcar_precos && '1' || '' }}
-      # Páginas por minuto programadas que o teto de CADA sequência pode alcançar (o real fica ~10-20% abaixo). Menor
-      # que os 60 medidos sem bloqueio, porque o volume diário é até 8 vezes maior; subir isto multiplica a carga por três.
-      TETO_POR_SEQUENCIA: "45"
+      # Páginas por minuto programadas que o teto de CADA sequência pode alcançar (o real fica ~10-20% abaixo).
+      # 15 fica abaixo do ritmo em que a Amazon respondeu HTTP 202; três sequências em paralelo multiplicam a carga.
+      # Não sobe um teto já guardado mais baixo (o de 8, depois dos bloqueios, continua 8 até o fim da espera de 3 dias).
+      TETO_POR_SEQUENCIA: "15"
     steps:
       - uses: actions/checkout@v7
 
@@ -151,8 +155,8 @@ jobs:
           REF: ${{ github.ref_name }}
         run: gh workflow run site.yml --repo "$GITHUB_REPOSITORY" --ref "$REF"
 
-      # scripts/proximo_ciclo.py decide o instante: agora, se a janela do ciclo não fechou e esta execução terminou limpa;
-      # senão, a próxima janela (ou o fim da pausa depois de bloqueio). Se a publicação falhou, o que foi lido se perdeu:
+      # scripts/proximo_ciclo.py decide o instante: agora, se a janela não fechou e a execução foi limpa, ou se ela
+      # parou com fatias por ler (no fim da pausa, se ainda valer); senão, 03:10 ou 18:10 de Brasília. Se a publicação falhou, o que foi lido se perdeu:
       # ler de novo logo só repetiria o pedido à Amazon, então a próxima leitura espera algumas horas. Se este passo ou a
       # espera falharem, o vigia reinicia a sequência em até ~1 h.
       - name: Agenda o próximo ciclo

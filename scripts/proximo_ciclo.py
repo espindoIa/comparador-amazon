@@ -3,13 +3,17 @@
 Uso: python scripts/proximo_ciclo.py BANCO --alvo vendidos --inicio-run INSTANTE_UTC
 Escreve duas linhas: o instante (UTC, ISO) em que a próxima leitura deve começar e o motivo (ou, com --json, um objeto com os dois).
 
-O catálogo é lido por inteiro uma vez por ciclo (3, 6, 12 ou 24 h; ver comparador/ritmo.py). Cada ciclo é uma janela
-que parte da meia-noite de Brasília, e a leitura de cada sequência começa um pouco depois do início da janela (10 min
-de defasagem por sequência, mais um sorteio de até 10 min), para as três não baterem na Amazon juntas nem a cada
-ciclo no mesmo segundo. Só se continua agora, sem esperar a próxima janela, se a janela atual não fechou e esta
-execução terminou limpa depois de ler páginas de verdade (o orçamento de tempo acabou); depois de um problema, quem
-decide é a próxima janela. A pausa que segue um bloqueio (horas, guardada no banco) vale sempre, e se a publicação falhou o que foi lido se perdeu, então
-a próxima leitura espera também algumas horas (senão a Amazon seria consultada de novo, todo ciclo, à toa).
+O catálogo é lido por inteiro duas vezes por dia (ciclo de 12 h; ver comparador/ritmo.py). A leitura de cada
+sequência começa num horário fixo de Brasília — 03:10, para a passada da manhã caber antes das 8h, e 18:10, para a
+da tarde começar depois das 18h — mais 10 min de defasagem por sequência e um sorteio de até 10 min, para as três
+não baterem na Amazon juntas. O cron do Actions é só rede de segurança; quem marca a hora é este script.
+
+Continua agora, sem esperar o próximo horário, em dois casos: a janela atual não fechou e esta execução terminou
+limpa depois de ler páginas de verdade (o orçamento de tempo acabou); ou a execução parou por bloqueio ou por
+falhas seguidas e ainda há fatias por ler. Nesse segundo caso a pausa de horas guardada no banco vale primeiro
+(não se retenta em minutos: cada execução cai num IP novo). Aviso de layout ou execução curta, sem bloqueio,
+esperam o próximo horário, para um parser quebrado não virar um laço. Se a publicação falhou, o que foi lido se
+perdeu, então a próxima leitura espera também algumas horas.
 """
 
 import argparse
@@ -27,11 +31,29 @@ MIN_PAGINAS = 500            # menos que isto e a execução "não andou": não 
 ENTRE_EXECUCOES_MIN = 10     # distância mínima entre o começo de duas execuções seguidas (nunca um laço apertado)
 DEFASAGEM_MIN = 10           # cada sequência começa tantos minutos depois da anterior
 SORTEIO_S = 600
+# Hora de Brasília em que cada passada pode começar (antes da defasagem). 03:10 para a da manhã caber antes das 8h
+# no teto de ~15 páginas/min; 18:10 para a da tarde começar depois das 18h. O cron do Actions está em UTC.
+AGENDA_BRT = ((3, 10), (18, 10))
 
 
 def defasagem(alvo: str) -> timedelta:
     nomes = list(varredura.PARTICOES_VENDIDOS)
     return timedelta(minutes=DEFASAGEM_MIN * (nomes.index(alvo) if alvo in nomes else 0))
+
+
+def proximos_da_agenda(agora: datetime, atraso: timedelta, n: int = 4) -> list[datetime]:
+    """Os próximos `n` horários da agenda estritamente depois de `agora`, já com `atraso` (defasagem e sorteio)."""
+    local = agora.astimezone(db.BRASILIA)
+    meia_noite = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    saida = []
+    for dia in range(3):
+        for hora, minuto in AGENDA_BRT:
+            instante = (meia_noite + timedelta(days=dia, hours=hora, minutes=minuto) + atraso).astimezone(timezone.utc)
+            if instante > agora:
+                saida.append(instante)
+                if len(saida) == n:
+                    return saida
+    return saida
 
 
 def decidir(conn: sqlite3.Connection, alvo: str, inicio_run: datetime, agora: datetime,
@@ -47,13 +69,23 @@ def decidir(conn: sqlite3.Connection, alvo: str, inicio_run: datetime, agora: da
                      "ORDER BY id DESC LIMIT 1", (inicio_run.isoformat(timespec="seconds"),)).fetchone()
     obs = (e["observacao"] if e else None) or ""
     limpa = e is not None and not e["bloqueios"] and "interrompida" not in obs and varredura.AVISO_LAYOUT not in obs
+    parada = e is not None and bool(e["bloqueios"] or "interrompida" in obs)
+    atraso = defasagem(alvo) + timedelta(seconds=sorteio(0, SORTEIO_S))
     if incompleta and limpa and e["paginas"] >= MIN_PAGINAS and fim - agora >= timedelta(minutes=varredura.FOLGA_JANELA_MIN):
         quando, motivo = agora, f"o ciclo de {ciclo} h não fechou; continua"
+    elif incompleta and parada:
+        quando, motivo = agora, "a execução parou com fatias por ler; retoma assim que a pausa acaba"
+    elif ciclo >= ritmo.CICLO_OPERACIONAL:
+        horarios = proximos_da_agenda(agora, atraso)
+        # Janela já fechada: um horário que ainda cai dentro dela não leria nada. Pula para o da janela seguinte.
+        quando = horarios[0] if incompleta else next(h for h in horarios if h >= fim)
+        motivo = (f"próxima leitura do ciclo de {ciclo} h "
+                  f"({quando.astimezone(db.BRASILIA):%d/%m %H:%M} de Brasília)")
     else:
-        quando = fim + defasagem(alvo) + timedelta(seconds=sorteio(0, SORTEIO_S))
-        motivo = f"próximo ciclo de {ciclo} h (janela das {fim.astimezone(varredura.db.BRASILIA):%d/%m %H:%M} de Brasília)"
+        quando = fim + atraso
+        motivo = f"próximo ciclo de {ciclo} h (janela das {fim.astimezone(db.BRASILIA):%d/%m %H:%M} de Brasília)"
     if (pausa := ritmo.pausa_ate(config)) and pausa > quando:
-        quando, motivo = pausa, f"pausa depois de bloqueio, até {pausa.astimezone(varredura.db.BRASILIA):%d/%m %H:%M} de Brasília"
+        quando, motivo = pausa, f"pausa depois de bloqueio, até {pausa.astimezone(db.BRASILIA):%d/%m %H:%M} de Brasília"
     if publicacao_falhou and quando < agora + timedelta(hours=ritmo.PAUSA_BASE_H):
         quando, motivo = agora + timedelta(hours=ritmo.PAUSA_BASE_H), "a publicação falhou; espera para não repetir a leitura logo"
     minimo = inicio_run + timedelta(minutes=ENTRE_EXECUCOES_MIN)

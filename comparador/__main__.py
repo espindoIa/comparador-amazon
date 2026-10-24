@@ -189,9 +189,9 @@ def main() -> None:
                           "teto já guardado acima dele. Com várias sequências em paralelo, é o limite de cada uma; "
                           "só vale sem --ritmo-max")
     cal.add_argument("--ciclo-horas", type=int, choices=ritmo.CICLOS, default=None,
-                     help="horas entre passadas completas do catálogo (padrão: o degrau guardado no banco, que começa em "
-                          f"{ritmo.CICLO_INICIAL} h e desce um degrau por dia limpo até {ritmo.CICLOS[0]} h). Com esta opção, o "
-                          "ciclo fica fixo e nada é aprendido")
+                     help="horas entre passadas completas do catálogo (padrão: 12 h, duas passadas por dia; um 24 h "
+                          "guardado volta a 12 e o ciclo aprendido não desce disso). Com esta opção, o "
+                          "ciclo fica fixo e nada é aprendido, nem a pausa depois de bloqueio")
     cal.add_argument("--ignorar-pausa", action="store_true",
                      help="lê mesmo durante a pausa que segue um bloqueio (horas, de propósito: cada execução cai num IP novo)")
     cal.add_argument("--subir-a-cada", type=_inteiro_positivo, default=ritmo.A_CADA,
